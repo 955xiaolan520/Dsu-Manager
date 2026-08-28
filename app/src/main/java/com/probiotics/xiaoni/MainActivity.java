@@ -21,7 +21,8 @@ import android.view.WindowManager;
 import com.topjohnwu.superuser.ipc.RootService;
 import java.nio.ByteBuffer;
 import java.util.Map;
-import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -520,37 +521,51 @@ public class MainActivity extends Activity {
              runOnUiThread(() -> showInstallProgress(t("正在创建 Dynamic System", "Creating Dynamic System"), 35));
               if (!service.startInstallation(DSU_SLOT)) return t("Dynamic System 拒绝开始安装，请检查系统 Dynamic System 权限", "Dynamic System rejected the installation. Check Dynamic System permissions.");
             started = true;
-             Map<String, ZipEntry> partitions = new LinkedHashMap<>();
-             java.util.Enumeration<? extends ZipEntry> imageEntries = zip.entries();
-             while (imageEntries.hasMoreElements()) {
-                 ZipEntry candidate = imageEntries.nextElement();
-                 String name = new File(candidate.getName()).getName();
-                 if (!candidate.isDirectory() && name.endsWith(".img")) {
-                     String partition = name.substring(0, name.length() - 4);
-                     if (partition.matches("[A-Za-z0-9_]+") && !partition.equals("userdata") && !partitions.containsKey(partition)) {
-                         partitions.put(partition, candidate);
-                     }
-                 }
+              List<ZipEntry> imageEntries = new ArrayList<>();
+              java.util.Enumeration<? extends ZipEntry> zipEntries = zip.entries();
+              while (zipEntries.hasMoreElements()) {
+                  ZipEntry candidate = zipEntries.nextElement();
+                  String name = new File(candidate.getName()).getName();
+                  if (!candidate.isDirectory() && name.toLowerCase(Locale.US).endsWith(".img")) {
+                      String partition = name.substring(0, name.length() - 4).toLowerCase(Locale.US);
+                      if (partition.matches("[A-Za-z0-9_-]+") && !partition.isEmpty()) imageEntries.add(candidate);
+                  }
+              }
+              boolean wroteImage = false;
+              java.util.HashSet<String> partitionNames = new java.util.HashSet<>();
+              for (ZipEntry entry : imageEntries) {
+                  String fileName = new File(entry.getName()).getName();
+                  String partitionName = fileName.substring(0, fileName.length() - 4).toLowerCase(Locale.US);
+                  if (!partitionNames.add(partitionName)) return t("ZIP 中存在重复分区镜像: " + fileName, "The ZIP contains a duplicate partition image: " + fileName);
+                  File extracted = File.createTempFile("dsu-image-", ".img", getCacheDir());
+                  try {
+                      try (InputStream input = zip.getInputStream(entry); FileOutputStream output = new FileOutputStream(extracted)) {
+                          byte[] buffer = new byte[1024 * 1024];
+                          int count;
+                          while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                      }
+                      long size = extracted.length();
+                      if (size <= 0) return t("镜像为空: " + fileName, "The image is empty: " + fileName);
+                      wroteImage = true;
+                      boolean userdata = partitionName.equalsIgnoreCase("userdata");
+                      long partitionSize = userdata ? Math.max(userdataSizeBytes, size) : size;
+                      int status = service.createPartition(partitionName, partitionSize, !userdata);
+                  if (status != 0) return t("创建分区失败: " + partitionName + " (" + status + ")", "Failed to create partition: " + partitionName + " (" + status + ")");
+                  runOnUiThread(() -> showInstallProgress(t("正在写入 " + partitionName, "Writing " + partitionName), 50));
+                      try (InputStream input = new FileInputStream(extracted)) {
+                          if (!streamEntry(input, service, partitionName, size)) return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
+                      }
+                  if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
+                  } finally {
+                      if (extracted.exists()) extracted.delete();
+                  }
              }
-             boolean wroteImage = false;
-             for (Map.Entry<String, ZipEntry> partition : partitions.entrySet()) {
-                 ZipEntry entry = partition.getValue();
-                 if (entry == null || entry.isDirectory()) continue;
-                 String fileName = entry.getName();
-                 String partitionName = partition.getKey();
-                wroteImage = true;
-                long size = entry.getSize();
-                 if (size < 0) return t("无法确定 " + fileName + " 的镜像大小", "Unable to determine image size: " + fileName);
-                 int status = service.createPartition(partitionName, size, true);
-                 if (status != 0) return t("创建分区失败: " + partitionName + " (" + status + ")", "Failed to create partition: " + partitionName + " (" + status + ")");
-                 runOnUiThread(() -> showInstallProgress(t("正在写入 " + partitionName, "Writing " + partitionName), 50));
-                 if (!streamEntry(zip.getInputStream(entry), service, partitionName, size)) return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
-                 if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
-            }
-             if (!wroteImage) return t("ZIP 中没有可用的 GSI img 镜像", "The ZIP contains no usable GSI .img images");
-             runOnUiThread(() -> showInstallProgress(t("正在创建 userdata", "Creating userdata"), 88));
-              if (service.createPartition("userdata", userdataSizeBytes, false) != 0) return t("创建 userdata 分区失败", "Failed to create userdata partition");
-             if (!service.closePartition()) return t("关闭 userdata 分区失败", "Failed to close userdata partition");
+              if (!wroteImage) return t("ZIP 中没有可用的 GSI img 镜像", "The ZIP contains no usable GSI .img images");
+              if (!partitionNames.contains("userdata")) {
+                  runOnUiThread(() -> showInstallProgress(t("正在创建 userdata", "Creating userdata"), 88));
+                  if (service.createPartition("userdata", userdataSizeBytes, false) != 0) return t("创建 userdata 分区失败", "Failed to create userdata partition");
+                  if (!service.closePartition()) return t("关闭 userdata 分区失败", "Failed to close userdata partition");
+              }
              runOnUiThread(() -> showInstallProgress(t("正在完成安装", "Finishing installation"), 94));
              if (!service.finishInstallation()) return t("Dynamic System 未能完成安装", "Dynamic System could not finish installation");
               if (!service.setEnable(true, false)) return t("GSI 已安装，但启用 DSU 失败", "GSI installed, but DSU could not be enabled");
@@ -562,33 +577,31 @@ public class MainActivity extends Activity {
             if (started && !completed) try { service.abort(); } catch (Exception ignored) { }
         }
     }
-    private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize) throws Exception {
-        final int bufferSize = 4 * 1024 * 1024;
-        try (SharedMemory memory = SharedMemory.create("tianming-dsu", bufferSize)) {
-            ParcelFileDescriptor fd;
-            try {
-                fd = sharedMemoryFd(memory);
-            } catch (Exception error) {
-                throw new IOException("设备不支持共享内存文件描述符: " + error.getMessage(), error);
-            }
-            if (!service.setAshmem(fd, bufferSize)) { fd.close(); return false; }
-            ByteBuffer mapped = memory.mapReadWrite();
-            byte[] buffer = new byte[1024 * 1024];
-            int count;
-            long written = 0;
-            while ((count = input.read(buffer)) != -1) {
-                mapped.position(0);
-                mapped.put(buffer, 0, count);
-                if (!service.submitFromAshmem(count)) { fd.close(); return false; }
-                written += count;
-                int progress = 50 + (int) Math.min(35, totalSize > 0 ? written * 35 / totalSize : 0);
-                 runOnUiThread(() -> showInstallProgress(t("正在写入 " + partition, "Writing " + partition), progress));
-            }
-            memory.unmap(mapped);
-            fd.close();
-            return true;
-        }
-    }
+     private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize) throws Exception {
+         final int bufferSize = 4 * 1024 * 1024;
+          try (SharedMemory memory = SharedMemory.create("tianming-dsu", bufferSize)) {
+              try (ParcelFileDescriptor fd = sharedMemoryFd(memory)) {
+                  if (!service.setAshmem(fd, bufferSize)) return false;
+                  ByteBuffer mapped = memory.mapReadWrite();
+                  try {
+                      byte[] buffer = new byte[1024 * 1024];
+                      int count;
+                      long written = 0;
+                      while ((count = input.read(buffer)) != -1) {
+                          mapped.position(0);
+                          mapped.put(buffer, 0, count);
+                          if (!service.submitFromAshmem(count)) return false;
+                          written += count;
+                          int progress = 50 + (int) Math.min(35, totalSize > 0 ? written * 35 / totalSize : 0);
+                          runOnUiThread(() -> showInstallProgress(t("正在写入 " + partition, "Writing " + partition), progress));
+                      }
+                      return true;
+                  } finally {
+                      memory.unmap(mapped);
+                  }
+              }
+          }
+     }
     private ParcelFileDescriptor sharedMemoryFd(SharedMemory memory) throws Exception {
         try {
             return (ParcelFileDescriptor) SharedMemory.class.getMethod("getFdDup").invoke(memory);
