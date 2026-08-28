@@ -87,7 +87,7 @@ public class MainActivity extends Activity {
             languageMode = selectedLanguage;
             english = languageMode == 2 || (languageMode == 0 && Locale.getDefault().getLanguage().equals("en"));
             buildUi();
-            refreshStatus();
+            if (rootAuthorized) refreshStatus();
         }
         bindRootService();
         if (!rootAuthorized) refreshRootStatus();
@@ -160,7 +160,7 @@ public class MainActivity extends Activity {
         logoCard.setClipToOutline(true);
         logoCard.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View view, android.graphics.Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(28));
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(63));
             }
         });
          logoCard.setOnTouchListener((view, event) -> {
@@ -179,7 +179,8 @@ public class MainActivity extends Activity {
         TextView logoTitle = text("GSI STATUS", 13, 0xFFDDE8FF);
         logoTitle.setTypeface(null, 1);
         logoCard.addView(logoTitle);
-         gsiStatus = text(t("正在读取动态系统状态...", "Reading Dynamic System status..."), 21, Color.WHITE);
+         gsiStatus = text(rootAuthorized ? t("正在读取动态系统状态...", "Reading Dynamic System status...")
+                 : t("需要 ROOT 权限", "ROOT access required"), 21, Color.WHITE);
         gsiStatus.setTypeface(null, 1);
         logoCard.addView(gsiStatus, new LinearLayout.LayoutParams(-1, dp(52)));
          TextView hint = text(t("点击卡片更换背景图片", "Tap to change background image"), 12, 0xB8FFFFFF);
@@ -466,7 +467,7 @@ public class MainActivity extends Activity {
     }
     private void chooseZip(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("application/zip"); i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"}); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_ZIP); }
     private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
-       @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
+       @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(63))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
