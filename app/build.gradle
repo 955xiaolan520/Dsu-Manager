@@ -1,0 +1,20 @@
+plugins { id 'com.android.application' }
+
+android { namespace 'com.probiotics.tianming'; compileSdk 37
+    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 311; versionName '3.1.1' }
+    signingConfigs { release { storeFile file('release-keystore.jks'); storePassword 'changeit'; keyAlias 'tianming-release'; keyPassword 'changeit' } }
+    signingConfigs.release {
+        enableV1Signing true
+        enableV2Signing true
+        enableV3Signing true
+    }
+    buildTypes { release { minifyEnabled false; signingConfig signingConfigs.release; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
+    buildFeatures { aidl true }
+    lint { checkReleaseBuilds false; abortOnError false }
+}
+
+dependencies {
+    implementation 'com.github.topjohnwu.libsu:core:6.0.0'
+    implementation 'com.github.topjohnwu.libsu:service:6.0.0'
+    implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:4.3'
+}
