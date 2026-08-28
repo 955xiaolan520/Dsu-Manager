@@ -161,7 +161,7 @@ public class MainActivity extends Activity {
         TextView logoTitle = text("GSI STATUS", 13, 0xFFDDE8FF);
         logoTitle.setTypeface(null, 1);
         logoCard.addView(logoTitle);
-        gsiStatus = text("正在读取动态系统状态...", 21, Color.WHITE);
+         gsiStatus = text(t("正在读取动态系统状态...", "Reading Dynamic System status..."), 21, Color.WHITE);
         gsiStatus.setTypeface(null, 1);
         logoCard.addView(gsiStatus, new LinearLayout.LayoutParams(-1, dp(52)));
          TextView hint = text(t("点击卡片更换背景图片", "Tap to change background image"), 12, 0xB8FFFFFF);
@@ -276,17 +276,12 @@ public class MainActivity extends Activity {
     }
 
     private void showAboutDialog() {
-        String about = "Dsu GSI管理器\n\n"
-                + "功能说明\n"
-                + "本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n"
-                + "感谢开源项目作者：VegaBobo\n"
-                + "项目地址：https://github.com/955xiaolan520/Dsu-Manager\n\n"
-                + "作者：小你可兰\n"
-                + "管理器版本：3.1.1";
+        String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n感谢开源项目作者：VegaBobo\n项目地址：https://github.com/955xiaolan520/Dsu-Manager\n\n作者：小你可兰\n管理器版本：3.1.1",
+                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow is based on the DSU-Sideloader project.\n\nThanks to the open-source project author: VegaBobo\nProject: https://github.com/955xiaolan520/Dsu-Manager\n\nAuthor: Xiaonikelan\nManager version: 3.1.1");
         new AlertDialog.Builder(this)
-                .setTitle("关于 Dsu 管理器")
+                .setTitle(t("关于 Dsu 管理器", "About Dsu Manager"))
                 .setMessage(about)
-                .setPositiveButton("确定", null)
+                .setPositiveButton(t("确定", "OK"), null)
                 .show();
     }
 
@@ -313,11 +308,11 @@ public class MainActivity extends Activity {
     }
     private static class RootResult { final boolean authorized; final String message; RootResult(boolean ok, String text){ authorized=ok; message=text; } }
      private RootResult checkRoot(){
-         if (privilegedService != null) return new RootResult(true, "ROOT 已授权");
+         if (privilegedService != null) return new RootResult(true, t("ROOT 已授权", "ROOT granted"));
          CommandResult result = runCommand("/system/bin/su", "-c", "id");
         String output = result.output.trim();
-        if(result.exitCode == 0 && output.contains("uid=0")) return new RootResult(true, "ROOT 已授权");
-        return new RootResult(false, "ROOT 检测失败");
+         if(result.exitCode == 0 && output.contains("uid=0")) return new RootResult(true, t("ROOT 已授权", "ROOT granted"));
+         return new RootResult(false, t("ROOT 检测失败", "ROOT check failed"));
     }
      private String localizedStatus(String status) {
          if (!english) return status;
@@ -396,7 +391,7 @@ public class MainActivity extends Activity {
      }
     private void customSize(){
         EditText input = new EditText(this);
-        input.setHint("例如 24 或 24.5");
+         input.setHint(t("例如 24 或 24.5", "For example, 24 or 24.5"));
         input.setSingleLine(true);
         input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
         LinearLayout box = new LinearLayout(this);
@@ -444,11 +439,11 @@ public class MainActivity extends Activity {
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
          } catch (Exception ignored) { }
-         return uri.getLastPathSegment() == null ? "未命名 ZIP" : uri.getLastPathSegment();
+         return uri.getLastPathSegment() == null ? t("未命名 ZIP", "Unnamed ZIP") : uri.getLastPathSegment();
      }
     private String getPath(Uri u,String name){ try { InputStream in=getContentResolver().openInputStream(u); File f=new File(getCacheDir(),name); FileOutputStream out=new FileOutputStream(f); byte[] b=new byte[8192]; int n; while((n=in.read(b))>0)out.write(b,0,n); in.close();out.close();return f.getAbsolutePath(); }catch(Exception e){return "";} }
     private void installWithDsuSideloaderFlow(Uri source){
-        showInstallProgress("正在解析 GSI 安装包", 0);
+         showInstallProgress(t("正在解析 GSI 安装包", "Parsing GSI package"), 0);
         new Thread(() -> {
             String path = "";
             try {
@@ -476,7 +471,7 @@ public class MainActivity extends Activity {
             int count;
                 while ((count = input.read(buffer)) != -1) {
                     output.write(buffer, 0, count);
-                    runOnUiThread(() -> showInstallProgress("正在解析 GSI 安装包", 10));
+                 runOnUiThread(() -> showInstallProgress(t("正在解析 GSI 安装包", "Parsing GSI package"), 10));
                 }
             return target.getAbsolutePath();
         } catch (Exception e) {
@@ -485,12 +480,12 @@ public class MainActivity extends Activity {
     }
     private String installZipThroughRootService(String path) {
         IPrivilegedService service = privilegedService;
-        if (service == null) return "ROOT Installer 尚未连接，请先完成 ROOT 授权后重试";
+         if (service == null) return t("ROOT Installer 尚未连接，请先完成 ROOT 授权后重试", "ROOT installer is not connected. Grant ROOT access and try again.");
         boolean started = false;
         boolean completed = false;
         try (ZipFile zip = new ZipFile(path)) {
-            runOnUiThread(() -> showInstallProgress("正在创建 Dynamic System", 35));
-             if (!service.startInstallation(DSU_SLOT)) return "Dynamic System 拒绝开始安装，请检查系统 Dynamic System 权限";
+             runOnUiThread(() -> showInstallProgress(t("正在创建 Dynamic System", "Creating Dynamic System"), 35));
+              if (!service.startInstallation(DSU_SLOT)) return t("Dynamic System 拒绝开始安装，请检查系统 Dynamic System 权限", "Dynamic System rejected the installation. Check Dynamic System permissions.");
             started = true;
              Map<String, ZipEntry> partitions = new LinkedHashMap<>();
              java.util.Enumeration<? extends ZipEntry> imageEntries = zip.entries();
@@ -512,24 +507,24 @@ public class MainActivity extends Activity {
                  String partitionName = partition.getKey();
                 wroteImage = true;
                 long size = entry.getSize();
-                if (size < 0) return "无法确定 " + fileName + " 的镜像大小";
-                int status = service.createPartition(partitionName, size, true);
-                if (status != 0) return "创建分区失败: " + partitionName + " (" + status + ")";
-                runOnUiThread(() -> showInstallProgress("正在写入 " + partitionName, 50));
-                if (!streamEntry(zip.getInputStream(entry), service, partitionName, size)) return "写入镜像失败: " + fileName;
-                if (!service.closePartition()) return "关闭分区失败: " + partitionName;
+                 if (size < 0) return t("无法确定 " + fileName + " 的镜像大小", "Unable to determine image size: " + fileName);
+                 int status = service.createPartition(partitionName, size, true);
+                 if (status != 0) return t("创建分区失败: " + partitionName + " (" + status + ")", "Failed to create partition: " + partitionName + " (" + status + ")");
+                 runOnUiThread(() -> showInstallProgress(t("正在写入 " + partitionName, "Writing " + partitionName), 50));
+                 if (!streamEntry(zip.getInputStream(entry), service, partitionName, size)) return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
+                 if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
             }
-            if (!wroteImage) return "ZIP 中没有可用的 GSI img 镜像";
-            runOnUiThread(() -> showInstallProgress("正在创建 userdata", 88));
-             if (service.createPartition("userdata", userdataSizeBytes, false) != 0) return "创建 userdata 分区失败";
-            if (!service.closePartition()) return "关闭 userdata 分区失败";
-            runOnUiThread(() -> showInstallProgress("正在完成安装", 94));
-            if (!service.finishInstallation()) return "Dynamic System 未能完成安装";
-             if (!service.setEnable(true, false)) return "GSI 已安装，但启用 DSU 失败";
+             if (!wroteImage) return t("ZIP 中没有可用的 GSI img 镜像", "The ZIP contains no usable GSI .img images");
+             runOnUiThread(() -> showInstallProgress(t("正在创建 userdata", "Creating userdata"), 88));
+              if (service.createPartition("userdata", userdataSizeBytes, false) != 0) return t("创建 userdata 分区失败", "Failed to create userdata partition");
+             if (!service.closePartition()) return t("关闭 userdata 分区失败", "Failed to close userdata partition");
+             runOnUiThread(() -> showInstallProgress(t("正在完成安装", "Finishing installation"), 94));
+             if (!service.finishInstallation()) return t("Dynamic System 未能完成安装", "Dynamic System could not finish installation");
+              if (!service.setEnable(true, false)) return t("GSI 已安装，但启用 DSU 失败", "GSI installed, but DSU could not be enabled");
              completed = true;
-             return "GSI 已安装并启用 DSU，请点击“重启到 DSU”进入系统";
+              return t("GSI 已安装并启用 DSU，请点击“重启到 DSU”进入系统", "GSI installed and DSU enabled. Tap \"Reboot to DSU\" to enter the system.");
         } catch (Exception e) {
-            return "安装失败: " + e.getMessage();
+             return t("安装失败: ", "Installation failed: ") + e.getMessage();
         } finally {
             if (started && !completed) try { service.abort(); } catch (Exception ignored) { }
         }
@@ -585,9 +580,11 @@ public class MainActivity extends Activity {
         installProgress.setProgress(Math.max(0, Math.min(100, progress)));
     }
     private void finishProgress(String message){
-        boolean success=message.contains("已安装并启用") || message.contains("DSU 已启动") || message.contains("替换完成");
-        boolean replacement=message.contains("替换完成") || message.contains("替换 ");
-        showInstallProgress(replacement ? (success ? "替换完成" : "替换失败") : (success ? "安装完成" : "安装失败"), success?100:0);
+         boolean success=message.contains("已安装并启用") || message.contains("DSU 已启动") || message.contains("替换完成")
+                 || message.contains("installed and DSU enabled") || message.contains("replacement complete");
+         boolean replacement=message.contains("替换完成") || message.contains("替换 ") || message.contains("replacement complete") || message.contains("replacement failed");
+         showInstallProgress(replacement ? (success ? t("替换完成", "Replacement complete") : t("替换失败", "Replacement failed"))
+                 : (success ? t("安装完成", "Installation complete") : t("安装失败", "Installation failed")), success?100:0);
         detailText.setText(message);
         toast(message);
     }
@@ -610,7 +607,7 @@ public class MainActivity extends Activity {
                      gsiStatus.setText(t("未安装", "Not installed"));
                      toast(t("DSU 已撤销", "DSU removed"));
                 } else {
-                    String message = result.output.isEmpty() ? "撤销 DSU 失败" : "撤销 DSU 失败: " + result.output;
+                    String message = result.output.isEmpty() ? t("撤销 DSU 失败", "Failed to remove DSU") : t("撤销 DSU 失败: ", "Failed to remove DSU: ") + result.output;
                     detailText.setText(message);
                     toast(message);
                 }
@@ -620,7 +617,7 @@ public class MainActivity extends Activity {
     private void showImageManagement(){
         imageManagementPanel.setVisibility(View.VISIBLE);
         imageManagementPanel.removeAllViews();
-        TextView loading = text("正在读取已安装镜像...", 13, Color.rgb(77, 87, 105));
+        TextView loading = text(t("正在读取已安装镜像...", "Reading installed images..."), 13, Color.rgb(77, 87, 105));
         imageManagementPanel.addView(loading, new LinearLayout.LayoutParams(-1, dp(42)));
         new Thread(() -> {
             String raw = "";
@@ -632,16 +629,16 @@ public class MainActivity extends Activity {
     }
     private void renderImageManagement(String raw){
         imageManagementPanel.removeAllViews();
-        TextView title = text("已安装镜像", 15, Color.rgb(20, 29, 55));
+        TextView title = text(t("已安装镜像", "Installed images"), 15, Color.rgb(20, 29, 55));
         title.setTypeface(null, 1);
         imageManagementPanel.addView(title, new LinearLayout.LayoutParams(-1, dp(34)));
          if (raw == null || raw.trim().isEmpty()) {
-             imageManagementPanel.addView(text("无法读取 DSU 镜像目录，或当前设备未提供可访问的镜像文件。", 13, Color.rgb(77, 87, 105)));
+             imageManagementPanel.addView(text(t("无法读取 DSU 镜像目录，或当前设备未提供可访问的镜像文件。", "Unable to read the DSU image directory, or no accessible image files are available."), 13, Color.rgb(77, 87, 105)));
              return;
          }
          if (raw.startsWith("EMPTY|")) {
              String[] empty = raw.split("\\|", 3);
-             imageManagementPanel.addView(text(empty.length == 3 ? empty[1] + "\n目录: " + empty[2] : "暂无已安装镜像", 13, Color.rgb(77, 87, 105)));
+             imageManagementPanel.addView(text(empty.length == 3 ? empty[1] + "\n" + t("目录: ", "Directory: ") + empty[2] : t("暂无已安装镜像", "No installed images"), 13, Color.rgb(77, 87, 105)));
              return;
          }
          boolean hasImage = false;
@@ -659,7 +656,7 @@ public class MainActivity extends Activity {
             LinearLayout row = new LinearLayout(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
              String sizeText = parts.length > 3 ? parts[3] : formatBytes(bytes);
-             TextView label = text(name + "\n大小: " + sizeText, 13, Color.rgb(40, 50, 70));
+             TextView label = text(name + "\n" + t("大小: ", "Size: ") + sizeText, 13, Color.rgb(40, 50, 70));
             row.addView(label, new LinearLayout.LayoutParams(0, dp(58), 1));
             Button replace = new Button(this);
              replace.setText(t("替换", "Replace"));
@@ -672,14 +669,14 @@ public class MainActivity extends Activity {
              imageManagementPanel.addView(row);
          }
          if (!hasImage) {
-             imageManagementPanel.addView(text("当前没有可管理的镜像文件\n" + raw, 12, Color.rgb(77, 87, 105)));
+             imageManagementPanel.addView(text(t("当前没有可管理的镜像文件\n", "No manageable image files are available\n") + raw, 12, Color.rgb(77, 87, 105)));
          }
-        TextView hint = text("替换前请确保设备未运行 DSU。替换完成后点击“重启到 DSU”。", 12, Color.rgb(110, 118, 135));
+         TextView hint = text(t("替换前请确保设备未运行 DSU。替换完成后点击“重启到 DSU”。", "Make sure DSU is not running before replacement. Tap \"Reboot to DSU\" after replacement."), 12, Color.rgb(110, 118, 135));
         imageManagementPanel.addView(hint, new LinearLayout.LayoutParams(-1, dp(42)));
     }
     private String formatBytes(long bytes){
-        if (bytes < 0) return "大小读取失败";
-        if (bytes == 0) return "大小未知";
+         if (bytes < 0) return t("大小读取失败", "Size unavailable");
+         if (bytes == 0) return t("大小未知", "Unknown size");
         if (bytes >= 1024L * 1024L * 1024L) return String.format(java.util.Locale.US, "%.2f GB", bytes / 1073741824d);
         return String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576d);
     }
@@ -697,18 +694,19 @@ public class MainActivity extends Activity {
              toast(t("请选择 .img 或 .raw 镜像文件", "Choose an .img or .raw image file"));
             return;
         }
-         showInstallProgress("正在准备替换 " + partition, 5);
+          showInstallProgress(t("正在准备替换 " + partition, "Preparing to replace " + partition), 5);
          new Thread(() -> {
              String path = getPath(source, "replace-" + partition + ".img");
              boolean success = false;
-             runOnUiThread(() -> showInstallProgress("正在复制 " + partition + " 镜像", 35));
+              runOnUiThread(() -> showInstallProgress(t("正在复制 " + partition + " 镜像", "Copying " + partition + " image"), 35));
              try { if (!path.isEmpty() && privilegedService != null) success = privilegedService.replaceDsuImage(replacementImagePath, path); }
              catch (Exception ignored) { }
-             String message = success ? partition + ".img 替换完成，请点击“重启到 DSU”使其生效" : "替换 " + partition + ".img 失败：请确认 DSU 未运行且系统允许访问 DSU 镜像目录";
+              String message = success ? t(partition + ".img 替换完成，请点击“重启到 DSU”使其生效", partition + ".img replacement complete. Tap \"Reboot to DSU\" to apply it.")
+                      : t("替换 " + partition + ".img 失败：请确认 DSU 未运行且系统允许访问 DSU 镜像目录", "Failed to replace " + partition + ".img. Make sure DSU is stopped and the DSU image directory is accessible.");
              if (!path.isEmpty()) new File(path).delete();
              boolean result = success;
              runOnUiThread(() -> {
-                 showInstallProgress(result ? "替换完成" : "替换失败", result ? 100 : 0);
+                  showInstallProgress(result ? t("替换完成", "Replacement complete") : t("替换失败", "Replacement failed"), result ? 100 : 0);
                  detailText.setText(message);
                  toast(message);
                  if (result) {
@@ -743,8 +741,8 @@ public class MainActivity extends Activity {
         }).start();
     }
     private void showInfo(){
-        detailText.setText("正在读取已安装 GSI 信息...");
-         new Thread(() -> { String result; try { result=runPrivilegedResult("/system/bin/gsi_tool","status"); } catch(Exception e){ result="读取失败: "+e.getMessage(); } final String output=(result==null||result.trim().isEmpty()?"当前没有可用的 GSI 状态信息":formatGsiStatus(result))+"\n安装包: "+installedZipName; runOnUiThread(() -> { detailText.setText("GSI 状态\n"+output); new AlertDialog.Builder(this).setTitle("已安装 GSI 系统信息").setMessage(output).setPositiveButton("确定",null).show(); }); }).start();
+         detailText.setText(t("正在读取已安装 GSI 信息...", "Reading installed GSI information..."));
+          new Thread(() -> { String result; try { result=runPrivilegedResult("/system/bin/gsi_tool","status"); } catch(Exception e){ result=t("读取失败: ", "Read failed: ")+e.getMessage(); } final String output=(result==null||result.trim().isEmpty()?t("当前没有可用的 GSI 状态信息", "No GSI status information is available"):formatGsiStatus(result))+"\n"+t("安装包: ", "Package: ")+installedZipName; runOnUiThread(() -> { detailText.setText(t("GSI 状态\n", "GSI status\n")+output); new AlertDialog.Builder(this).setTitle(t("已安装 GSI 系统信息", "Installed GSI information")).setMessage(output).setPositiveButton(t("确定", "OK"),null).show(); }); }).start();
      }
      private static final class RoundedCropDrawable extends Drawable {
          private final Bitmap bitmap;
