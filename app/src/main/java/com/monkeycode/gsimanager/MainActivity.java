@@ -44,10 +44,13 @@ public class MainActivity extends Activity {
     private boolean rootServiceBound;
     private boolean english;
     private int languageMode;
+    private boolean rootAuthorized;
+    private boolean rootCheckInProgress;
+    private Button[] actionButtons;
     private final Runnable rootRefreshLoop = new Runnable() {
         @Override public void run() {
-            refreshRootStatus();
-            if (privilegedService == null) {
+            if (!rootAuthorized) refreshRootStatus();
+            if (!rootAuthorized && privilegedService == null) {
                 bindRootService();
                 mainHandler.postDelayed(this, 1500);
             }
@@ -68,6 +71,7 @@ public class MainActivity extends Activity {
         @Override public void onServiceDisconnected(ComponentName name) {
             privilegedService = null;
             rootServiceBound = false;
+            setRootAuthorized(false);
         }
     };
 
@@ -97,7 +101,7 @@ public class MainActivity extends Activity {
         }
         mainHandler.removeCallbacks(rootRefreshLoop);
         bindRootService();
-        mainHandler.post(rootRefreshLoop);
+        if (!rootAuthorized) mainHandler.post(rootRefreshLoop);
     }
 
     @Override protected void onPause() {
@@ -108,6 +112,24 @@ public class MainActivity extends Activity {
     private int dp(int n) { return (int)(n * getResources().getDisplayMetrics().density + .5f); }
     private TextView text(String value, int size, int color) { TextView v = new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(color); v.setGravity(Gravity.CENTER_VERTICAL); return v; }
     private String t(String chinese, String englishText) { return english ? englishText : chinese; }
+
+    private void updateActionButtons() {
+        if (actionButtons == null) return;
+        for (Button button : actionButtons) {
+            button.setEnabled(rootAuthorized);
+            button.setAlpha(rootAuthorized ? 1f : 0.45f);
+        }
+    }
+
+    private void setRootAuthorized(boolean authorized) {
+        rootAuthorized = authorized;
+        if (rootStatus != null) {
+            rootStatus.setText(authorized ? t("ROOT 已授权", "ROOT granted") : t("ROOT 失败", "ROOT unavailable"));
+            rootStatus.setBackgroundResource(authorized ? R.drawable.root_status_bg : R.drawable.button_red);
+        }
+        updateActionButtons();
+        if (authorized) mainHandler.removeCallbacks(rootRefreshLoop);
+    }
 
     private void bindRootService() {
         if (rootServiceBound || privilegedService != null) return;
@@ -150,7 +172,7 @@ public class MainActivity extends Activity {
         logoCard.setClipToOutline(true);
         logoCard.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View view, android.graphics.Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(14));
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(16));
             }
         });
          logoCard.setOnTouchListener((view, event) -> {
@@ -226,6 +248,7 @@ public class MainActivity extends Activity {
                   ? new String[]{"Check GSI status", "Install GSI", "Reboot to DSU", "Remove installed GSI", "Installed GSI details", "Manage installed images"}
                   : new String[]{"检测 GSI 状态", "安装 GSI", "重启到 DSU", "撤销已安装 GSI", "已安装 GSI 信息", "管理已安装镜像"};
          int[] backgrounds = {R.drawable.button_blue, R.drawable.button_green, R.drawable.button_orange, R.drawable.button_purple, R.drawable.button_teal, R.drawable.button_blue};
+         actionButtons = new Button[labels.length];
         for (int i = 0; i < labels.length; i++) {
             Button button = new Button(this);
             button.setText(labels[i]);
@@ -238,10 +261,12 @@ public class MainActivity extends Activity {
             button.setBackgroundResource(backgrounds[i]);
              final int actionIndex = i;
              button.setOnClickListener(v -> action(actionIndex));
+             actionButtons[i] = button;
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(58));
             lp.setMargins(0, dp(3), 0, dp(3));
-            list.addView(button, lp);
-        }
+             list.addView(button, lp);
+         }
+         updateActionButtons();
          operationBox.addView(list, new LinearLayout.LayoutParams(-1, -2));
          detailText = text(t("点击操作后，结果会显示在这里。", "Results will appear here after an action."), 13, Color.rgb(77, 87, 105));
         detailText.setGravity(Gravity.TOP);
@@ -305,12 +330,14 @@ public class MainActivity extends Activity {
         }).start();
     }
      private void refreshRootStatus(){
+         if (rootAuthorized || rootCheckInProgress) return;
+         rootCheckInProgress = true;
          rootStatus.setText(t("ROOT 检测中", "Checking ROOT"));
         new Thread(() -> {
             RootResult root = checkRoot();
             runOnUiThread(() -> {
-                 rootStatus.setText(root.authorized ? t("ROOT 已授权", "ROOT granted") : t("ROOT 失败", "ROOT failed"));
-                 rootStatus.setBackgroundResource(root.authorized ? R.drawable.root_status_bg : R.drawable.button_red);
+                 rootCheckInProgress = false;
+                 setRootAuthorized(root.authorized);
             });
         }).start();
     }
@@ -356,6 +383,10 @@ public class MainActivity extends Activity {
     }
     private String run(String... cmd){ return runCommand(cmd).output; }
       private void action(int index){
+          if (!rootAuthorized) {
+              toast(t("请先授予 ROOT 权限", "Grant ROOT access first"));
+              return;
+          }
           switch (index) {
               case 0:
                   refreshStatus();
@@ -442,7 +473,7 @@ public class MainActivity extends Activity {
     }
     private void chooseZip(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("application/zip"); i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"}); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_ZIP); }
     private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
-       @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(14))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
+       @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(16))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
