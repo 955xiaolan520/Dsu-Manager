@@ -1,4 +1,4 @@
-package com.probiotics.tianming;
+package com.probiotics.xiaoni;
 
 interface IRootInstallCallback {
     void onStage(String stage, int progress);

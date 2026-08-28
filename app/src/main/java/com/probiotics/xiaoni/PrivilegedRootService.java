@@ -1,4 +1,4 @@
-package com.probiotics.tianming;
+package com.probiotics.xiaoni;
 
 import android.content.Intent;
 import android.os.IBinder;

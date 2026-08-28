@@ -1,4 +1,4 @@
-package com.probiotics.tianming;
+package com.probiotics.xiaoni;
 
 import android.app.*;
 import android.content.*;
@@ -160,7 +160,7 @@ public class MainActivity extends Activity {
         logoCard.setClipToOutline(true);
         logoCard.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View view, android.graphics.Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(63));
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(16));
             }
         });
          logoCard.setOnTouchListener((view, event) -> {
@@ -467,7 +467,7 @@ public class MainActivity extends Activity {
     }
     private void chooseZip(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("application/zip"); i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"}); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_ZIP); }
     private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
-       @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(63))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
+       @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(16))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
