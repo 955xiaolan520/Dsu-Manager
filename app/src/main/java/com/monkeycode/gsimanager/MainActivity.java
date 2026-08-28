@@ -43,6 +43,7 @@ public class MainActivity extends Activity {
     private boolean keepScreenOn;
     private boolean rootServiceBound;
     private boolean english;
+    private int languageMode;
     private final Runnable rootRefreshLoop = new Runnable() {
         @Override public void run() {
             refreshRootStatus();
@@ -72,8 +73,8 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        int language = getSharedPreferences("settings", MODE_PRIVATE).getInt("language_mode", 0);
-        english = language == 2 || (language == 0 && Locale.getDefault().getLanguage().equals("en"));
+        languageMode = getSharedPreferences("settings", MODE_PRIVATE).getInt("language_mode", 0);
+        english = languageMode == 2 || (languageMode == 0 && Locale.getDefault().getLanguage().equals("en"));
          installedZipName = getPreferences(MODE_PRIVATE).getString("installed_zip_name", "未记录 ZIP 名称");
          keepScreenOn = getPreferences(MODE_PRIVATE).getBoolean("keep_screen_on", false);
          applyKeepScreenOn();
@@ -87,6 +88,13 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        int selectedLanguage = getSharedPreferences("settings", MODE_PRIVATE).getInt("language_mode", 0);
+        if (selectedLanguage != languageMode) {
+            languageMode = selectedLanguage;
+            english = languageMode == 2 || (languageMode == 0 && Locale.getDefault().getLanguage().equals("en"));
+            buildUi();
+            refreshStatus();
+        }
         mainHandler.removeCallbacks(rootRefreshLoop);
         bindRootService();
         mainHandler.post(rootRefreshLoop);
@@ -142,7 +150,7 @@ public class MainActivity extends Activity {
         logoCard.setClipToOutline(true);
         logoCard.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View view, android.graphics.Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(16));
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(14));
             }
         });
          logoCard.setOnTouchListener((view, event) -> {
@@ -434,7 +442,7 @@ public class MainActivity extends Activity {
     }
     private void chooseZip(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("application/zip"); i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"}); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_ZIP); }
     private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
-       @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(16))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
+       @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(14))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
@@ -549,7 +557,7 @@ public class MainActivity extends Activity {
                 if (!service.submitFromAshmem(count)) { fd.close(); return false; }
                 written += count;
                 int progress = 50 + (int) Math.min(35, totalSize > 0 ? written * 35 / totalSize : 0);
-                runOnUiThread(() -> showInstallProgress("正在写入 " + partition, progress));
+                 runOnUiThread(() -> showInstallProgress(t("正在写入 " + partition, "Writing " + partition), progress));
             }
             memory.unmap(mapped);
             fd.close();
