@@ -1,6 +1,7 @@
 package com.probiotics.xiaoni;
 
 import android.os.ParcelFileDescriptor;
+import java.util.List;
 
 interface IPrivilegedService {
     int getUid();
@@ -17,6 +18,11 @@ interface IPrivilegedService {
     boolean submitFromAshmem(long bytes);
     boolean closePartition();
     boolean finishInstallation();
+    String getInstalledGsiImageDir();
+    String getActiveDsuSlot();
+    List<String> getInstalledDsuSlots();
+    List<String> getDsuBackingImages(String prefix);
     String listDsuImages();
-    boolean replaceDsuImage(String imagePath, String sourcePath);
+    String cleanupDsuBackingImages();
+    String replaceDsuBackingImage(String slot, String imageName, in ParcelFileDescriptor fd, long size, boolean force);
 }

@@ -35,6 +35,8 @@ public class MainActivity extends Activity {
     private static final int PICK_ZIP = 20;
     private static final int PICK_REPLACEMENT = 30;
     private String replacementPartition;
+    private String replacementBackingImage;
+    private String replacementSlot;
     private String replacementImagePath;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Runnable pendingLogoClick;
@@ -517,9 +519,11 @@ public class MainActivity extends Activity {
          if (service == null) return t("ROOT Installer 尚未连接，请先完成 ROOT 授权后重试", "ROOT installer is not connected. Grant ROOT access and try again.");
         boolean started = false;
         boolean completed = false;
-        try (ZipFile zip = new ZipFile(path)) {
-             runOnUiThread(() -> showInstallProgress(t("正在创建 Dynamic System", "Creating Dynamic System"), 35));
-              if (!service.startInstallation(DSU_SLOT)) return t("Dynamic System 拒绝开始安装，请检查系统 Dynamic System 权限", "Dynamic System rejected the installation. Check Dynamic System permissions.");
+         try (ZipFile zip = new ZipFile(path)) {
+              runOnUiThread(() -> showInstallProgress(t("正在创建 Dynamic System", "Creating Dynamic System"), 35));
+              String cleanupError = service.cleanupDsuBackingImages();
+              if (cleanupError != null && !cleanupError.isEmpty()) return t("清理旧 DSU 镜像失败: " + cleanupError, "Failed to clean old DSU images: " + cleanupError);
+               if (!service.startInstallation(DSU_SLOT)) return t("Dynamic System 拒绝开始安装，请检查系统 Dynamic System 权限", "Dynamic System rejected the installation. Check Dynamic System permissions.");
             started = true;
               List<ZipEntry> imageEntries = new ArrayList<>();
               java.util.Enumeration<? extends ZipEntry> zipEntries = zip.entries();
@@ -626,13 +630,17 @@ public class MainActivity extends Activity {
         installProgress.setProgress(Math.max(0, Math.min(100, progress)));
     }
     private void finishProgress(String message){
-         boolean success=message.contains("已安装并启用") || message.contains("DSU 已启动") || message.contains("替换完成")
-                 || message.contains("installed and DSU enabled") || message.contains("replacement complete");
+             boolean success=message.contains("已安装并启用") || message.contains("DSU 已启动") || message.contains("替换完成")
+                  || message.contains("installed and DSU enabled") || message.contains("replacement complete");
          boolean replacement=message.contains("替换完成") || message.contains("替换 ") || message.contains("replacement complete") || message.contains("replacement failed");
          showInstallProgress(replacement ? (success ? t("替换完成", "Replacement complete") : t("替换失败", "Replacement failed"))
                  : (success ? t("安装完成", "Installation complete") : t("安装失败", "Installation failed")), success?100:0);
-        detailText.setText(message);
-        toast(message);
+         detailText.setText(message);
+         toast(message);
+         if (success && !replacement) {
+             gsiStatus.setText(t("已安装，等待启动", "Installed, waiting to boot"));
+         }
+         if (success && !replacement) refreshStatusAfterInstall(0);
     }
     private CommandResult runPrivilegedCommand(String... args){
         StringBuilder command=new StringBuilder(); for(String arg:args) command.append(quote(arg)).append(' ');
@@ -642,18 +650,32 @@ public class MainActivity extends Activity {
     private String quote(String value){ return "'"+value.replace("'","'\\''")+"'"; }
      private void runPrivileged(String... args){ String result=runPrivilegedResult(args); toast(result.isEmpty()?"操作已发送":result); }
      private void wipeDsu(){
-        new Thread(() -> {
-            CommandResult result = runPrivilegedCommand("/system/bin/gsi_tool", "wipe");
-            runOnUiThread(() -> {
-                 if (result.exitCode == 0) {
-                    installPanel.setVisibility(View.GONE);
-                    installProgress.setProgress(0);
-                     installStage.setText(t("安装进度", "Installation progress"));
+         new Thread(() -> {
+             String cleanupBeforeError = "";
+             try {
+                 if (privilegedService != null) cleanupBeforeError = privilegedService.cleanupDsuBackingImages();
+             } catch (Exception exception) {
+                 cleanupBeforeError = exception.getMessage() == null ? exception.toString() : exception.getMessage();
+             }
+             boolean removed = false;
+             try {
+                 if (privilegedService != null) removed = privilegedService.remove();
+             } catch (Exception ignored) { }
+             CommandResult result = runPrivilegedCommand("/system/bin/gsi_tool", "wipe");
+             boolean success = (removed || result.exitCode == 0)
+                     && cleanupBeforeError.isEmpty();
+             final String cleanupFailure = cleanupBeforeError;
+             runOnUiThread(() -> {
+                 if (success) {
+                     installPanel.setVisibility(View.GONE);
+                     installProgress.setProgress(0);
+                      installStage.setText(t("安装进度", "Installation progress"));
                      detailText.setText(t("DSU 已撤销", "DSU removed"));
                      gsiStatus.setText(t("未安装", "Not installed"));
                      toast(t("DSU 已撤销", "DSU removed"));
-                } else {
-                    String message = result.output.isEmpty() ? t("撤销 DSU 失败", "Failed to remove DSU") : t("撤销 DSU 失败: ", "Failed to remove DSU: ") + result.output;
+                 } else {
+                     String detail = cleanupFailure.isEmpty() ? result.output : cleanupFailure;
+                     String message = detail.isEmpty() ? t("撤销 DSU 失败", "Failed to remove DSU") : t("撤销 DSU 失败: ", "Failed to remove DSU: ") + detail;
                     detailText.setText(message);
                     toast(message);
                 }
@@ -689,14 +711,14 @@ public class MainActivity extends Activity {
          }
          boolean hasImage = false;
          for (String line : raw.split("\\r?\\n")) {
-             String[] parts = line.split("\\|", 4);
+              String[] parts = line.split("\\|", -1);
             if (parts.length == 2 && parts[0].equals("ROOT_OK")) {
                 imageManagementPanel.addView(text(parts[1], 13, Color.rgb(77, 87, 105)));
                 continue;
             }
              if (parts.length < 3) continue;
              hasImage = true;
-            String name = parts[0];
+             String name = parts[0];
             long bytes;
             try { bytes = Long.parseLong(parts[1]); } catch (NumberFormatException e) { bytes = -1; }
             LinearLayout row = new LinearLayout(this);
@@ -708,16 +730,18 @@ public class MainActivity extends Activity {
              replace.setText(t("替换", "Replace"));
             replace.setTextSize(12);
             replace.setAllCaps(false);
-            replace.setMinHeight(0);
-            replace.setMinWidth(0);
-            replace.setOnClickListener(v -> chooseReplacement(name, parts[2]));
+             replace.setMinHeight(0);
+             replace.setMinWidth(0);
+                String backingImage = parts.length > 4 ? parts[4] : name;
+                String backingSlot = parts.length > 5 ? parts[5] : "";
+                replace.setOnClickListener(v -> chooseReplacement(name, backingImage, backingSlot, parts[2]));
             row.addView(replace, new LinearLayout.LayoutParams(dp(76), dp(42)));
              imageManagementPanel.addView(row);
          }
          if (!hasImage) {
              imageManagementPanel.addView(text(t("当前没有可管理的镜像文件\n", "No manageable image files are available\n") + raw, 12, Color.rgb(77, 87, 105)));
          }
-         TextView hint = text(t("替换前请确保设备未运行 DSU。替换完成后点击“重启到 DSU”。", "Make sure DSU is not running before replacement. Tap \"Reboot to DSU\" after replacement."), 12, Color.rgb(110, 118, 135));
+        TextView hint = text(t("替换完成后点击“重启到 DSU”使更新后的分区生效。", "Tap \"Reboot to DSU\" after replacement to apply the updated partition."), 12, Color.rgb(110, 118, 135));
         imageManagementPanel.addView(hint, new LinearLayout.LayoutParams(-1, dp(42)));
     }
     private String formatBytes(long bytes){
@@ -726,30 +750,53 @@ public class MainActivity extends Activity {
         if (bytes >= 1024L * 1024L * 1024L) return String.format(java.util.Locale.US, "%.2f GB", bytes / 1073741824d);
         return String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576d);
     }
-    private void chooseReplacement(String partition, String imagePath){
-        replacementPartition = partition;
-        replacementImagePath = imagePath;
+      private void chooseReplacement(String targetName, String backingImage, String backingSlot, String imagePath){
+          replacementPartition = targetName;
+          replacementBackingImage = backingImage;
+          replacementSlot = backingSlot;
+         replacementImagePath = imagePath;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType("*/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         startActivityForResult(intent, PICK_REPLACEMENT);
     }
-    private void replaceImage(Uri source, String partition){
-        String selectedName = displayName(source).toLowerCase(java.util.Locale.US);
-        if (!selectedName.endsWith(".img") && !selectedName.endsWith(".raw")) {
-             toast(t("请选择 .img 或 .raw 镜像文件", "Choose an .img or .raw image file"));
-            return;
-        }
-          showInstallProgress(t("正在准备替换 " + partition, "Preparing to replace " + partition), 5);
-         new Thread(() -> {
-             String path = getPath(source, "replace-" + partition + ".img");
-             boolean success = false;
-              runOnUiThread(() -> showInstallProgress(t("正在复制 " + partition + " 镜像", "Copying " + partition + " image"), 35));
-             try { if (!path.isEmpty() && privilegedService != null) success = privilegedService.replaceDsuImage(replacementImagePath, path); }
-             catch (Exception ignored) { }
-              String message = success ? t(partition + ".img 替换完成，请点击“重启到 DSU”使其生效", partition + ".img replacement complete. Tap \"Reboot to DSU\" to apply it.")
-                      : t("替换 " + partition + ".img 失败：请确认 DSU 未运行且系统允许访问 DSU 镜像目录", "Failed to replace " + partition + ".img. Make sure DSU is stopped and the DSU image directory is accessible.");
-             if (!path.isEmpty()) new File(path).delete();
+       private void replaceImage(Uri source, String partition){
+          String selectedName = displayName(source).toLowerCase(java.util.Locale.US);
+          if (!selectedName.endsWith(".img") && !selectedName.endsWith(".raw")) {
+               toast(t("请选择 .img 或 .raw 镜像文件", "Choose an .img or .raw image file"));
+              return;
+          }
+           String targetPartition = partition;
+           String targetBackingImage = replacementBackingImage == null
+                   ? targetPartition : replacementBackingImage;
+           String targetSlot = replacementSlot == null || replacementSlot.isEmpty()
+                   ? DSU_SLOT : replacementSlot;
+          String sourcePartition = partitionBaseName(selectedName);
+          String expectedPartition = partitionBaseName(targetPartition);
+          if (!sourcePartition.equals(expectedPartition)) {
+              toast(t("镜像分区名不匹配：需要 " + expectedPartition + ".img，实际为 " + selectedName,
+                      "Partition name mismatch: expected " + expectedPartition + ".img, got " + selectedName));
+              return;
+          }
+         showInstallProgress(t("正在准备替换 " + targetPartition, "Preparing to replace " + targetPartition), 5);
+           new Thread(() -> {
+               ParcelFileDescriptor fd = null;
+               String error = "";
+               boolean success = false;
+               runOnUiThread(() -> showInstallProgress(t("正在复制 " + targetPartition + " 镜像", "Copying " + targetPartition + " image"), 35));
+                try {
+                    fd = getContentResolver().openFileDescriptor(source, "r");
+                    long size = replacementSize(source, fd);
+                    if (fd == null) error = "无法打开镜像文件";
+                    else if (privilegedService != null) {
+                        error = privilegedService.replaceDsuBackingImage(targetSlot, targetBackingImage, fd, size, true);
+                        success = error != null && error.isEmpty();
+                    } else error = "ROOT service unavailable";
+                } catch (Exception exception) { error = exception.getMessage() == null ? exception.toString() : exception.getMessage(); }
+               finally { if (fd != null) try { fd.close(); } catch (Exception ignored) { } }
+               final String operationError = error;
+                String message = success ? t("替换 " + targetPartition + " 完成，请点击“重启到 DSU”使其生效", "Replacement of " + targetPartition + " complete. Tap \"Reboot to DSU\" to apply it.")
+                        : t("替换 " + targetPartition + " 失败：" + operationError, "Failed to replace " + targetPartition + ": " + operationError);
              boolean result = success;
              runOnUiThread(() -> {
                   showInstallProgress(result ? t("替换完成", "Replacement complete") : t("替换失败", "Replacement failed"), result ? 100 : 0);
@@ -760,8 +807,26 @@ public class MainActivity extends Activity {
                      mainHandler.postDelayed(() -> installPanel.setVisibility(View.GONE), 1200);
                  }
              });
-         }).start();
-    }
+          }).start();
+      }
+      private String partitionBaseName(String name) {
+          String normalized = name == null ? "" : name.toLowerCase(java.util.Locale.US);
+          if (normalized.endsWith(".img") || normalized.endsWith(".raw"))
+              normalized = normalized.substring(0, normalized.lastIndexOf('.'));
+          if (normalized.endsWith("_gsi"))
+              normalized = normalized.substring(0, normalized.length() - 4);
+          return normalized;
+      }
+      private void refreshStatusAfterInstall(int attempt) {
+         refreshStatus();
+         if (attempt < 4) mainHandler.postDelayed(() -> refreshStatusAfterInstall(attempt + 1), 600);
+     }
+     private long replacementSize(Uri uri, ParcelFileDescriptor fd) {
+         try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
+             if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) return cursor.getLong(0);
+         } catch (Exception ignored) { }
+         try { return fd == null ? -1 : fd.getStatSize(); } catch (Exception ignored) { return -1; }
+     }
     private void bootDsu(){
         IPrivilegedService service = privilegedService;
          if (service == null) { toast(t("ROOT Installer 尚未连接", "ROOT installer is not connected")); return; }
