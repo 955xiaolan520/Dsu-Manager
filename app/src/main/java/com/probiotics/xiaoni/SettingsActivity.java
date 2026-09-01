@@ -95,6 +95,14 @@ public final class SettingsActivity extends Activity {
         update.setAllCaps(false);
         update.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/955xiaolan520/Dsu-Manager/releases"))));
         root.addView(update, new LinearLayout.LayoutParams(-1, dp(52)));
+        TextView thanksTitle = label(english ? "Acknowledgements" : "感谢", 16, Color.rgb(20, 29, 55));
+        thanksTitle.setTypeface(null, 1);
+        LinearLayout.LayoutParams thanksTitleLp = new LinearLayout.LayoutParams(-1, dp(48));
+        thanksTitleLp.setMargins(0, dp(20), 0, 0);
+        root.addView(thanksTitle, thanksTitleLp);
+        root.addView(label(english
+                ? "Thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly."
+                : "感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。", 14, Color.rgb(80, 88, 105)), new LinearLayout.LayoutParams(-1, dp(86)));
         root.addView(label(english ? "Dsu Manager 3.1.1" : "Dsu 管理器 3.1.1", 13, Color.rgb(110, 118, 135)), new LinearLayout.LayoutParams(-1, dp(42)));
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
