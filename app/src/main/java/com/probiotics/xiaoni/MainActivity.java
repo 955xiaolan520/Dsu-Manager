@@ -301,8 +301,8 @@ public class MainActivity extends Activity {
     }
 
     private void showAboutDialog() {
-        String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n感谢开源项目作者：VegaBobo\n项目地址：https://github.com/955xiaolan520/Dsu-Manager\n\n作者：小你可兰\n管理器版本：3.1.1",
-                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow is based on the DSU-Sideloader project.\n\nThanks to the open-source project author: VegaBobo\nProject: https://github.com/955xiaolan520/Dsu-Manager\n\nAuthor: Xiaonikelan\nManager version: 3.1.1");
+        String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n感谢开源项目作者：VegaBobo\n项目地址：https://github.com/955xiaolan520/Dsu-Manager\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi，感谢其开发的 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：probiotics\n管理器版本：3.1.1",
+                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow is based on the DSU-Sideloader project.\n\nThanks to the open-source project author: VegaBobo\nProject: https://github.com/955xiaolan520/Dsu-Manager\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: probiotics\nManager version: 3.1.1");
         new AlertDialog.Builder(this)
                 .setTitle(t("关于 Dsu 管理器", "About Dsu Manager"))
                 .setMessage(about)
