@@ -221,7 +221,7 @@ public final class SettingsActivity extends Activity {
                 JSONObject release = new JSONObject(body.toString());
                 String tag = release.optString("tag_name", "");
                 String latestVersion = tag.startsWith("v") ? tag.substring(1) : tag;
-                String notes = release.optString("body", "").trim();
+                String notes = trimReleaseNotes(release.optString("body", ""));
                 String downloadUrl = release.optString("html_url", "https://github.com/955xiaolan520/Dsu-Manager/releases");
                 JSONArray assets = release.optJSONArray("assets");
                 if (assets != null) {
@@ -270,6 +270,15 @@ public final class SettingsActivity extends Activity {
             }
         } catch (NumberFormatException ignored) { }
         return false;
+    }
+
+    private String trimReleaseNotes(String notes) {
+        String normalized = notes == null ? "" : notes.trim();
+        int filesSection = normalized.indexOf("## 文件说明");
+        if (filesSection >= 0) normalized = normalized.substring(0, filesSection).trim();
+        int filesSectionEnglish = normalized.indexOf("## File list");
+        if (filesSectionEnglish >= 0) normalized = normalized.substring(0, filesSectionEnglish).trim();
+        return normalized;
     }
 
     private void downloadAndInstall(String downloadUrl, boolean english) {
