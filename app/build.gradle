@@ -14,7 +14,6 @@ android { namespace 'com.probiotics.xiaoni'; compileSdk 37
 }
 
 dependencies {
-    implementation 'androidx.core:core:1.13.1'
     implementation 'com.github.topjohnwu.libsu:core:6.0.0'
     implementation 'com.github.topjohnwu.libsu:service:6.0.0'
     implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:4.3'

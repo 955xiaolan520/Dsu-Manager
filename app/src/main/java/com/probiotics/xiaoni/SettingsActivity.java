@@ -17,8 +17,6 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
-import androidx.core.content.FileProvider;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -303,7 +301,7 @@ public final class SettingsActivity extends Activity {
                         }
                     }
                 }
-                Uri apkUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apk);
+                Uri apkUri = UpdateFileProvider.getUriForFile(this, apk);
                 new Handler(Looper.getMainLooper()).post(() -> {
                     updateStatus.setText(english ? "Download complete. Confirm installation in the system installer." : "下载完成，请在系统安装界面确认安装。");
                     downloadButton.setEnabled(true);
