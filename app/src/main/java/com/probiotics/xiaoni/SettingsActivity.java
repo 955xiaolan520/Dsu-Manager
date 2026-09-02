@@ -32,7 +32,7 @@ import java.util.Locale;
 
 public final class SettingsActivity extends Activity {
     private static final String LANGUAGE_KEY = "language_mode";
-    private static final String CURRENT_VERSION = "3.3.1";
+    private static final String CURRENT_VERSION = "3.4.1";
     private static final String LATEST_RELEASE_API = "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest";
     private TextView updateStatus;
     private TextView releaseNotes;
@@ -188,7 +188,7 @@ public final class SettingsActivity extends Activity {
         thanks.setPadding(dp(14), dp(10), dp(14), dp(10));
         thanks.setBackgroundResource(R.drawable.rounded_panel);
         root.addView(thanks, new LinearLayout.LayoutParams(-1, dp(86)));
-         TextView version = label(english ? "Dsu Manager 3.3.1" : "Dsu 管理器 3.3.1", 13, Color.rgb(110, 118, 135));
+         TextView version = label(english ? "Dsu Manager 3.4.1" : "Dsu 管理器 3.4.1", 13, Color.rgb(110, 118, 135));
         version.setPadding(dp(14), 0, dp(14), 0);
         version.setBackgroundResource(R.drawable.rounded_panel);
         LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(-1, dp(42));
@@ -274,11 +274,14 @@ public final class SettingsActivity extends Activity {
 
     private String trimReleaseNotes(String notes) {
         String normalized = notes == null ? "" : notes.trim();
-        int filesSection = normalized.indexOf("## 文件说明");
-        if (filesSection >= 0) normalized = normalized.substring(0, filesSection).trim();
-        int filesSectionEnglish = normalized.indexOf("## File list");
-        if (filesSectionEnglish >= 0) normalized = normalized.substring(0, filesSectionEnglish).trim();
-        return normalized;
+        StringBuilder visible = new StringBuilder();
+        for (String line : normalized.split("\\r?\\n")) {
+            String compact = line.trim().toLowerCase(Locale.ROOT).replace(" ", "");
+            if (compact.equals("##文件说明") || compact.equals("##filelist") || compact.equals("##files")) break;
+            if (visible.length() > 0) visible.append('\n');
+            visible.append(line);
+        }
+        return visible.toString().trim();
     }
 
     private void downloadAndInstall(String downloadUrl, boolean english) {
