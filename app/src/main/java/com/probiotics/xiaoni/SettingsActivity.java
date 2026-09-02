@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -16,12 +17,16 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
+import androidx.core.content.FileProvider;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
@@ -244,7 +249,7 @@ public final class SettingsActivity extends Activity {
                     if (newer) {
                         downloadButton.setVisibility(android.view.View.VISIBLE);
                         downloadHint.setVisibility(android.view.View.VISIBLE);
-                        downloadButton.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(resultUrl))));
+                        downloadButton.setOnClickListener(v -> downloadAndInstall(resultUrl, english));
                     }
                 });
             } catch (Exception error) {
@@ -267,5 +272,68 @@ public final class SettingsActivity extends Activity {
             }
         } catch (NumberFormatException ignored) { }
         return false;
+    }
+
+    private void downloadAndInstall(String downloadUrl, boolean english) {
+        downloadButton.setEnabled(false);
+        downloadButton.setText(english ? "Downloading..." : "正在下载...");
+        updateStatus.setText(english ? "Downloading update APK..." : "正在下载更新 APK...");
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            File apk = new File(getCacheDir(), "dsu-manager-update.apk");
+            try {
+                connection = (HttpURLConnection) new URL(downloadUrl).openConnection();
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(30000);
+                connection.setInstanceFollowRedirects(true);
+                if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) {
+                    throw new IllegalStateException("HTTP " + connection.getResponseCode());
+                }
+                int contentLength = connection.getContentLength();
+                try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(apk)) {
+                    byte[] buffer = new byte[8192];
+                    int read;
+                    long total = 0;
+                    while ((read = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, read);
+                        total += read;
+                        if (contentLength > 0) {
+                            int progress = (int) Math.min(100, total * 100 / contentLength);
+                            new Handler(Looper.getMainLooper()).post(() -> downloadButton.setText((english ? "Downloading " : "下载中 ") + progress + "%"));
+                        }
+                    }
+                }
+                Uri apkUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apk);
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    updateStatus.setText(english ? "Download complete. Confirm installation in the system installer." : "下载完成，请在系统安装界面确认安装。");
+                    downloadButton.setEnabled(true);
+                    downloadButton.setText(english ? "Install downloaded APK" : "安装已下载 APK");
+                    downloadButton.setOnClickListener(v -> installApk(apkUri));
+                    installApk(apkUri);
+                });
+            } catch (Exception error) {
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    downloadButton.setEnabled(true);
+                    downloadButton.setText(english ? "Download latest APK" : "下载最新 APK");
+                    updateStatus.setText((english ? "Download failed: " : "下载失败: ") + error.getMessage());
+                });
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
+    }
+
+    private void installApk(Uri apkUri) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
+            updateStatus.setText("请在系统设置中允许本应用安装未知应用。\nPlease allow this app to install unknown apps in system settings.");
+            Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName()));
+            startActivity(settings);
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+        intent.setData(apkUri);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(intent);
     }
 }
