@@ -11,6 +11,7 @@ Dsu Manager is an Android utility for managing Dynamic System Updates (DSU) and 
 - Added lossless replacement support for all discovered DSU image files.
 - Added GitHub latest-release checking in Settings.
 - Added release notes display and a direct latest Release APK download button.
+- Made the release notes panel vertically scrollable for long update descriptions.
 - Updated the home logo depth styling, settings cards, rounded progress bar, and multilingual labels.
 
 ## Build

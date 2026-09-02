@@ -8,6 +8,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.ViewParent;
 import android.widget.ScrollView;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -31,6 +33,7 @@ public final class SettingsActivity extends Activity {
     private static final String LATEST_RELEASE_API = "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest";
     private TextView updateStatus;
     private TextView releaseNotes;
+    private TextView downloadHint;
     private Button downloadButton;
 
     @Override public void onCreate(Bundle state) {
@@ -120,27 +123,55 @@ public final class SettingsActivity extends Activity {
          updateStatus = label(english ? "Tap check for the latest release." : "点击检查最新版本。", 13, Color.rgb(80, 88, 105));
          updateStatus.setPadding(dp(14), dp(10), dp(14), dp(10));
          updateStatus.setBackgroundResource(R.drawable.rounded_panel);
-         root.addView(updateStatus, new LinearLayout.LayoutParams(-1, dp(48)));
-         releaseNotes = label("", 13, Color.rgb(80, 88, 105));
-         releaseNotes.setPadding(dp(14), dp(10), dp(14), dp(10));
-         releaseNotes.setBackgroundResource(R.drawable.rounded_panel);
-         releaseNotes.setVisibility(android.view.View.GONE);
-         LinearLayout.LayoutParams notesLp = new LinearLayout.LayoutParams(-1, dp(150));
-         notesLp.setMargins(0, dp(8), 0, 0);
-         root.addView(releaseNotes, notesLp);
+         LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, dp(48));
+         statusLp.setMargins(0, 0, 0, dp(10));
+         root.addView(updateStatus, statusLp);
+           releaseNotes = label("", 13, Color.rgb(80, 88, 105));
+           releaseNotes.setGravity(Gravity.TOP | Gravity.START);
+           releaseNotes.setPadding(dp(14), dp(10), dp(14), dp(10));
+           ScrollView notesScroll = new ScrollView(this);
+           notesScroll.setFillViewport(false);
+           notesScroll.setVerticalScrollBarEnabled(true);
+           notesScroll.setOnTouchListener((view, event) -> {
+               if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE) {
+                   view.getParent().requestDisallowInterceptTouchEvent(true);
+               } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                   view.getParent().requestDisallowInterceptTouchEvent(false);
+               }
+               return false;
+           });
+          notesScroll.setBackgroundResource(R.drawable.rounded_panel);
+          notesScroll.addView(releaseNotes);
+          notesScroll.setVisibility(android.view.View.GONE);
+          LinearLayout.LayoutParams notesLp = new LinearLayout.LayoutParams(-1, dp(170));
+          notesLp.setMargins(0, 0, 0, dp(10));
+          root.addView(notesScroll, notesLp);
          Button update = new Button(this);
          update.setText(english ? "Check for updates" : "检查更新");
-        update.setAllCaps(false);
-        update.setBackgroundResource(R.drawable.rounded_panel);
-         update.setOnClickListener(v -> checkForUpdates(english));
-         root.addView(update, new LinearLayout.LayoutParams(-1, dp(52)));
+         update.setAllCaps(false);
+         update.setBackgroundResource(R.drawable.rounded_panel);
+          update.setOnClickListener(v -> checkForUpdates(english));
+         LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-1, dp(52));
+         updateLp.setMargins(0, 0, 0, dp(10));
+         root.addView(update, updateLp);
          downloadButton = new Button(this);
          downloadButton.setText(english ? "Download latest APK" : "下载最新 APK");
          downloadButton.setAllCaps(false);
          downloadButton.setBackgroundResource(R.drawable.button_green);
          downloadButton.setTextColor(Color.WHITE);
          downloadButton.setVisibility(android.view.View.GONE);
-         root.addView(downloadButton, new LinearLayout.LayoutParams(-1, dp(52)));
+         LinearLayout.LayoutParams downloadLp = new LinearLayout.LayoutParams(-1, dp(52));
+         downloadLp.setMargins(0, 0, 0, dp(8));
+         root.addView(downloadButton, downloadLp);
+         downloadHint = label(english
+                 ? "Download address: GitHub. Use a proxy or VPN when GitHub cannot be opened."
+                 : "下载地址是 GitHub，网页打不开时可以使用魔法下载最新版。", 12, Color.rgb(80, 88, 105));
+         downloadHint.setPadding(dp(14), dp(8), dp(14), dp(8));
+         downloadHint.setBackgroundResource(R.drawable.rounded_panel);
+         downloadHint.setVisibility(android.view.View.GONE);
+         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, dp(50));
+         hintLp.setMargins(0, 0, 0, dp(4));
+         root.addView(downloadHint, hintLp);
         TextView thanksTitle = label(english ? "Acknowledgements" : "感谢", 16, Color.rgb(20, 29, 55));
         thanksTitle.setTypeface(null, 1);
         thanksTitle.setTextColor(Color.rgb(181, 103, 39));
@@ -168,8 +199,10 @@ public final class SettingsActivity extends Activity {
 
     private void checkForUpdates(boolean english) {
         updateStatus.setText(english ? "Checking for updates..." : "正在检查更新...");
-        releaseNotes.setVisibility(android.view.View.GONE);
+        ViewParent initialNotesParent = releaseNotes.getParent();
+        if (initialNotesParent instanceof android.view.View) ((android.view.View) initialNotesParent).setVisibility(android.view.View.GONE);
         downloadButton.setVisibility(android.view.View.GONE);
+        downloadHint.setVisibility(android.view.View.GONE);
         new Thread(() -> {
             HttpURLConnection connection = null;
             try {
@@ -206,9 +239,11 @@ public final class SettingsActivity extends Activity {
                             ? (english ? "New version available: " + resultVersion : "发现新版本: " + resultVersion)
                             : (english ? "You are using the latest version: " + CURRENT_VERSION : "当前已是最新版本: " + CURRENT_VERSION));
                     releaseNotes.setText((english ? "Release notes:\n" : "更新内容:\n") + resultNotes);
-                    releaseNotes.setVisibility(android.view.View.VISIBLE);
+                    ViewParent notesParent = releaseNotes.getParent();
+                    if (notesParent instanceof android.view.View) ((android.view.View) notesParent).setVisibility(android.view.View.VISIBLE);
                     if (newer) {
                         downloadButton.setVisibility(android.view.View.VISIBLE);
+                        downloadHint.setVisibility(android.view.View.VISIBLE);
                         downloadButton.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(resultUrl))));
                     }
                 });
