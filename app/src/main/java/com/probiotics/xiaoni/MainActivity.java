@@ -51,10 +51,15 @@ public class MainActivity extends Activity {
     private boolean rootCheckInProgress;
     private Button[] actionButtons;
     private static final String DSU_SLOT = "dsu";
-    private LinearLayout installPanel;
+    private LinearLayout installPanel, installOptionsPanel;
     private LinearLayout imageManagementPanel;
     private ProgressBar installProgress;
-    private TextView installStage;
+    private TextView installStage, installZipLabel;
+    private Button confirmInstallButton;
+    private Button[] installSizeButtons;
+    private EditText customInstallSizeInput;
+    private Uri pendingInstallZip;
+    private int selectedInstallSize = 1;
     private IPrivilegedService privilegedService;
     private final ServiceConnection rootConnection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder service) {
@@ -143,8 +148,10 @@ public class MainActivity extends Activity {
             return insets;
         });
 
-        LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
+         LinearLayout bar = new LinearLayout(this);
+         bar.setGravity(Gravity.CENTER_VERTICAL);
+         bar.setPadding(dp(14), 0, dp(10), 0);
+         bar.setBackgroundResource(R.drawable.rounded_panel);
           TextView title = text(t("Dsu 管理器", "Dsu Manager"), 28, Color.rgb(20,29,55));
         title.setTypeface(null, 1);
         bar.addView(title, new LinearLayout.LayoutParams(0, dp(58), 1));
@@ -154,7 +161,8 @@ public class MainActivity extends Activity {
          rootStatus.setBackgroundResource(R.drawable.root_status_bg);
         rootStatus.setOnClickListener(v -> refreshRootStatus());
         bar.addView(rootStatus, new LinearLayout.LayoutParams(-2, dp(36)));
-        content.addView(bar);
+         LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(-1, dp(58));
+         content.addView(bar, barLp);
 
         logoCard = new LinearLayout(this);
         logoCard.setOrientation(LinearLayout.VERTICAL);
@@ -179,15 +187,33 @@ public class MainActivity extends Activity {
              }
              return true;
          });
-        TextView logoTitle = text("GSI STATUS", 13, 0xFFDDE8FF);
-        logoTitle.setTypeface(null, 1);
-        logoCard.addView(logoTitle);
          gsiStatus = text(rootAuthorized ? t("正在读取动态系统状态...", "Reading Dynamic System status...")
-                 : t("需要 ROOT 权限", "ROOT access required"), 21, Color.WHITE);
-        gsiStatus.setTypeface(null, 1);
-        logoCard.addView(gsiStatus, new LinearLayout.LayoutParams(-1, dp(52)));
+                  : t("需要 ROOT 权限", "ROOT access required"), 21, Color.WHITE);
+         gsiStatus.setTypeface(null, 1);
+         logoCard.addView(gsiStatus, new LinearLayout.LayoutParams(-1, dp(52)));
          TextView hint = text(t("点击卡片更换背景图片", "Tap to change background image"), 12, 0xB8FFFFFF);
-        logoCard.addView(hint);
+         logoCard.addView(hint);
+         FrameLayout logoMark = new FrameLayout(this);
+         TextView logoDepth = text("小你", 32, 0x66101A44);
+         logoDepth.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+         logoDepth.setTypeface(null, 1);
+         logoDepth.setTranslationX(dp(4));
+         logoDepth.setTranslationY(dp(5));
+         logoMark.addView(logoDepth, new FrameLayout.LayoutParams(-1, dp(50)));
+         TextView logoExtrusion = text("小你", 32, 0xFF183B91);
+         logoExtrusion.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+         logoExtrusion.setTypeface(null, 1);
+         logoExtrusion.setTranslationX(dp(2));
+         logoExtrusion.setTranslationY(dp(2));
+         logoMark.addView(logoExtrusion, new FrameLayout.LayoutParams(-1, dp(50)));
+         TextView logoFace = text("小你", 32, Color.WHITE);
+         logoFace.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+         logoFace.setTypeface(null, 1);
+         logoFace.setShadowLayer(dp(2), 0, dp(1), 0xCC07142E);
+         logoMark.addView(logoFace, new FrameLayout.LayoutParams(-1, dp(50)));
+         LinearLayout.LayoutParams logoMarkLp = new LinearLayout.LayoutParams(-1, dp(50));
+         logoMarkLp.gravity = Gravity.RIGHT;
+         logoCard.addView(logoMark, logoMarkLp);
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, dp(170));
         cardLp.setMargins(0, dp(14), 0, dp(16));
         cardLp.gravity = Gravity.CENTER_HORIZONTAL;
@@ -237,9 +263,9 @@ public class MainActivity extends Activity {
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
           String[] labels = english
-                  ? new String[]{"Check GSI status", "Install GSI", "Reboot to DSU", "Remove installed GSI", "Installed GSI details", "Manage installed images"}
-                  : new String[]{"检测 GSI 状态", "安装 GSI", "重启到 DSU", "撤销已安装 GSI", "已安装 GSI 信息", "管理已安装镜像"};
-         int[] backgrounds = {R.drawable.button_blue, R.drawable.button_green, R.drawable.button_orange, R.drawable.button_purple, R.drawable.button_teal, R.drawable.button_blue};
+                  ? new String[]{"Check GSI status", "Install GSI", "Reboot to DSU", "Remove installed GSI", "Manage installed images"}
+                  : new String[]{"检测 GSI 状态", "安装 GSI", "重启到 DSU", "撤销已安装 GSI", "管理已安装镜像"};
+           int[] backgrounds = {R.drawable.button_blue, R.drawable.button_green, R.drawable.button_orange, R.drawable.button_purple, R.drawable.button_blue};
          actionButtons = new Button[labels.length];
         for (int i = 0; i < labels.length; i++) {
             Button button = new Button(this);
@@ -267,14 +293,101 @@ public class MainActivity extends Activity {
          LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, dp(86));
          detailLp.setMargins(0, 0, 0, dp(12));
          content.addView(detailText, detailLp);
-        installPanel = new LinearLayout(this);
+         installOptionsPanel = new LinearLayout(this);
+         installOptionsPanel.setOrientation(LinearLayout.VERTICAL);
+         installOptionsPanel.setPadding(dp(12), dp(10), dp(12), dp(10));
+         installOptionsPanel.setBackgroundResource(R.drawable.rounded_panel);
+         TextView installTitle = text(t("安装 GSI 参数", "Install GSI options"), 15, Color.rgb(20, 29, 55));
+         installTitle.setTypeface(null, 1);
+         installOptionsPanel.addView(installTitle, new LinearLayout.LayoutParams(-1, dp(34)));
+         LinearLayout sizeRow = new LinearLayout(this);
+         sizeRow.setOrientation(LinearLayout.HORIZONTAL);
+         installSizeButtons = new Button[4];
+         String[] installSizes = {"8 GB", "16 GB", "32 GB", "64 GB"};
+         for (int i = 0; i < installSizes.length; i++) {
+             final int sizeIndex = i;
+             Button sizeButton = new Button(this);
+             installSizeButtons[i] = sizeButton;
+             sizeButton.setText(installSizes[i]);
+             sizeButton.setTextSize(12);
+             sizeButton.setAllCaps(false);
+             sizeButton.setMinWidth(0);
+             sizeButton.setMinHeight(0);
+             sizeButton.setPadding(0, 0, 0, 0);
+             sizeButton.setOnClickListener(v -> selectInstallSize(sizeIndex, installSizes[sizeIndex]));
+             LinearLayout.LayoutParams sizeLp = new LinearLayout.LayoutParams(0, dp(44), 1);
+             if (i > 0) sizeLp.setMargins(dp(5), 0, 0, 0);
+             sizeRow.addView(sizeButton, sizeLp);
+         }
+         installOptionsPanel.addView(sizeRow, new LinearLayout.LayoutParams(-1, dp(44)));
+         customInstallSizeInput = new EditText(this);
+         customInstallSizeInput.setHint(t("自定义容量 GB", "Custom size GB"));
+         customInstallSizeInput.setSingleLine(true);
+         customInstallSizeInput.setTextSize(13);
+         customInstallSizeInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+         customInstallSizeInput.setBackgroundResource(R.drawable.rounded_panel);
+         Button customSizeButton = new Button(this);
+         customSizeButton.setText(t("使用自定义", "Use custom"));
+         customSizeButton.setTextSize(12);
+         customSizeButton.setAllCaps(false);
+         customSizeButton.setMinWidth(0);
+         customSizeButton.setMinHeight(0);
+         customSizeButton.setTextColor(Color.WHITE);
+         customSizeButton.setBackgroundResource(R.drawable.button_teal);
+         customSizeButton.setOnClickListener(v -> applyCustomInstallSize());
+         LinearLayout customRow = new LinearLayout(this);
+         customRow.setGravity(Gravity.CENTER_VERTICAL);
+         customRow.addView(customInstallSizeInput, new LinearLayout.LayoutParams(0, dp(46), 1));
+         LinearLayout.LayoutParams customButtonLp = new LinearLayout.LayoutParams(dp(108), dp(44));
+         customButtonLp.setMargins(dp(6), 0, 0, 0);
+         customRow.addView(customSizeButton, customButtonLp);
+         LinearLayout.LayoutParams customRowLp = new LinearLayout.LayoutParams(-1, dp(52));
+         customRowLp.setMargins(0, dp(8), 0, 0);
+         installOptionsPanel.addView(customRow, customRowLp);
+         LinearLayout zipRow = new LinearLayout(this);
+         zipRow.setGravity(Gravity.CENTER_VERTICAL);
+         Button chooseZipButton = new Button(this);
+         chooseZipButton.setText(t("选择 ZIP", "Choose ZIP"));
+         chooseZipButton.setTextSize(12);
+         chooseZipButton.setAllCaps(false);
+         chooseZipButton.setMinWidth(0);
+         chooseZipButton.setMinHeight(0);
+         chooseZipButton.setTextColor(Color.WHITE);
+         chooseZipButton.setBackgroundResource(R.drawable.button_blue);
+         chooseZipButton.setOnClickListener(v -> chooseZip());
+         zipRow.addView(chooseZipButton, new LinearLayout.LayoutParams(dp(112), dp(44)));
+         installZipLabel = text(t("尚未选择 ZIP", "No ZIP selected"), 12, Color.rgb(77, 87, 105));
+         installZipLabel.setSingleLine(true);
+         installZipLabel.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+         LinearLayout.LayoutParams zipLabelLp = new LinearLayout.LayoutParams(0, dp(44), 1);
+         zipLabelLp.setMargins(dp(8), 0, 0, 0);
+         zipRow.addView(installZipLabel, zipLabelLp);
+         installOptionsPanel.addView(zipRow, new LinearLayout.LayoutParams(-1, dp(48)));
+         confirmInstallButton = new Button(this);
+         confirmInstallButton.setText(t("确定安装 ZIP", "Install ZIP"));
+         confirmInstallButton.setTextSize(13);
+         confirmInstallButton.setAllCaps(false);
+         confirmInstallButton.setMinHeight(0);
+         confirmInstallButton.setTextColor(Color.WHITE);
+         confirmInstallButton.setEnabled(false);
+         confirmInstallButton.setBackgroundResource(R.drawable.button_green);
+         confirmInstallButton.setOnClickListener(v -> confirmInstallZip());
+         LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-1, dp(46));
+         confirmLp.setMargins(0, dp(8), 0, 0);
+         installOptionsPanel.addView(confirmInstallButton, confirmLp);
+         installOptionsPanel.setVisibility(View.GONE);
+         content.addView(installOptionsPanel, new LinearLayout.LayoutParams(-1, -2));
+         selectInstallSize(1, "16 GB");
+
+         installPanel = new LinearLayout(this);
         installPanel.setOrientation(LinearLayout.VERTICAL);
         installPanel.setPadding(dp(14), dp(8), dp(14), dp(8));
          installPanel.setBackgroundResource(R.drawable.progress_bg);
          installStage = text(t("安装进度", "Installation progress"), 13, Color.rgb(40, 50, 70));
         installPanel.addView(installStage, new LinearLayout.LayoutParams(-1, dp(26)));
         installProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        installProgress.setMax(100);
+         installProgress.setMax(100);
+         installProgress.setProgressDrawable(getDrawable(R.drawable.progress_bar));
         installPanel.addView(installProgress, new LinearLayout.LayoutParams(-1, dp(8)));
         installPanel.setVisibility(View.GONE);
         LinearLayout.LayoutParams progressLp = new LinearLayout.LayoutParams(-1, dp(52));
@@ -301,8 +414,8 @@ public class MainActivity extends Activity {
     }
 
     private void showAboutDialog() {
-        String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：probiotics\n管理器版本：3.1.1",
-                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: probiotics\nManager version: 3.1.1");
+         String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.2.1",
+                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.2.1");
         new AlertDialog.Builder(this)
                 .setTitle(t("关于 Dsu 管理器", "About Dsu Manager"))
                 .setMessage(about)
@@ -322,7 +435,11 @@ public class MainActivity extends Activity {
             String status = formatGsiStatus(raw);
             runOnUiThread(() -> {
                 gsiStatus.setText(status);
-                 detailText.setText("GSI: " + localizedStatus(status));
+                 if (status.equals("已安装，等待启动")) {
+                     showInstalledGsiSummary();
+                 } else {
+                     detailText.setText(t("GSI: ", "GSI: ") + localizedStatus(status));
+                 }
             });
         }).start();
     }
@@ -389,42 +506,21 @@ public class MainActivity extends Activity {
                   refreshStatus();
                   toast(t("已刷新 GSI 状态", "GSI status refreshed"));
                   return;
-              case 1:
-                  installDialog();
-                  return;
+               case 1:
+                   installOptionsPanel.setVisibility(installOptionsPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+                   return;
               case 2:
                   confirm(t("重启到 DSU", "Reboot to DSU"), t("设备将重启到已安装的 Dynamic System。", "The device will reboot into the installed Dynamic System."), this::bootDsu);
                   return;
               case 3:
                   confirm(t("撤销 GSI", "Remove GSI"), t("将清理当前已安装的动态系统。", "The installed Dynamic System will be removed."), this::wipeDsu);
                   return;
-              case 4:
-                  showInfo();
-                  return;
-              case 5:
-                  if (imageManagementPanel.getVisibility() == View.VISIBLE) imageManagementPanel.setVisibility(View.GONE); else showImageManagement();
-                  return;
+               case 4:
+                   if (imageManagementPanel.getVisibility() == View.VISIBLE) imageManagementPanel.setVisibility(View.GONE); else showImageManagement();
+                   return;
               default:
           }
       }
-      private void installDialog(){
-          final String[] sizes=english ? new String[]{"8 GB","16 GB","32 GB","64 GB","Custom size"} : new String[]{"8 GB","16 GB","32 GB","64 GB","自定义容量"};
-          AlertDialog d=new AlertDialog.Builder(this).setTitle(t("安装 GSI", "Install GSI"))
-                 .setSingleChoiceItems(sizes,1,(dialog, which) -> {
-                     if (which == 4) {
-                         dialog.dismiss();
-                         customSize();
-                     }
-                 })
-                  .setPositiveButton(t("选择 ZIP 安装包", "Choose ZIP package"),null)
-                  .setNegativeButton(t("取消", "Cancel"),null).create();
-         d.setOnShowListener(x -> d.getButton(-1).setOnClickListener(v -> {
-             int selected=d.getListView().getCheckedItemPosition();
-             d.dismiss();
-             if(selected == 4) customSize(); else chooseZip(sizes[selected]);
-         }));
-         d.show();
-     }
     private void customSize(){
         EditText input = new EditText(this);
          input.setHint(t("例如 24 或 24.5", "For example, 24 or 24.5"));
@@ -463,14 +559,35 @@ public class MainActivity extends Activity {
                     .showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
         }, 200);
     }
-    private void chooseZip(String size){
-        pendingSizeLabel = size;
-        userdataSizeBytes = parseSizeBytes(size);
-        chooseZip();
-    }
-    private void chooseZip(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("application/zip"); i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"}); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_ZIP); }
-    private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
-        @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installWithDsuSideloaderFlow(u); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
+     private void chooseZip(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("application/zip"); i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"}); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_ZIP); }
+     private void selectInstallSize(int index, String label){
+         selectedInstallSize = index;
+         pendingSizeLabel = label;
+         userdataSizeBytes = parseSizeBytes(label);
+         for (int i = 0; i < installSizeButtons.length; i++) {
+             installSizeButtons[i].setTextColor(i == index ? Color.WHITE : Color.rgb(40, 50, 70));
+             installSizeButtons[i].setBackgroundResource(i == index ? R.drawable.button_teal : R.drawable.rounded_panel);
+         }
+     }
+     private void applyCustomInstallSize(){
+         try {
+             double gb = Double.parseDouble(customInstallSizeInput.getText().toString().trim().replace(',', '.'));
+             if (gb <= 0 || gb > 128) throw new NumberFormatException();
+             selectedInstallSize = -1;
+             pendingSizeLabel = customInstallSizeInput.getText().toString().trim() + " GB";
+             userdataSizeBytes = Math.round(gb * 1024d * 1024d * 1024d);
+             for (Button button : installSizeButtons) { button.setTextColor(Color.rgb(40, 50, 70)); button.setBackgroundResource(R.drawable.rounded_panel); }
+         } catch (NumberFormatException error) {
+             customInstallSizeInput.setError(t("请输入 0 到 128 之间的容量", "Enter a size between 0 and 128"));
+         }
+     }
+     private void confirmInstallZip(){
+         if (pendingInstallZip == null) { toast(t("请先选择 ZIP 安装包", "Choose a ZIP package first")); return; }
+         installOptionsPanel.setVisibility(View.GONE);
+         installWithDsuSideloaderFlow(pendingInstallZip);
+     }
+     private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
+        @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } }
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
@@ -635,12 +752,12 @@ public class MainActivity extends Activity {
          boolean replacement=message.contains("替换完成") || message.contains("替换 ") || message.contains("replacement complete") || message.contains("replacement failed");
          showInstallProgress(replacement ? (success ? t("替换完成", "Replacement complete") : t("替换失败", "Replacement failed"))
                  : (success ? t("安装完成", "Installation complete") : t("安装失败", "Installation failed")), success?100:0);
-         detailText.setText(message);
-         toast(message);
-         if (success && !replacement) {
-             gsiStatus.setText(t("已安装，等待启动", "Installed, waiting to boot"));
-         }
-         if (success && !replacement) refreshStatusAfterInstall(0);
+          detailText.setText(message);
+          toast(message);
+          if (success && !replacement) {
+              gsiStatus.setText(t("已安装，等待启动", "Installed, waiting to boot"));
+              showInstalledGsiSummary();
+          }
     }
     private CommandResult runPrivilegedCommand(String... args){
         StringBuilder command=new StringBuilder(); for(String arg:args) command.append(quote(arg)).append(' ');
@@ -670,8 +787,8 @@ public class MainActivity extends Activity {
                      installPanel.setVisibility(View.GONE);
                      installProgress.setProgress(0);
                       installStage.setText(t("安装进度", "Installation progress"));
-                     detailText.setText(t("DSU 已撤销", "DSU removed"));
-                     gsiStatus.setText(t("未安装", "Not installed"));
+                      detailText.setText(t("GSI 状态\n未安装", "GSI status\nNot installed"));
+                      gsiStatus.setText(t("未安装", "Not installed"));
                      toast(t("DSU 已撤销", "DSU removed"));
                  } else {
                      String detail = cleanupFailure.isEmpty() ? result.output : cleanupFailure;
@@ -817,9 +934,8 @@ public class MainActivity extends Activity {
               normalized = normalized.substring(0, normalized.length() - 4);
           return normalized;
       }
-      private void refreshStatusAfterInstall(int attempt) {
-         refreshStatus();
-         if (attempt < 4) mainHandler.postDelayed(() -> refreshStatusAfterInstall(attempt + 1), 600);
+     private void showInstalledGsiSummary() {
+         detailText.setText(t("GSI 状态\n已安装，等待启动\n安装包: ", "GSI status\nInstalled, waiting to boot\nPackage: ") + installedZipName);
      }
      private long replacementSize(Uri uri, ParcelFileDescriptor fd) {
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
@@ -851,11 +967,7 @@ public class MainActivity extends Activity {
              runOnUiThread(() -> toast(t("设备正在重启到 DSU", "Device is rebooting to DSU")));
         }).start();
     }
-    private void showInfo(){
-         detailText.setText(t("正在读取已安装 GSI 信息...", "Reading installed GSI information..."));
-          new Thread(() -> { String result; try { result=runPrivilegedResult("/system/bin/gsi_tool","status"); } catch(Exception e){ result=t("读取失败: ", "Read failed: ")+e.getMessage(); } final String output=(result==null||result.trim().isEmpty()?t("当前没有可用的 GSI 状态信息", "No GSI status information is available"):formatGsiStatus(result))+"\n"+t("安装包: ", "Package: ")+installedZipName; runOnUiThread(() -> { detailText.setText(t("GSI 状态\n", "GSI status\n")+output); new AlertDialog.Builder(this).setTitle(t("已安装 GSI 系统信息", "Installed GSI information")).setMessage(output).setPositiveButton(t("确定", "OK"),null).show(); }); }).start();
-     }
-     private static final class RoundedCropDrawable extends Drawable {
+      private static final class RoundedCropDrawable extends Drawable {
          private final Bitmap bitmap;
          private final float radius;
          private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
