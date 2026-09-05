@@ -1,0 +1,9 @@
+<resources>
+    <style name="LinuxTerminalTheme" parent="AppTheme">
+        <item name="android:statusBarColor">#182027</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

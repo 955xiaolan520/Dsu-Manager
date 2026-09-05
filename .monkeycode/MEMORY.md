@@ -20,3 +20,9 @@ This file records user instructions, preferences, and teachings for reference in
 - Instructions:
   - Release builds use `/workspace/.tools/gradle/gradle-8.7/bin/gradle` with the Android SDK at `/workspace/.tools/android-sdk`.
   - Run Android build and packaging commands through a resource-limited background terminal.
+
+### User Instruction Summary
+- Date: 2026-09-02
+- Context: GitHub commit attribution for the Dsu Manager repository
+- Instructions:
+  - Configure repository commits with the user's GitHub identity `955xiaolan520 <955xiaolan520@users.noreply.github.com>`.
