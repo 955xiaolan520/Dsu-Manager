@@ -977,7 +977,7 @@ public class MainActivity extends Activity {
           LinearLayout.LayoutParams thanksParams = new LinearLayout.LayoutParams(-1, dp(92));
           thanksParams.setMargins(0, 0, 0, dp(10));
           page.addView(thanks, thanksParams);
-          TextView version = text(t("Dsu 管理器 3.5.6", "Dsu Manager 3.5.6"), 13, Color.rgb(110, 118, 135));
+          TextView version = text(t("Dsu 管理器 3.5.7", "Dsu Manager 3.5.7"), 13, Color.rgb(110, 118, 135));
           version.setPadding(dp(14), 0, dp(14), 0);
            version.setBackgroundResource(R.drawable.liquid_glass_panel);
           page.addView(version, new LinearLayout.LayoutParams(-1, dp(46)));
@@ -992,18 +992,24 @@ public class MainActivity extends Activity {
           new Thread(() -> {
               HttpURLConnection connection = null;
               try {
-                  connection = (HttpURLConnection) new java.net.URL("https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest").openConnection();
-                  connection.setConnectTimeout(10000);
-                  connection.setReadTimeout(10000);
-                  connection.setRequestProperty("Accept", "application/vnd.github+json");
-                  StringBuilder body = new StringBuilder();
+                   connection = (HttpURLConnection) new java.net.URL("https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest").openConnection();
+                   connection.setRequestMethod("GET");
+                   connection.setConnectTimeout(10000);
+                   connection.setReadTimeout(10000);
+                   connection.setRequestProperty("Accept", "application/vnd.github+json");
+                   connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/3.5.7");
+                   connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
+                   connection.setUseCaches(false);
+                   int responseCode = connection.getResponseCode();
+                   if (responseCode < 200 || responseCode >= 300) throw new IOException("GitHub HTTP " + responseCode);
+                   StringBuilder body = new StringBuilder();
                   try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
                       String line;
                       while ((line = reader.readLine()) != null) body.append(line);
                   }
                   JSONObject release = new JSONObject(body.toString());
                   String version = release.optString("tag_name", "").replaceFirst("^v", "");
-                  String notes = release.optString("body", "").replace("\\r\\n", "\n").replace("\\n", "\n").trim();
+                   String notes = trimReleaseNotes(release.optString("body", ""));
                   String url = release.optString("html_url", "https://github.com/955xiaolan520/Dsu-Manager/releases");
                   JSONArray assets = release.optJSONArray("assets");
                   if (assets != null) for (int i = 0; i < assets.length(); i++) {
@@ -1017,8 +1023,8 @@ public class MainActivity extends Activity {
                   final String finalNotes = notes;
                   final String finalUrl = url;
                   mainHandler.post(() -> {
-                      boolean newer = isVersionNewer(finalVersion, "3.5.6");
-                      embeddedUpdateStatus.setText(newer ? t("发现新版本: " + finalVersion, "New version available: " + finalVersion) : t("当前已是最新版本: 3.5.6", "You are using the latest version: 3.5.6"));
+                      boolean newer = isVersionNewer(finalVersion, "3.5.7");
+                      embeddedUpdateStatus.setText(newer ? t("发现新版本: " + finalVersion, "New version available: " + finalVersion) : t("当前已是最新版本: 3.5.7", "You are using the latest version: 3.5.7"));
                       embeddedReleaseNotes.setText(t("更新内容:\n", "Release notes:\n") + (finalNotes.isEmpty() ? t("暂无更新说明。", "No release notes.") : finalNotes));
                       embeddedReleaseNotesScroll.setVisibility(View.VISIBLE);
                       if (newer) {
@@ -1035,7 +1041,7 @@ public class MainActivity extends Activity {
           }).start();
       }
 
-      private boolean isVersionNewer(String candidate, String current) {
+       private boolean isVersionNewer(String candidate, String current) {
           try {
               String[] a = candidate.split("\\."), b = current.split("\\.");
               for (int i = 0; i < Math.max(a.length, b.length); i++) {
@@ -1044,8 +1050,20 @@ public class MainActivity extends Activity {
                   if (left != right) return left > right;
               }
           } catch (NumberFormatException ignored) { }
-          return false;
-      }
+           return false;
+       }
+
+       private String trimReleaseNotes(String notes) {
+           String normalized = notes == null ? "" : notes.replace("\\r\\n", "\n").replace("\\n", "\n").trim();
+           StringBuilder visible = new StringBuilder();
+           for (String line : normalized.split("\\r?\\n")) {
+               String compact = line.trim().toLowerCase(Locale.ROOT).replace(" ", "");
+               if (compact.equals("##安装说明") || compact.equals("##installation") || compact.equals("##校验") || compact.equals("##verification") || compact.equals("##文件说明") || compact.equals("##filelist") || compact.equals("##files")) break;
+               if (visible.length() > 0) visible.append('\n');
+               visible.append(line);
+           }
+           return visible.toString().trim();
+       }
 
       private void downloadEmbeddedApk(String url) {
           embeddedDownloadButton.setEnabled(false);
@@ -1101,7 +1119,7 @@ public class MainActivity extends Activity {
 
       private LinearLayout buildAboutPage() {
          LinearLayout page = page(t("关于 Dsu 管理器", "About Dsu Manager"));
-         TextView about = text(t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.6", "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.6"), 15, Color.rgb(53, 66, 94));
+         TextView about = text(t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.7", "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.7"), 15, Color.rgb(53, 66, 94));
          about.setGravity(Gravity.TOP);
          about.setPadding(dp(18), dp(18), dp(18), dp(18));
           about.setBackgroundResource(R.drawable.liquid_glass_panel);
@@ -1115,8 +1133,8 @@ public class MainActivity extends Activity {
     }
 
     private void showAboutDialog() {
-           String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.6",
-                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.6");
+           String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.7",
+                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.7");
         new AlertDialog.Builder(this)
                 .setTitle(t("关于 Dsu 管理器", "About Dsu Manager"))
                 .setMessage(about)

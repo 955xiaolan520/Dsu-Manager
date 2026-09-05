@@ -32,7 +32,7 @@ import java.util.Locale;
 
 public final class SettingsActivity extends Activity {
     private static final String LANGUAGE_KEY = "language_mode";
-    private static final String CURRENT_VERSION = "3.5.6";
+    private static final String CURRENT_VERSION = "3.5.7";
     private static final String LATEST_RELEASE_API = "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest";
     private TextView updateStatus;
     private TextView releaseNotes;
@@ -209,10 +209,16 @@ public final class SettingsActivity extends Activity {
         new Thread(() -> {
             HttpURLConnection connection = null;
             try {
-                connection = (HttpURLConnection) new URL(LATEST_RELEASE_API).openConnection();
-                connection.setConnectTimeout(10000);
-                connection.setReadTimeout(10000);
-                connection.setRequestProperty("Accept", "application/vnd.github+json");
+                 connection = (HttpURLConnection) new URL(LATEST_RELEASE_API).openConnection();
+                 connection.setRequestMethod("GET");
+                 connection.setConnectTimeout(10000);
+                 connection.setReadTimeout(10000);
+                 connection.setRequestProperty("Accept", "application/vnd.github+json");
+                 connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/3.5.7");
+                 connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
+                 connection.setUseCaches(false);
+                 int responseCode = connection.getResponseCode();
+                 if (responseCode < 200 || responseCode >= 300) throw new java.io.IOException("GitHub HTTP " + responseCode);
                 StringBuilder body = new StringBuilder();
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
                     String line;
@@ -277,7 +283,7 @@ public final class SettingsActivity extends Activity {
         StringBuilder visible = new StringBuilder();
         for (String line : normalized.split("\\r?\\n")) {
             String compact = line.trim().toLowerCase(Locale.ROOT).replace(" ", "");
-            if (compact.equals("##文件说明") || compact.equals("##filelist") || compact.equals("##files")) break;
+            if (compact.equals("##安装说明") || compact.equals("##installation") || compact.equals("##校验") || compact.equals("##verification") || compact.equals("##文件说明") || compact.equals("##filelist") || compact.equals("##files")) break;
             if (visible.length() > 0) visible.append('\n');
             visible.append(line);
         }
