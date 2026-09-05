@@ -66,6 +66,12 @@ public class MainActivity extends Activity {
     private LinearLayout bottomNavigationItems;
     private View liquidIndicator;
     private int liquidIndicatorLeft = -1;
+    private ValueAnimator liquidNavigationFlow;
+    private ValueAnimator bottomNavigationPulse;
+    private Runnable navigationHold;
+    private boolean navigationDragging;
+    private int navigationTarget;
+    private float navigationStartX;
     private TextView embeddedUpdateStatus, embeddedReleaseNotes, embeddedDownloadHint;
     private ScrollView embeddedReleaseNotesScroll;
     private Button embeddedDownloadButton;
@@ -429,7 +435,7 @@ public class MainActivity extends Activity {
          items.setClipToPadding(false);
           navigation.addView(items, new FrameLayout.LayoutParams(-1, -1));
           bottomNavigationItems = items;
-         addNavigationItem(items, t("首页", "Home"), 0, v -> selectTab(0));
+          addNavigationItem(items, t("首页", "Home"), 0, v -> selectTab(0));
          addNavigationItem(items, t("设置", "Settings"), 1, v -> selectTab(1));
          addNavigationItem(items, t("关于", "About"), 2, v -> selectTab(2));
            addNavigationItem(items, t("终端", "Terminal"), 3, v -> selectTab(3));
@@ -454,19 +460,62 @@ public class MainActivity extends Activity {
           item.setBackground(null);
           item.setTag(tab);
           item.setStateListAnimator(null);
-          item.setOnTouchListener((view, event) -> {
-              if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                  pressLiquidIndicator(true);
-              } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-                  pressLiquidIndicator(false);
-              }
-              return false;
-          });
-          item.setOnClickListener(listener);
+           item.setOnTouchListener((view, event) -> handleNavigationGesture(view, event, tab));
          LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(0, dp(64), 1);
           itemParams.setMargins(dp(2), 0, dp(2), 0);
-         navigation.addView(item, itemParams);
-     }
+          navigation.addView(item, itemParams);
+      }
+
+       private boolean handleNavigationGesture(View view, MotionEvent event, int pressedTab) {
+          switch (event.getActionMasked()) {
+              case MotionEvent.ACTION_DOWN:
+                  pressLiquidIndicator(true);
+                  navigationDragging = false;
+                  navigationTarget = -1;
+                  navigationStartX = event.getRawX();
+                  navigationHold = () -> {
+                      navigationDragging = true;
+                      view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                      view.getParent().requestDisallowInterceptTouchEvent(true);
+                      previewNavigationTarget(navigationStartX);
+                  };
+                  mainHandler.postDelayed(navigationHold, android.view.ViewConfiguration.getLongPressTimeout());
+                  return true;
+              case MotionEvent.ACTION_MOVE:
+                  if (navigationDragging) previewNavigationTarget(event.getRawX());
+                  return true;
+              case MotionEvent.ACTION_UP:
+                  cancelNavigationHold();
+                  pressLiquidIndicator(false);
+                  if (navigationDragging) selectTab(navigationTarget);
+                  else selectTab(pressedTab);
+                  navigationDragging = false;
+                  return true;
+              case MotionEvent.ACTION_CANCEL:
+                  cancelNavigationHold();
+                  pressLiquidIndicator(false);
+                  navigationDragging = false;
+                  return true;
+              default:
+                  return true;
+          }
+      }
+
+      private void cancelNavigationHold() {
+          if (navigationHold != null) mainHandler.removeCallbacks(navigationHold);
+          navigationHold = null;
+      }
+
+      private void previewNavigationTarget(float rawX) {
+          if (bottomNavigationItems == null || bottomNavigationItems.getChildCount() == 0) return;
+          int[] location = new int[2];
+          bottomNavigationItems.getLocationOnScreen(location);
+          float itemWidth = bottomNavigationItems.getWidth() / (float) bottomNavigationItems.getChildCount();
+          int tab = Math.max(0, Math.min(bottomNavigationItems.getChildCount() - 1, (int) ((rawX - location[0]) / itemWidth)));
+          if (tab == navigationTarget) return;
+          navigationTarget = tab;
+          animateNavigation(tab);
+      }
 
      private Drawable glassBackground(boolean selected) {
          GradientDrawable background = new GradientDrawable();
@@ -543,8 +592,8 @@ public class MainActivity extends Activity {
           }
      }
 
-      private void moveLiquidIndicator(int selectedTab, boolean animated) {
-         if (liquidIndicator == null || bottomNavigation == null) return;
+       private void moveLiquidIndicator(int selectedTab, boolean animated) {
+          if (liquidIndicator == null || bottomNavigation == null) return;
           ViewGroup items = bottomNavigationItems;
           if (items.getChildCount() == 0) return;
           View target = items.getChildAt(selectedTab);
@@ -555,44 +604,87 @@ public class MainActivity extends Activity {
           params.width = indicatorWidth;
           params.height = indicatorHeight;
             params.topMargin = dp(8);
-         if (liquidIndicatorLeft < 0 || !animated) {
+          if (liquidIndicatorLeft < 0 || !animated) {
              liquidIndicatorLeft = targetLeft;
              params.leftMargin = targetLeft;
              liquidIndicator.setTranslationX(0f);
              liquidIndicator.setLayoutParams(params);
-             return;
-         }
-         int previousLeft = liquidIndicatorLeft;
+              return;
+          }
+          if (liquidNavigationFlow != null) {
+              ValueAnimator previousFlow = liquidNavigationFlow;
+              liquidNavigationFlow = null;
+              previousFlow.cancel();
+          }
+          int previousLeft = liquidIndicatorLeft;
          params.leftMargin = previousLeft;
          liquidIndicator.setTranslationX(0f);
-         liquidIndicator.setLayoutParams(params);
-         liquidIndicatorLeft = targetLeft;
-           liquidIndicator.setPivotX(indicatorWidth / 2f);
-           liquidIndicator.setPivotY(indicatorHeight / 2f);
-          ValueAnimator flow = ValueAnimator.ofFloat(0f, 1f);
-          flow.setDuration(560);
-          flow.setInterpolator(new android.view.animation.PathInterpolator(.16f, .84f, .22f, 1f));
-          flow.addUpdateListener(animation -> {
-              float progress = (Float) animation.getAnimatedValue();
-              float move = targetLeft - previousLeft;
-               float stretch = progress < .38f ? progress / .38f : 1f - (progress - .38f) / .62f;
-               float settle = progress < .72f ? 0f : (progress - .72f) / .28f;
-               liquidIndicator.setTranslationX(move * progress);
-               liquidIndicator.setScaleX(1f + .34f * Math.max(0f, stretch) - .06f * settle);
-               liquidIndicator.setScaleY(1f + .20f * Math.max(0f, stretch) - .08f * settle);
-          });
-          flow.addListener(new android.animation.AnimatorListenerAdapter() {
-              @Override public void onAnimationEnd(android.animation.Animator animation) {
-                  FrameLayout.LayoutParams settled = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
-                  settled.leftMargin = targetLeft;
-                  liquidIndicator.setTranslationX(0f);
-                  liquidIndicator.setScaleX(1f);
-                  liquidIndicator.setScaleY(1f);
-                  liquidIndicator.setLayoutParams(settled);
-              }
-          });
-          flow.start();
-     }
+          liquidIndicator.setLayoutParams(params);
+          liquidIndicatorLeft = targetLeft;
+           float direction = targetLeft >= previousLeft ? 1f : -1f;
+           // Keep the tail rooted while the liquid body stretches toward the next tab.
+           liquidIndicator.setPivotX(direction > 0f ? 0f : indicatorWidth);
+            liquidIndicator.setPivotY(indicatorHeight / 2f);
+           ValueAnimator flow = ValueAnimator.ofFloat(0f, 1f);
+           liquidNavigationFlow = flow;
+           flow.setDuration(940);
+           flow.setInterpolator(new android.view.animation.PathInterpolator(.18f, .78f, .22f, 1f));
+           flow.addUpdateListener(animation -> {
+               float progress = (Float) animation.getAnimatedValue();
+               float move = targetLeft - previousLeft;
+               float stretch = progress < .24f ? progress / .24f : progress < .48f ? 1f : progress < .80f ? 1f - (progress - .48f) / .32f : 0f;
+               float settle = progress < .80f ? 0f : (progress - .80f) / .20f;
+               float travel = progress < .43f ? 0f : (progress - .43f) / .57f;
+               liquidIndicator.setTranslationX(move * travel);
+               liquidIndicator.setScaleX(1f + 1.18f * stretch + .07f * settle);
+               liquidIndicator.setScaleY(1f + .18f * stretch - .04f * settle);
+           });
+           flow.addListener(new android.animation.AnimatorListenerAdapter() {
+               @Override public void onAnimationEnd(android.animation.Animator animation) {
+                   if (animation != liquidNavigationFlow) return;
+                   FrameLayout.LayoutParams settled = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
+                   settled.leftMargin = targetLeft;
+                   liquidIndicator.setTranslationX(0f);
+                   liquidIndicator.setScaleX(1f);
+                   liquidIndicator.setScaleY(1f);
+                   liquidIndicator.setPivotX(indicatorWidth / 2f);
+                   liquidIndicator.setLayoutParams(settled);
+                   liquidNavigationFlow = null;
+               }
+           });
+           pulseBottomNavigation();
+           flow.start();
+       }
+
+       private void pulseBottomNavigation() {
+           if (bottomNavigation == null) return;
+           if (bottomNavigationPulse != null) {
+               ValueAnimator previousPulse = bottomNavigationPulse;
+               bottomNavigationPulse = null;
+               previousPulse.cancel();
+           }
+           bottomNavigation.setPivotX(bottomNavigation.getWidth() / 2f);
+           bottomNavigation.setPivotY(bottomNavigation.getHeight() / 2f);
+           ValueAnimator pulse = ValueAnimator.ofFloat(0f, 1f);
+           bottomNavigationPulse = pulse;
+           pulse.setDuration(840);
+           pulse.setInterpolator(new android.view.animation.PathInterpolator(.22f, .76f, .26f, 1f));
+           pulse.addUpdateListener(animation -> {
+               float progress = (Float) animation.getAnimatedValue();
+               float swell = progress < .28f ? progress / .28f : progress < .55f ? 1f : 1f - (progress - .55f) / .45f;
+               bottomNavigation.setScaleX(1f + .032f * swell);
+               bottomNavigation.setScaleY(1f + .064f * swell);
+           });
+           pulse.addListener(new android.animation.AnimatorListenerAdapter() {
+               @Override public void onAnimationEnd(android.animation.Animator animation) {
+                   if (animation != bottomNavigationPulse) return;
+                   bottomNavigation.setScaleX(1f);
+                   bottomNavigation.setScaleY(1f);
+                   bottomNavigationPulse = null;
+               }
+           });
+           pulse.start();
+       }
 
      private void applySystemInsets(View root, android.view.WindowInsets insets) {
          if (insets == null) return;
@@ -977,7 +1069,7 @@ public class MainActivity extends Activity {
           LinearLayout.LayoutParams thanksParams = new LinearLayout.LayoutParams(-1, dp(92));
           thanksParams.setMargins(0, 0, 0, dp(10));
           page.addView(thanks, thanksParams);
-          TextView version = text(t("Dsu 管理器 3.5.7", "Dsu Manager 3.5.7"), 13, Color.rgb(110, 118, 135));
+          TextView version = text(t("Dsu 管理器 3.5.8", "Dsu Manager 3.5.8"), 13, Color.rgb(110, 118, 135));
           version.setPadding(dp(14), 0, dp(14), 0);
            version.setBackgroundResource(R.drawable.liquid_glass_panel);
           page.addView(version, new LinearLayout.LayoutParams(-1, dp(46)));
@@ -997,7 +1089,7 @@ public class MainActivity extends Activity {
                    connection.setConnectTimeout(10000);
                    connection.setReadTimeout(10000);
                    connection.setRequestProperty("Accept", "application/vnd.github+json");
-                   connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/3.5.7");
+                   connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/3.5.8");
                    connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
                    connection.setUseCaches(false);
                    int responseCode = connection.getResponseCode();
@@ -1023,8 +1115,8 @@ public class MainActivity extends Activity {
                   final String finalNotes = notes;
                   final String finalUrl = url;
                   mainHandler.post(() -> {
-                      boolean newer = isVersionNewer(finalVersion, "3.5.7");
-                      embeddedUpdateStatus.setText(newer ? t("发现新版本: " + finalVersion, "New version available: " + finalVersion) : t("当前已是最新版本: 3.5.7", "You are using the latest version: 3.5.7"));
+                      boolean newer = isVersionNewer(finalVersion, "3.5.8");
+                      embeddedUpdateStatus.setText(newer ? t("发现新版本: " + finalVersion, "New version available: " + finalVersion) : t("当前已是最新版本: 3.5.8", "You are using the latest version: 3.5.8"));
                       embeddedReleaseNotes.setText(t("更新内容:\n", "Release notes:\n") + (finalNotes.isEmpty() ? t("暂无更新说明。", "No release notes.") : finalNotes));
                       embeddedReleaseNotesScroll.setVisibility(View.VISIBLE);
                       if (newer) {
@@ -1119,7 +1211,7 @@ public class MainActivity extends Activity {
 
       private LinearLayout buildAboutPage() {
          LinearLayout page = page(t("关于 Dsu 管理器", "About Dsu Manager"));
-         TextView about = text(t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.7", "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.7"), 15, Color.rgb(53, 66, 94));
+         TextView about = text(t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.8", "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.8"), 15, Color.rgb(53, 66, 94));
          about.setGravity(Gravity.TOP);
          about.setPadding(dp(18), dp(18), dp(18), dp(18));
           about.setBackgroundResource(R.drawable.liquid_glass_panel);
@@ -1133,8 +1225,8 @@ public class MainActivity extends Activity {
     }
 
     private void showAboutDialog() {
-           String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.7",
-                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.7");
+           String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.8",
+                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.8");
         new AlertDialog.Builder(this)
                 .setTitle(t("关于 Dsu 管理器", "About Dsu Manager"))
                 .setMessage(about)
