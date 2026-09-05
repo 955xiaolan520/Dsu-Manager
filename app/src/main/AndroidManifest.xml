@@ -17,6 +17,10 @@
         <activity android:name=".SettingsActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".MoreActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".LinuxTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".AlpineTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".UbuntuTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".DebianTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".LocalTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
         <provider
             android:name=".UpdateFileProvider"
             android:authorities="${applicationId}.fileprovider"
