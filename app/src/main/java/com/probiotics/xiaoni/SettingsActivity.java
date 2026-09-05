@@ -32,7 +32,7 @@ import java.util.Locale;
 
 public final class SettingsActivity extends Activity {
     private static final String LANGUAGE_KEY = "language_mode";
-    private static final String CURRENT_VERSION = "3.5.4";
+    private static final String CURRENT_VERSION = "3.5.5";
     private static final String LATEST_RELEASE_API = "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest";
     private TextView updateStatus;
     private TextView releaseNotes;
