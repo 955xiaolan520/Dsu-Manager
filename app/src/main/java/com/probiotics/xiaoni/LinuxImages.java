@@ -21,6 +21,11 @@ final class LinuxImages {
 
     static File root(Context context) { return new File(context.getFilesDir(), "rootfs"); }
     static File archive(Context context, Image image) {
+        if (image == LOCAL) {
+            File xz = new File(root(context), "local-rootfs.tar.xz");
+            if (xz.isFile()) return xz;
+            return new File(root(context), "local-rootfs.tar.gz");
+        }
         String archiveId = image.name.startsWith("Debian ") ? image.id() + "-pd" : image.id();
         return new File(root(context), archiveId + (image.url.endsWith(".xz") ? ".tar.xz" : ".tar.gz"));
     }
