@@ -72,6 +72,7 @@ public class MainActivity extends Activity {
     private boolean navigationDragging;
     private int navigationTarget;
     private float navigationStartX;
+    private View navigationGestureView;
     private TextView embeddedUpdateStatus, embeddedReleaseNotes, embeddedDownloadHint;
     private ScrollView embeddedReleaseNotesScroll;
     private Button embeddedDownloadButton;
@@ -468,34 +469,51 @@ public class MainActivity extends Activity {
 
        private boolean handleNavigationGesture(View view, MotionEvent event, int pressedTab) {
           switch (event.getActionMasked()) {
-              case MotionEvent.ACTION_DOWN:
-                  pressLiquidIndicator(true);
-                  navigationDragging = false;
-                  navigationTarget = -1;
-                  navigationStartX = event.getRawX();
-                  navigationHold = () -> {
-                      navigationDragging = true;
-                      view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-                      view.getParent().requestDisallowInterceptTouchEvent(true);
-                      previewNavigationTarget(navigationStartX);
-                  };
+               case MotionEvent.ACTION_DOWN:
+                   pressLiquidIndicator(true);
+                   navigationDragging = false;
+                   navigationTarget = -1;
+                   navigationStartX = event.getRawX();
+                   navigationGestureView = view;
+                   navigationHold = () -> {
+                       navigationDragging = true;
+                        view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                        view.getParent().requestDisallowInterceptTouchEvent(true);
+                        expandDraggingLens();
+                         previewNavigationTarget(navigationStartX);
+                   };
                   mainHandler.postDelayed(navigationHold, android.view.ViewConfiguration.getLongPressTimeout());
                   return true;
-              case MotionEvent.ACTION_MOVE:
-                  if (navigationDragging) previewNavigationTarget(event.getRawX());
+               case MotionEvent.ACTION_MOVE:
+                   if (!navigationDragging
+                           && Math.abs(event.getRawX() - navigationStartX) >= dp(12)) {
+                       cancelNavigationHold();
+                       navigationDragging = true;
+                       view.getParent().requestDisallowInterceptTouchEvent(true);
+                       expandDraggingLens();
+                       previewNavigationTarget(event.getRawX());
+                   }
+                   if (navigationDragging) {
+                       float rawX = event.getRawX();
+                       previewNavigationTarget(rawX);
+                   }
                   return true;
-              case MotionEvent.ACTION_UP:
-                  cancelNavigationHold();
-                  pressLiquidIndicator(false);
-                  if (navigationDragging) selectTab(navigationTarget);
-                  else selectTab(pressedTab);
-                  navigationDragging = false;
-                  return true;
+               case MotionEvent.ACTION_UP:
+                   cancelNavigationHold();
+                     boolean dragged = navigationDragging;
+                     navigationDragging = false;
+                     if (dragged) finishDraggingLens();
+                     else view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                   pressLiquidIndicator(false);
+                     selectTab(dragged ? navigationTarget : pressedTab);
+                   navigationGestureView = null;
+                   return true;
               case MotionEvent.ACTION_CANCEL:
                   cancelNavigationHold();
-                  pressLiquidIndicator(false);
-                  navigationDragging = false;
-                  return true;
+                    pressLiquidIndicator(false);
+                    navigationDragging = false;
+                    navigationGestureView = null;
+                   return true;
               default:
                   return true;
           }
@@ -506,16 +524,126 @@ public class MainActivity extends Activity {
           navigationHold = null;
       }
 
-      private void previewNavigationTarget(float rawX) {
-          if (bottomNavigationItems == null || bottomNavigationItems.getChildCount() == 0) return;
-          int[] location = new int[2];
-          bottomNavigationItems.getLocationOnScreen(location);
-          float itemWidth = bottomNavigationItems.getWidth() / (float) bottomNavigationItems.getChildCount();
-          int tab = Math.max(0, Math.min(bottomNavigationItems.getChildCount() - 1, (int) ((rawX - location[0]) / itemWidth)));
-          if (tab == navigationTarget) return;
-          navigationTarget = tab;
-          animateNavigation(tab);
-      }
+        private void previewNavigationTarget(float rawX) {
+            if (bottomNavigationItems == null || bottomNavigationItems.getChildCount() == 0) return;
+            int[] location = new int[2];
+            bottomNavigationItems.getLocationOnScreen(location);
+            float itemWidth = bottomNavigationItems.getWidth() / (float) bottomNavigationItems.getChildCount();
+            int tab = Math.max(0, Math.min(bottomNavigationItems.getChildCount() - 1, (int) ((rawX - location[0]) / itemWidth)));
+            if (tab == navigationTarget) return;
+             boolean movedBetweenTabs = navigationTarget >= 0;
+             navigationTarget = tab;
+             if (movedBetweenTabs && navigationGestureView != null) {
+                 navigationGestureView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
+             }
+             moveDraggingLens(tab, movedBetweenTabs);
+            updateNavigationLabels(tab);
+        }
+
+         private void moveDraggingLens(int tab, boolean animate) {
+            if (liquidIndicator == null || bottomNavigationItems == null || bottomNavigation == null) return;
+            int lensWidth = dp(78);
+            int lensHeight = dp(64);
+            View target = bottomNavigationItems.getChildAt(tab);
+            int targetLeft = bottomNavigationItems.getLeft() + target.getLeft()
+                    + (target.getWidth() - lensWidth) / 2;
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
+            int startLeft = liquidIndicatorLeft < 0 ? targetLeft
+                    : Math.round(params.leftMargin + liquidIndicator.getTranslationX());
+            if (liquidNavigationFlow != null) {
+                ValueAnimator previousFlow = liquidNavigationFlow;
+                liquidNavigationFlow = null;
+                previousFlow.cancel();
+            }
+            params.width = lensWidth;
+            params.height = lensHeight;
+            params.leftMargin = startLeft;
+            params.topMargin = 0;
+            liquidIndicator.setPivotX(lensWidth / 2f);
+            liquidIndicator.setPivotY(lensHeight / 2f);
+            liquidIndicator.setScaleY(1f);
+            liquidIndicator.setTranslationX(0f);
+           liquidIndicator.setLayoutParams(params);
+           if (liquidIndicator instanceof LiquidGlassIndicator) {
+               ((LiquidGlassIndicator) liquidIndicator).setLiquidPressed(true);
+           }
+           if (!animate || startLeft == targetLeft) {
+                liquidIndicatorLeft = targetLeft;
+                params.leftMargin = targetLeft;
+                liquidIndicator.setScaleX(1.16f);
+                liquidIndicator.setLayoutParams(params);
+                return;
+            }
+            ValueAnimator slide = ValueAnimator.ofFloat(0f, 1f);
+            liquidNavigationFlow = slide;
+            slide.setDuration(540);
+            slide.setInterpolator(new android.view.animation.PathInterpolator(.16f, .88f, .22f, 1f));
+            slide.addUpdateListener(animation -> {
+                float progress = (Float) animation.getAnimatedValue();
+                float swell = 4f * progress * (1f - progress);
+                liquidIndicator.setTranslationX((targetLeft - startLeft) * progress);
+                liquidIndicator.setScaleX(1.16f + .30f * swell);
+                liquidIndicator.setScaleY(1f + .045f * swell);
+            });
+            slide.addListener(new android.animation.AnimatorListenerAdapter() {
+                @Override public void onAnimationEnd(android.animation.Animator animation) {
+                    if (animation != liquidNavigationFlow) return;
+                   liquidIndicatorLeft = targetLeft;
+                   FrameLayout.LayoutParams settled = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
+                   settled.leftMargin = targetLeft;
+                   liquidIndicator.setTranslationX(0f);
+                   liquidIndicator.setScaleX(1.16f);
+                   liquidIndicator.setScaleY(1f);
+                   liquidIndicator.setLayoutParams(settled);
+                   liquidNavigationFlow = null;
+               }
+           });
+           pulseBottomNavigation();
+           slide.start();
+        }
+
+        private void expandDraggingLens() {
+            if (liquidIndicator == null) return;
+             liquidIndicator.animate().cancel();
+             liquidIndicator.animate().scaleX(1.16f).scaleY(1f)
+                     .setDuration(220)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                    .start();
+        }
+
+        private void finishDraggingLens() {
+            if (liquidIndicator == null) return;
+            int settleLeft = liquidIndicatorLeft;
+            if (bottomNavigationItems != null && navigationTarget >= 0) {
+                View target = bottomNavigationItems.getChildAt(navigationTarget);
+                int lensWidth = dp(78);
+                settleLeft = bottomNavigationItems.getLeft() + target.getLeft()
+                        + (target.getWidth() - lensWidth) / 2;
+            }
+            if (liquidNavigationFlow != null) {
+                ValueAnimator previousFlow = liquidNavigationFlow;
+                liquidNavigationFlow = null;
+                previousFlow.cancel();
+            }
+            int baseWidth = dp(62);
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
+             params.width = baseWidth;
+             params.height = dp(48);
+             params.leftMargin = settleLeft + (dp(78) - baseWidth) / 2;
+             params.topMargin = dp(8);
+             liquidIndicator.setScaleX(1.16f);
+            liquidIndicator.setScaleY(1f);
+            liquidIndicator.setTranslationX(0f);
+            liquidIndicator.setLayoutParams(params);
+            liquidIndicatorLeft = settleLeft;
+             if (liquidIndicator instanceof LiquidGlassIndicator) {
+                 ((LiquidGlassIndicator) liquidIndicator).setLiquidPressed(false);
+             }
+             liquidIndicator.animate().scaleX(1f).scaleY(1f)
+                     .setDuration(240)
+                     .setInterpolator(new android.view.animation.OvershootInterpolator(1.05f))
+                     .start();
+        }
 
      private Drawable glassBackground(boolean selected) {
          GradientDrawable background = new GradientDrawable();
@@ -526,8 +654,8 @@ public class MainActivity extends Activity {
      }
 
       private void pressLiquidIndicator(boolean pressed) {
-          if (liquidIndicator == null) return;
-          liquidIndicator.animate().cancel();
+           if (liquidIndicator == null) return;
+           liquidIndicator.animate().cancel();
           liquidIndicator.animate()
                   .scaleX(pressed ? 1.16f : 1f)
                   .scaleY(pressed ? 1.16f : 1f)
@@ -538,8 +666,8 @@ public class MainActivity extends Activity {
                   .start();
           if (liquidIndicator instanceof LiquidGlassIndicator) {
               ((LiquidGlassIndicator) liquidIndicator).setLiquidPressed(pressed);
-          }
-      }
+           }
+       }
 
      private void scrollToTop() {
          if (homeScroll != null) homeScroll.smoothScrollTo(0, 0);
@@ -580,7 +708,12 @@ public class MainActivity extends Activity {
       private void animateNavigation(int selectedTab) {
          if (bottomNavigation == null) return;
          moveLiquidIndicator(selectedTab, true);
-           ViewGroup items = bottomNavigationItems;
+         updateNavigationLabels(selectedTab);
+      }
+
+      private void updateNavigationLabels(int selectedTab) {
+            ViewGroup items = bottomNavigationItems;
+         if (items == null) return;
          for (int i = 0; i < items.getChildCount(); i++) {
               View item = items.getChildAt(i);
               boolean selected = i == selectedTab;
@@ -597,18 +730,18 @@ public class MainActivity extends Activity {
           ViewGroup items = bottomNavigationItems;
           if (items.getChildCount() == 0) return;
           View target = items.getChildAt(selectedTab);
-           int indicatorHeight = dp(48);
-           int indicatorWidth = dp(62);
-           int targetLeft = items.getLeft() + target.getLeft() + (target.getWidth() - indicatorWidth) / 2;
-         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
-          params.width = indicatorWidth;
-          params.height = indicatorHeight;
-            params.topMargin = dp(8);
-          if (liquidIndicatorLeft < 0 || !animated) {
-             liquidIndicatorLeft = targetLeft;
-             params.leftMargin = targetLeft;
-             liquidIndicator.setTranslationX(0f);
-             liquidIndicator.setLayoutParams(params);
+            int indicatorHeight = dp(48);
+            int indicatorWidth = dp(62);
+            int targetLeft = items.getLeft() + target.getLeft() + (target.getWidth() - indicatorWidth) / 2;
+           FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
+            params.width = indicatorWidth;
+            params.height = indicatorHeight;
+              params.topMargin = dp(8);
+           if (liquidIndicatorLeft < 0 || !animated) {
+              liquidIndicatorLeft = targetLeft;
+               params.leftMargin = targetLeft;
+               liquidIndicator.setTranslationX(0f);
+               liquidIndicator.setLayoutParams(params);
               return;
           }
           if (liquidNavigationFlow != null) {
@@ -616,47 +749,57 @@ public class MainActivity extends Activity {
               liquidNavigationFlow = null;
               previousFlow.cancel();
           }
-          int previousLeft = liquidIndicatorLeft;
-         params.leftMargin = previousLeft;
-         liquidIndicator.setTranslationX(0f);
-          liquidIndicator.setLayoutParams(params);
-          liquidIndicatorLeft = targetLeft;
-           float direction = targetLeft >= previousLeft ? 1f : -1f;
-           // Keep the tail rooted while the liquid body stretches toward the next tab.
-           liquidIndicator.setPivotX(direction > 0f ? 0f : indicatorWidth);
-            liquidIndicator.setPivotY(indicatorHeight / 2f);
+           int previousLeft = liquidIndicatorLeft;
+            params.leftMargin = previousLeft;
+          liquidIndicator.setTranslationX(0f);
+           liquidIndicator.setLayoutParams(params);
+           liquidIndicatorLeft = targetLeft;
+           if (previousLeft == targetLeft) {
+               liquidIndicator.setScaleX(1f);
+               liquidIndicator.setScaleY(1f);
+               if (liquidIndicator instanceof LiquidGlassIndicator) {
+                   ((LiquidGlassIndicator) liquidIndicator).setLiquidPressed(false);
+               }
+               return;
+           }
+            float direction = targetLeft >= previousLeft ? 1f : -1f;
+            liquidIndicator.setPivotX(indicatorWidth / 2f);
+             liquidIndicator.setPivotY(indicatorHeight / 2f);
            ValueAnimator flow = ValueAnimator.ofFloat(0f, 1f);
            liquidNavigationFlow = flow;
-           flow.setDuration(940);
-           flow.setInterpolator(new android.view.animation.PathInterpolator(.18f, .78f, .22f, 1f));
-           flow.addUpdateListener(animation -> {
-               float progress = (Float) animation.getAnimatedValue();
-               float move = targetLeft - previousLeft;
-               float stretch = progress < .24f ? progress / .24f : progress < .48f ? 1f : progress < .80f ? 1f - (progress - .48f) / .32f : 0f;
-               float settle = progress < .80f ? 0f : (progress - .80f) / .20f;
-               float travel = progress < .43f ? 0f : (progress - .43f) / .57f;
-               liquidIndicator.setTranslationX(move * travel);
-               liquidIndicator.setScaleX(1f + 1.18f * stretch + .07f * settle);
-               liquidIndicator.setScaleY(1f + .18f * stretch - .04f * settle);
-           });
+             flow.setDuration(940);
+             flow.setInterpolator(new android.view.animation.PathInterpolator(.18f, .78f, .22f, 1f));
+            flow.addUpdateListener(animation -> {
+                float progress = (Float) animation.getAnimatedValue();
+                float move = targetLeft - previousLeft;
+                 float stretch = progress < .24f ? progress / .24f : progress < .48f ? 1f : progress < .80f ? 1f - (progress - .48f) / .32f : 0f;
+                 float settle = progress < .80f ? 0f : (progress - .80f) / .20f;
+                 float travel = progress < .43f ? 0f : (progress - .43f) / .57f;
+                 liquidIndicator.setTranslationX(move * travel);
+                 liquidIndicator.setScaleX(1f + 1.18f * stretch + .07f * settle);
+                 liquidIndicator.setScaleY(1f + .18f * stretch - .04f * settle);
+            });
            flow.addListener(new android.animation.AnimatorListenerAdapter() {
                @Override public void onAnimationEnd(android.animation.Animator animation) {
                    if (animation != liquidNavigationFlow) return;
                    FrameLayout.LayoutParams settled = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
-                   settled.leftMargin = targetLeft;
-                   liquidIndicator.setTranslationX(0f);
-                   liquidIndicator.setScaleX(1f);
-                   liquidIndicator.setScaleY(1f);
-                   liquidIndicator.setPivotX(indicatorWidth / 2f);
-                   liquidIndicator.setLayoutParams(settled);
-                   liquidNavigationFlow = null;
+                    settled.leftMargin = targetLeft;
+                    liquidIndicator.setTranslationX(0f);
+                    liquidIndicator.setScaleX(1f);
+                     liquidIndicator.setScaleY(1f);
+                    liquidIndicator.setPivotX(indicatorWidth / 2f);
+                    liquidIndicator.setLayoutParams(settled);
+                    if (liquidIndicator instanceof LiquidGlassIndicator) {
+                        ((LiquidGlassIndicator) liquidIndicator).setLiquidPressed(false);
+                    }
+                    liquidNavigationFlow = null;
                }
            });
            pulseBottomNavigation();
            flow.start();
        }
 
-       private void pulseBottomNavigation() {
+        private void pulseBottomNavigation() {
            if (bottomNavigation == null) return;
            if (bottomNavigationPulse != null) {
                ValueAnimator previousPulse = bottomNavigationPulse;
@@ -683,8 +826,8 @@ public class MainActivity extends Activity {
                    bottomNavigationPulse = null;
                }
            });
-           pulse.start();
-       }
+            pulse.start();
+        }
 
      private void applySystemInsets(View root, android.view.WindowInsets insets) {
          if (insets == null) return;

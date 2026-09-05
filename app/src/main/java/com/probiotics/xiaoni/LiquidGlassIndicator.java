@@ -78,4 +78,5 @@ final class LiquidGlassIndicator extends View {
         RectF lowerEdge = new RectF(bounds.left + dp(3), bounds.top + dp(3), bounds.right - dp(3), bounds.bottom - dp(1));
         canvas.drawArc(lowerEdge, 12, 156, false, innerShadow);
     }
+
 }

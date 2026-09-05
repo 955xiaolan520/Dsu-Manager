@@ -1,7 +1,7 @@
 plugins { id 'com.android.application' }
 
 android { namespace 'com.probiotics.xiaoni'; compileSdk 37
-    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 358; versionName '3.5.8' }
+    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 359; versionName '3.5.9' }
     signingConfigs { release { storeFile file('release-keystore.jks'); storePassword 'changeit'; keyAlias 'tianming-release'; keyPassword 'changeit' } }
     signingConfigs.release {
         enableV1Signing true
