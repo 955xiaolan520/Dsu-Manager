@@ -32,7 +32,7 @@ import java.util.Locale;
 
 public final class SettingsActivity extends Activity {
     private static final String LANGUAGE_KEY = "language_mode";
-    private static final String CURRENT_VERSION = "3.5.3";
+    private static final String CURRENT_VERSION = "3.5.4";
     private static final String LATEST_RELEASE_API = "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest";
     private TextView updateStatus;
     private TextView releaseNotes;
@@ -273,7 +273,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private String trimReleaseNotes(String notes) {
-        String normalized = notes == null ? "" : notes.trim();
+        String normalized = notes == null ? "" : notes.replace("\\r\\n", "\n").replace("\\n", "\n").trim();
         StringBuilder visible = new StringBuilder();
         for (String line : normalized.split("\\r?\\n")) {
             String compact = line.trim().toLowerCase(Locale.ROOT).replace(" ", "");
