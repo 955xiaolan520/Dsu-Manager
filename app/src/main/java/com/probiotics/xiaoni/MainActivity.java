@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     private View liquidIndicator;
     private int liquidIndicatorLeft = -1;
     private TextView embeddedUpdateStatus, embeddedReleaseNotes, embeddedDownloadHint;
+    private ScrollView embeddedReleaseNotesScroll;
     private Button embeddedDownloadButton;
     private int currentTab;
     private LinearLayout imageManagementPanel;
@@ -919,14 +920,26 @@ public class MainActivity extends Activity {
           LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, dp(56));
           statusParams.setMargins(0, 0, 0, dp(10));
           page.addView(embeddedUpdateStatus, statusParams);
-         embeddedReleaseNotes = text("", 13, Color.rgb(80, 88, 105));
-         embeddedReleaseNotes.setGravity(Gravity.TOP | Gravity.START);
-         embeddedReleaseNotes.setPadding(dp(14), dp(10), dp(14), dp(10));
-          embeddedReleaseNotes.setBackgroundResource(R.drawable.liquid_glass_panel);
-         embeddedReleaseNotes.setVisibility(View.GONE);
+          embeddedReleaseNotes = text("", 13, Color.rgb(80, 88, 105));
+          embeddedReleaseNotes.setGravity(Gravity.TOP | Gravity.START);
+          embeddedReleaseNotes.setPadding(dp(14), dp(10), dp(14), dp(10));
+          embeddedReleaseNotesScroll = new ScrollView(this);
+          embeddedReleaseNotesScroll.setFillViewport(false);
+          embeddedReleaseNotesScroll.setVerticalScrollBarEnabled(true);
+          embeddedReleaseNotesScroll.setBackgroundResource(R.drawable.liquid_glass_panel);
+          embeddedReleaseNotesScroll.setOnTouchListener((view, event) -> {
+              ViewParent parent = view.getParent();
+              if (parent != null) {
+                  int action = event.getActionMasked();
+                  parent.requestDisallowInterceptTouchEvent(action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
+              }
+              return false;
+          });
+          embeddedReleaseNotesScroll.addView(embeddedReleaseNotes, new ScrollView.LayoutParams(-1, -2));
+          embeddedReleaseNotesScroll.setVisibility(View.GONE);
           LinearLayout.LayoutParams notesParams = new LinearLayout.LayoutParams(-1, dp(180));
           notesParams.setMargins(0, 0, 0, dp(10));
-          page.addView(embeddedReleaseNotes, notesParams);
+           page.addView(embeddedReleaseNotesScroll, notesParams);
          Button check = new Button(this);
          check.setText(t("检查更新", "Check for updates"));
          check.setAllCaps(false);
@@ -964,7 +977,7 @@ public class MainActivity extends Activity {
           LinearLayout.LayoutParams thanksParams = new LinearLayout.LayoutParams(-1, dp(92));
           thanksParams.setMargins(0, 0, 0, dp(10));
           page.addView(thanks, thanksParams);
-          TextView version = text(t("Dsu 管理器 3.5.5", "Dsu Manager 3.5.5"), 13, Color.rgb(110, 118, 135));
+          TextView version = text(t("Dsu 管理器 3.5.6", "Dsu Manager 3.5.6"), 13, Color.rgb(110, 118, 135));
           version.setPadding(dp(14), 0, dp(14), 0);
            version.setBackgroundResource(R.drawable.liquid_glass_panel);
           page.addView(version, new LinearLayout.LayoutParams(-1, dp(46)));
@@ -973,7 +986,7 @@ public class MainActivity extends Activity {
 
       private void checkEmbeddedUpdates() {
           embeddedUpdateStatus.setText(t("正在检查更新...", "Checking for updates..."));
-          embeddedReleaseNotes.setVisibility(View.GONE);
+          embeddedReleaseNotesScroll.setVisibility(View.GONE);
           embeddedDownloadButton.setVisibility(View.GONE);
           embeddedDownloadHint.setVisibility(View.GONE);
           new Thread(() -> {
@@ -1004,10 +1017,10 @@ public class MainActivity extends Activity {
                   final String finalNotes = notes;
                   final String finalUrl = url;
                   mainHandler.post(() -> {
-                      boolean newer = isVersionNewer(finalVersion, "3.5.5");
-                      embeddedUpdateStatus.setText(newer ? t("发现新版本: " + finalVersion, "New version available: " + finalVersion) : t("当前已是最新版本: 3.5.5", "You are using the latest version: 3.5.5"));
+                      boolean newer = isVersionNewer(finalVersion, "3.5.6");
+                      embeddedUpdateStatus.setText(newer ? t("发现新版本: " + finalVersion, "New version available: " + finalVersion) : t("当前已是最新版本: 3.5.6", "You are using the latest version: 3.5.6"));
                       embeddedReleaseNotes.setText(t("更新内容:\n", "Release notes:\n") + (finalNotes.isEmpty() ? t("暂无更新说明。", "No release notes.") : finalNotes));
-                      embeddedReleaseNotes.setVisibility(View.VISIBLE);
+                      embeddedReleaseNotesScroll.setVisibility(View.VISIBLE);
                       if (newer) {
                           embeddedDownloadButton.setVisibility(View.VISIBLE);
                           embeddedDownloadHint.setVisibility(View.VISIBLE);
@@ -1088,7 +1101,7 @@ public class MainActivity extends Activity {
 
       private LinearLayout buildAboutPage() {
          LinearLayout page = page(t("关于 Dsu 管理器", "About Dsu Manager"));
-         TextView about = text(t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.5", "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.5"), 15, Color.rgb(53, 66, 94));
+         TextView about = text(t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.6", "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.6"), 15, Color.rgb(53, 66, 94));
          about.setGravity(Gravity.TOP);
          about.setPadding(dp(18), dp(18), dp(18), dp(18));
           about.setBackgroundResource(R.drawable.liquid_glass_panel);
@@ -1102,8 +1115,8 @@ public class MainActivity extends Activity {
     }
 
     private void showAboutDialog() {
-           String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.5",
-                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.5");
+           String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.6",
+                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.6");
         new AlertDialog.Builder(this)
                 .setTitle(t("关于 Dsu 管理器", "About Dsu Manager"))
                 .setMessage(about)
