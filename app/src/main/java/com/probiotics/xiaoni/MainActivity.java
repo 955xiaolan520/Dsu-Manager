@@ -213,7 +213,7 @@ public class MainActivity extends Activity {
         });
          logoCard.setOnTouchListener((view, event) -> {
              if (event.getAction() != MotionEvent.ACTION_UP) return true;
-             Haptics.performImmediate(view);
+             Haptics.perform(view);
              if (pendingLogoClick != null) {
                  mainHandler.removeCallbacks(pendingLogoClick);
                  pendingLogoClick = null;
@@ -533,7 +533,7 @@ public class MainActivity extends Activity {
                      boolean dragged = navigationDragging;
                      navigationDragging = false;
                      if (dragged) finishDraggingLens();
-                     else view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                      else Haptics.perform(view);
                    pressLiquidIndicator(false);
                      selectTab(dragged ? navigationTarget : pressedTab);
                    navigationGestureView = null;

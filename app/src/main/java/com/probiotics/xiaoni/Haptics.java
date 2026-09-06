@@ -11,7 +11,7 @@ final class Haptics {
     private Haptics() { }
 
     static void onTouch(View root, MotionEvent event) {
-        if (root == null || event.getActionMasked() != MotionEvent.ACTION_DOWN) return;
+        if (root == null || event.getActionMasked() != MotionEvent.ACTION_UP) return;
         View target = findClickable(root, event.getX(), event.getY());
         if (target != null) perform(target);
     }
