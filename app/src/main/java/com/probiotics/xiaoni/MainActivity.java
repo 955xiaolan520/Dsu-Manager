@@ -1242,7 +1242,7 @@ public class MainActivity extends Activity {
           LinearLayout.LayoutParams thanksParams = new LinearLayout.LayoutParams(-1, dp(92));
           thanksParams.setMargins(0, 0, 0, dp(10));
           page.addView(thanks, thanksParams);
-          TextView version = text(t("Dsu 管理器 3.5.8", "Dsu Manager 3.5.8"), 13, Color.rgb(110, 118, 135));
+           TextView version = text(t("Dsu 管理器 " + BuildConfig.VERSION_NAME, "Dsu Manager " + BuildConfig.VERSION_NAME), 13, Color.rgb(110, 118, 135));
           version.setPadding(dp(14), 0, dp(14), 0);
            version.setBackgroundResource(R.drawable.liquid_glass_panel);
           page.addView(version, new LinearLayout.LayoutParams(-1, dp(46)));
@@ -1262,7 +1262,7 @@ public class MainActivity extends Activity {
                    connection.setConnectTimeout(10000);
                    connection.setReadTimeout(10000);
                    connection.setRequestProperty("Accept", "application/vnd.github+json");
-                   connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/3.5.8");
+                    connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/" + BuildConfig.VERSION_NAME);
                    connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
                    connection.setUseCaches(false);
                    int responseCode = connection.getResponseCode();
@@ -1288,8 +1288,8 @@ public class MainActivity extends Activity {
                   final String finalNotes = notes;
                   final String finalUrl = url;
                   mainHandler.post(() -> {
-                      boolean newer = isVersionNewer(finalVersion, "3.5.8");
-                      embeddedUpdateStatus.setText(newer ? t("发现新版本: " + finalVersion, "New version available: " + finalVersion) : t("当前已是最新版本: 3.5.8", "You are using the latest version: 3.5.8"));
+                       boolean newer = isVersionNewer(finalVersion, BuildConfig.VERSION_NAME);
+                       embeddedUpdateStatus.setText(newer ? t("发现新版本: " + finalVersion, "New version available: " + finalVersion) : t("当前已是最新版本: " + BuildConfig.VERSION_NAME, "You are using the latest version: " + BuildConfig.VERSION_NAME));
                       embeddedReleaseNotes.setText(t("更新内容:\n", "Release notes:\n") + (finalNotes.isEmpty() ? t("暂无更新说明。", "No release notes.") : finalNotes));
                       embeddedReleaseNotesScroll.setVisibility(View.VISIBLE);
                       if (newer) {

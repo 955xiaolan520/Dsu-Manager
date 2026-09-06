@@ -36,7 +36,7 @@ public final class SettingsActivity extends Activity {
         return super.dispatchTouchEvent(event);
     }
     private static final String LANGUAGE_KEY = "language_mode";
-    private static final String CURRENT_VERSION = "3.5.11";
+    private static final String CURRENT_VERSION = BuildConfig.VERSION_NAME;
     private static final String LATEST_RELEASE_API = "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest";
     private TextView updateStatus;
     private TextView releaseNotes;
@@ -218,7 +218,7 @@ public final class SettingsActivity extends Activity {
                  connection.setConnectTimeout(10000);
                  connection.setReadTimeout(10000);
                  connection.setRequestProperty("Accept", "application/vnd.github+json");
-                 connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/3.5.8");
+                  connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/" + CURRENT_VERSION);
                  connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
                  connection.setUseCaches(false);
                  int responseCode = connection.getResponseCode();
