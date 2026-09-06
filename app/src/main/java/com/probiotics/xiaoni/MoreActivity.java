@@ -7,11 +7,16 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.*;
 
 public final class MoreActivity extends Activity {
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        Haptics.onTouch(getWindow().getDecorView(), event);
+        return super.dispatchTouchEvent(event);
+    }
     private static final int PICK_ROOTFS = 51;
     private final java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors.newFixedThreadPool(2);
     private int dp(int n) { return (int) (n * getResources().getDisplayMetrics().density + .5f); }

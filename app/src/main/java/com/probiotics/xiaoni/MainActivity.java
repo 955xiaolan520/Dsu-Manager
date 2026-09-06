@@ -36,6 +36,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainActivity extends Activity {
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        Haptics.onTouch(getWindow().getDecorView(), event);
+        return super.dispatchTouchEvent(event);
+    }
     private TextView rootStatus, gsiStatus, detailText;
     private LinearLayout logoCard;
     private static final int PICK_IMAGE = 10;
@@ -131,6 +135,7 @@ public class MainActivity extends Activity {
         }
         bindRootService();
         if (!rootAuthorized) refreshRootStatus();
+        if (currentTab == 3) refreshMorePage();
     }
 
     @Override protected void onPause() {
@@ -199,7 +204,7 @@ public class MainActivity extends Activity {
         logoCard = new LinearLayout(this);
         logoCard.setOrientation(LinearLayout.VERTICAL);
         logoCard.setPadding(dp(28), dp(22), dp(28), dp(20));
-        logoCard.setBackgroundResource(R.drawable.logo_bg);
+         logoCard.setBackgroundResource(R.drawable.logo_glass_bg);
         logoCard.setClipToOutline(true);
         logoCard.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View view, android.graphics.Outline outline) {
@@ -208,10 +213,11 @@ public class MainActivity extends Activity {
         });
          logoCard.setOnTouchListener((view, event) -> {
              if (event.getAction() != MotionEvent.ACTION_UP) return true;
+             Haptics.performImmediate(view);
              if (pendingLogoClick != null) {
                  mainHandler.removeCallbacks(pendingLogoClick);
                  pendingLogoClick = null;
-                  logoCard.setBackgroundResource(R.drawable.logo_bg);
+                   logoCard.setBackgroundResource(R.drawable.logo_glass_bg);
                   toast(t("已恢复默认背景图", "Default background restored"));
              } else {
                  pendingLogoClick = () -> { pendingLogoClick = null; chooseImage(); };
@@ -269,7 +275,10 @@ public class MainActivity extends Activity {
             button.setPadding(dp(6), 0, dp(6), 0);
             button.setBackgroundResource(backgrounds[i]);
              final int actionIndex = i;
-             button.setOnClickListener(v -> action(actionIndex));
+             button.setOnClickListener(v -> {
+                 Haptics.perform(v);
+                 action(actionIndex);
+             });
              actionButtons[i] = button;
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(58));
             lp.setMargins(0, dp(3), 0, dp(3));
@@ -277,11 +286,12 @@ public class MainActivity extends Activity {
          }
          updateActionButtons();
           detailText = text(t("点击操作后，结果会显示在这里。", "Results will appear here after an action."), 13, Color.rgb(77, 87, 105));
-         detailText.setGravity(Gravity.TOP);
-         detailText.setPadding(dp(14), dp(4), dp(14), dp(4));
-         detailText.setBackgroundColor(Color.TRANSPARENT);
-          LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, dp(40));
-         detailLp.setMargins(0, 0, 0, dp(12));
+          detailText.setGravity(Gravity.TOP);
+          detailText.setPadding(dp(14), dp(10), dp(14), dp(10));
+          detailText.setMinHeight(dp(72));
+          detailText.setBackgroundResource(R.drawable.liquid_glass_panel);
+           LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+          detailLp.setMargins(0, 0, 0, dp(4));
          content.addView(detailText, detailLp);
          installOptionsPanel = new LinearLayout(this);
          installOptionsPanel.setOrientation(LinearLayout.VERTICAL);
@@ -311,11 +321,20 @@ public class MainActivity extends Activity {
          }
          installOptionsPanel.addView(sizeRow, new LinearLayout.LayoutParams(-1, dp(44)));
          customInstallSizeInput = new EditText(this);
-         customInstallSizeInput.setHint(t("自定义容量 GB", "Custom size GB"));
-         customInstallSizeInput.setSingleLine(true);
-         customInstallSizeInput.setTextSize(13);
-         customInstallSizeInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
-          customInstallSizeInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          customInstallSizeInput.setHint(t("自定义容量 GB", "Custom size GB"));
+          customInstallSizeInput.setSingleLine(true);
+          customInstallSizeInput.setTextSize(13);
+          customInstallSizeInput.setGravity(Gravity.CENTER);
+          customInstallSizeInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+           customInstallSizeInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          customInstallSizeInput.setOnFocusChangeListener((view, hasFocus) -> {
+              String value = customInstallSizeInput.getText().toString().trim();
+              setBottomNavigationVisible(!hasFocus);
+              if (hasFocus || value.isEmpty()) return;
+              try {
+                  customInstallSizeInput.setText(formatCustomSize(parseCustomSize(value)) + " GB");
+              } catch (NumberFormatException ignored) { }
+          });
          Button customSizeButton = new Button(this);
          customSizeButton.setText(t("使用自定义", "Use custom"));
          customSizeButton.setTextSize(12);
@@ -324,7 +343,10 @@ public class MainActivity extends Activity {
          customSizeButton.setMinHeight(0);
          customSizeButton.setTextColor(Color.WHITE);
          customSizeButton.setBackgroundResource(R.drawable.button_teal);
-         customSizeButton.setOnClickListener(v -> applyCustomInstallSize());
+          customSizeButton.setOnClickListener(v -> {
+              Haptics.perform(v);
+              applyCustomInstallSize();
+          });
          LinearLayout customRow = new LinearLayout(this);
          customRow.setGravity(Gravity.CENTER_VERTICAL);
          customRow.addView(customInstallSizeInput, new LinearLayout.LayoutParams(0, dp(46), 1));
@@ -366,13 +388,15 @@ public class MainActivity extends Activity {
          confirmLp.setMargins(0, dp(8), 0, 0);
          installOptionsPanel.addView(confirmInstallButton, confirmLp);
          installOptionsPanel.setVisibility(View.GONE);
-         content.addView(installOptionsPanel, new LinearLayout.LayoutParams(-1, -2));
+          LinearLayout.LayoutParams installOptionsLp = new LinearLayout.LayoutParams(-1, -2);
+          installOptionsLp.setMargins(0, dp(2), 0, 0);
+          content.addView(installOptionsPanel, installOptionsLp);
          selectInstallSize(1, "16 GB");
 
          installPanel = new LinearLayout(this);
         installPanel.setOrientation(LinearLayout.VERTICAL);
         installPanel.setPadding(dp(14), dp(8), dp(14), dp(8));
-         installPanel.setBackgroundResource(R.drawable.progress_bg);
+          installPanel.setBackgroundResource(R.drawable.liquid_glass_panel);
          installStage = text(t("安装进度", "Installation progress"), 13, Color.rgb(40, 50, 70));
         installPanel.addView(installStage, new LinearLayout.LayoutParams(-1, dp(26)));
         installProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -381,12 +405,12 @@ public class MainActivity extends Activity {
         installPanel.addView(installProgress, new LinearLayout.LayoutParams(-1, dp(8)));
         installPanel.setVisibility(View.GONE);
         LinearLayout.LayoutParams progressLp = new LinearLayout.LayoutParams(-1, dp(52));
-        progressLp.setMargins(0, dp(8), 0, 0);
+          progressLp.setMargins(0, dp(4), 0, 0);
          content.addView(installPanel, progressLp);
          imageManagementPanel = new LinearLayout(this);
          imageManagementPanel.setOrientation(LinearLayout.VERTICAL);
-         imageManagementPanel.setPadding(dp(14), dp(10), dp(14), dp(10));
-          imageManagementPanel.setBackgroundResource(R.drawable.image_management_bg);
+          imageManagementPanel.setPadding(dp(16), dp(14), dp(16), dp(14));
+            imageManagementPanel.setBackgroundResource(R.drawable.image_management_bg);
           imageManagementPanel.setVisibility(View.GONE);
           LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(-1, -2);
           listLp.setMargins(0, 0, 0, dp(12));
@@ -413,7 +437,13 @@ public class MainActivity extends Activity {
          bottomNavigation = buildBottomNavigation();
          root.addView(pageHost, new FrameLayout.LayoutParams(-1, -1));
          root.addView(bottomNavigation, bottomNavigationParams());
-         root.post(() -> applySystemInsets(root, root.getRootWindowInsets()));
+          root.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+              android.graphics.Rect visibleFrame = new android.graphics.Rect();
+              root.getWindowVisibleDisplayFrame(visibleFrame);
+              boolean keyboardVisible = root.getRootView().getHeight() - visibleFrame.bottom > dp(120);
+              setBottomNavigationVisible(!keyboardVisible);
+          });
+          root.post(() -> applySystemInsets(root, root.getRootWindowInsets()));
          setContentView(root);
      }
 
@@ -1355,7 +1385,8 @@ public class MainActivity extends Activity {
       private LinearLayout buildAboutPage() {
          LinearLayout page = page(t("关于 Dsu 管理器", "About Dsu Manager"));
          TextView about = text(t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.8", "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.8"), 15, Color.rgb(53, 66, 94));
-         about.setGravity(Gravity.TOP);
+          about.setText(about.getText().toString().replace("3.5.8", BuildConfig.VERSION_NAME));
+          about.setGravity(Gravity.TOP);
          about.setPadding(dp(18), dp(18), dp(18), dp(18));
           about.setBackgroundResource(R.drawable.liquid_glass_panel);
          page.addView(about, new LinearLayout.LayoutParams(-1, -2));
@@ -1370,6 +1401,7 @@ public class MainActivity extends Activity {
     private void showAboutDialog() {
            String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.8",
                 "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.8");
+        about = about.replace("3.5.8", BuildConfig.VERSION_NAME);
         new AlertDialog.Builder(this)
                 .setTitle(t("关于 Dsu 管理器", "About Dsu Manager"))
                 .setMessage(about)
@@ -1475,8 +1507,9 @@ public class MainActivity extends Activity {
               default:
           }
       }
-    private void customSize(){
-        EditText input = new EditText(this);
+     private void customSize(){
+         setBottomNavigationVisible(false);
+         EditText input = new EditText(this);
          input.setHint(t("例如 24 或 24.5", "For example, 24 or 24.5"));
         input.setSingleLine(true);
         input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
@@ -1506,7 +1539,8 @@ public class MainActivity extends Activity {
                 }
             });
         });
-        dialog.show();
+         dialog.setOnDismissListener(ignored -> mainHandler.postDelayed(() -> setBottomNavigationVisible(true), 350));
+         dialog.show();
         input.postDelayed(() -> {
             input.requestFocus();
             ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
@@ -1524,17 +1558,28 @@ public class MainActivity extends Activity {
          }
      }
      private void applyCustomInstallSize(){
-         try {
-             double gb = Double.parseDouble(customInstallSizeInput.getText().toString().trim().replace(',', '.'));
-             if (gb <= 0 || gb > 128) throw new NumberFormatException();
-             selectedInstallSize = -1;
-             pendingSizeLabel = customInstallSizeInput.getText().toString().trim() + " GB";
-             userdataSizeBytes = Math.round(gb * 1024d * 1024d * 1024d);
-              for (Button button : installSizeButtons) { button.setTextColor(Color.rgb(40, 50, 70)); button.setBackgroundResource(R.drawable.liquid_glass_panel); }
-         } catch (NumberFormatException error) {
-             customInstallSizeInput.setError(t("请输入 0 到 128 之间的容量", "Enter a size between 0 and 128"));
-         }
-     }
+          try {
+              double gb = parseCustomSize(customInstallSizeInput.getText().toString());
+              if (gb <= 0 || gb > 128) throw new NumberFormatException();
+              selectedInstallSize = -1;
+              pendingSizeLabel = formatCustomSize(gb) + " GB";
+              userdataSizeBytes = Math.round(gb * 1024d * 1024d * 1024d);
+              customInstallSizeInput.setText(pendingSizeLabel);
+               for (Button button : installSizeButtons) { button.setTextColor(Color.rgb(40, 50, 70)); button.setBackgroundResource(R.drawable.liquid_glass_panel); }
+          } catch (NumberFormatException error) {
+              customInstallSizeInput.setError(t("请输入 0 到 128 之间的容量", "Enter a size between 0 and 128"));
+          }
+      }
+      private double parseCustomSize(String value) {
+          String normalized = value.trim().replace(",", ".").replaceAll("(?i)\\s*gb\\s*$", "");
+          return Double.parseDouble(normalized);
+      }
+      private String formatCustomSize(double gb) {
+          return gb == Math.rint(gb) ? String.format(Locale.US, "%.0f", gb) : String.format(Locale.US, "%.2f", gb).replaceAll("0+$", "").replaceAll("\\.$", "");
+      }
+      private void setBottomNavigationVisible(boolean visible) {
+          if (bottomNavigation != null) bottomNavigation.setVisibility(visible ? View.VISIBLE : View.GONE);
+      }
      private void confirmInstallZip(){
          if (pendingInstallZip == null) { toast(t("请先选择 ZIP 安装包", "Choose a ZIP package first")); return; }
          installOptionsPanel.setVisibility(View.GONE);
@@ -1695,10 +1740,11 @@ public class MainActivity extends Activity {
         return 16L * 1024L * 1024L * 1024L;
     }
     private void showInstallProgress(String stage, int progress) {
-        if (installPanel == null) return;
-        installPanel.setVisibility(View.VISIBLE);
-        installStage.setText(stage);
-        installProgress.setProgress(Math.max(0, Math.min(100, progress)));
+         if (installPanel == null) return;
+         installPanel.setVisibility(View.VISIBLE);
+         int clampedProgress = Math.max(0, Math.min(100, progress));
+         installStage.setText(stage + "  " + clampedProgress + "%");
+         installProgress.setProgress(clampedProgress);
     }
     private void finishProgress(String message){
              boolean success=message.contains("已安装并启用") || message.contains("DSU 已启动") || message.contains("替换完成")
@@ -1753,9 +1799,12 @@ public class MainActivity extends Activity {
             });
         }).start();
     }
-    private void showImageManagement(){
-        imageManagementPanel.setVisibility(View.VISIBLE);
-        imageManagementPanel.removeAllViews();
+     private void showImageManagement(){
+         imageManagementPanel.setVisibility(View.VISIBLE);
+         imageManagementPanel.setAlpha(0f);
+         imageManagementPanel.setTranslationY(dp(8));
+         imageManagementPanel.animate().alpha(1f).translationY(0f).setDuration(220).start();
+         imageManagementPanel.removeAllViews();
         TextView loading = text(t("正在读取已安装镜像...", "Reading installed images..."), 13, Color.rgb(77, 87, 105));
         imageManagementPanel.addView(loading, new LinearLayout.LayoutParams(-1, dp(42)));
         new Thread(() -> {
@@ -1793,7 +1842,11 @@ public class MainActivity extends Activity {
             long bytes;
             try { bytes = Long.parseLong(parts[1]); } catch (NumberFormatException e) { bytes = -1; }
             LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
+             row.setGravity(Gravity.CENTER_VERTICAL);
+              row.setPadding(dp(12), dp(8), dp(10), dp(8));
+             row.setBackgroundResource(R.drawable.liquid_glass_panel);
+             row.setAlpha(0f);
+             row.setTranslationY(dp(4));
              String sizeText = parts.length > 3 ? parts[3] : formatBytes(bytes);
              TextView label = text(name + "\n" + t("大小: ", "Size: ") + sizeText, 13, Color.rgb(40, 50, 70));
             row.addView(label, new LinearLayout.LayoutParams(0, dp(58), 1));
@@ -1803,11 +1856,19 @@ public class MainActivity extends Activity {
             replace.setAllCaps(false);
              replace.setMinHeight(0);
              replace.setMinWidth(0);
+             replace.setTextColor(Color.WHITE);
+              replace.setBackgroundResource(R.drawable.button_blue);
                 String backingImage = parts.length > 4 ? parts[4] : name;
                 String backingSlot = parts.length > 5 ? parts[5] : "";
-                replace.setOnClickListener(v -> chooseReplacement(name, backingImage, backingSlot, parts[2]));
-            row.addView(replace, new LinearLayout.LayoutParams(dp(76), dp(42)));
-             imageManagementPanel.addView(row);
+                 replace.setOnClickListener(v -> {
+                     Haptics.perform(v);
+                     chooseReplacement(name, backingImage, backingSlot, parts[2]);
+                 });
+             row.addView(replace, new LinearLayout.LayoutParams(dp(82), dp(44)));
+              LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, dp(76));
+              rowLp.setMargins(0, dp(8), 0, 0);
+              imageManagementPanel.addView(row, rowLp);
+             row.animate().alpha(1f).translationY(0f).setStartDelay(Math.min(180, imageManagementPanel.getChildCount() * 24L)).setDuration(180).start();
          }
          if (!hasImage) {
              imageManagementPanel.addView(text(t("当前没有可管理的镜像文件\n", "No manageable image files are available\n") + raw, 12, Color.rgb(77, 87, 105)));
@@ -1888,9 +1949,11 @@ public class MainActivity extends Activity {
               normalized = normalized.substring(0, normalized.length() - 4);
           return normalized;
       }
-     private void showInstalledGsiSummary() {
-         detailText.setText(t("GSI 状态\n已安装，等待启动\n安装包: ", "GSI status\nInstalled, waiting to boot\nPackage: ") + installedZipName);
-     }
+      private void showInstalledGsiSummary() {
+          String packageName = installedZipName == null || installedZipName.trim().isEmpty()
+                  ? t("未记录安装包名称", "Package name unavailable") : installedZipName;
+          detailText.setText(t("GSI 状态\n已安装，等待启动\n安装包:\n", "GSI status\nInstalled, waiting to boot\nPackage:\n") + packageName);
+      }
      private long replacementSize(Uri uri, ParcelFileDescriptor fd) {
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) return cursor.getLong(0);
@@ -1938,9 +2001,14 @@ public class MainActivity extends Activity {
              matrix.setScale(scale, scale);
              matrix.postTranslate(left, top);
              shader.setLocalMatrix(matrix);
-             paint.setShader(shader);
-             canvas.drawRoundRect(bounds, radius, radius, paint);
-             paint.setShader(null);
+              paint.setShader(shader);
+              canvas.drawRoundRect(bounds, radius, radius, paint);
+              paint.setShader(null);
+              paint.setStyle(Paint.Style.STROKE);
+              paint.setStrokeWidth(1.5f);
+              paint.setColor(0xCFFFFFFF);
+              canvas.drawRoundRect(bounds.left + .75f, bounds.top + .75f, bounds.right - .75f, bounds.bottom - .75f, radius, radius, paint);
+              paint.setStyle(Paint.Style.FILL);
          }
          @Override public void setAlpha(int alpha){ paint.setAlpha(alpha); }
          @Override public void setColorFilter(android.graphics.ColorFilter filter){ paint.setColorFilter(filter); }

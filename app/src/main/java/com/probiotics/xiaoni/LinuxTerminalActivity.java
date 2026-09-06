@@ -9,6 +9,7 @@ import android.provider.Settings;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManager;
@@ -28,6 +29,10 @@ import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
 
 public class LinuxTerminalActivity extends Activity {
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        Haptics.onTouch(getWindow().getDecorView(), event);
+        return super.dispatchTouchEvent(event);
+    }
     private static final int PICK_ROOTFS = 42;
     private LinearLayout list;
     private TextView status;
@@ -155,7 +160,7 @@ public class LinuxTerminalActivity extends Activity {
          scriptText.append("trap cleanup EXIT INT TERM HUP\n");
          scriptText.append("if [ \"$(/system/bin/id -u 2>/dev/null)\" != \"0\" ]; then echo \"Linux-Dsu: 当前 shell 没有 root 权限，无法挂载和 chroot\" >&2; exit 126; fi\n");
           scriptText.append("/system/bin/toybox chmod 755 \"$ROOTFS/bin/bash\" \"$ROOTFS/usr/bin/bash\" \"$ROOTFS/bin/sh\" \"$ROOTFS/usr/bin/sh\" \"$ROOTFS/bin/dash\" \"$ROOTFS/usr/bin/dash\" 2>/dev/null || true\n");
-           scriptText.append("CHROOT_SHELL=/bin/sh\n");
+            scriptText.append("CHROOT_SHELL=/bin/sh\nif [ -x \"$ROOTFS/bin/bash\" ]; then CHROOT_SHELL=/bin/bash; elif [ -x \"$ROOTFS/usr/bin/bash\" ]; then CHROOT_SHELL=/usr/bin/bash; fi\n");
          scriptText.append("for old in \"$ROOTFS/etc/resolv.conf\" \"$ROOTFS/tmp\" \"$ROOTFS/sys\" \"$ROOTFS/proc\" \"$ROOTFS/dev/pts\" \"$ROOTFS/dev\"; do /system/bin/toybox umount -l \"$old\" 2>/dev/null || true; done\n");
          scriptText.append(": > \"$MOUNT_LIST\" || exit 1\n");
         scriptText.append("/system/bin/toybox mkdir -p \"$ROOTFS/dev/pts\" \"$ROOTFS/proc\" \"$ROOTFS/sys\" \"$ROOTFS/tmp\" \"$ROOTFS/root\" \"$ROOTFS/etc\"\n");
@@ -177,9 +182,11 @@ public class LinuxTerminalActivity extends Activity {
           scriptText.append("/system/bin/toybox chmod 755 \"$ROOTFS/var\" \"$ROOTFS/var/cache\" \"$ROOTFS/var/cache/apk\" \"$ROOTFS/var/cache/dnf\" \"$ROOTFS/var/cache/pacman\" \"$ROOTFS/var/cache/pacman/pkg\" 2>/dev/null || true\n");
           scriptText.append("if [ -x \"$ROOTFS/usr/bin/apt-get\" ]; then /system/bin/toybox mkdir -p \"$ROOTFS/var/lib/apt/lists/partial\" \"$ROOTFS/var/cache/apt/archives/partial\" \"$ROOTFS/etc/apt/apt.conf.d\"; /system/bin/toybox chmod 755 \"$ROOTFS/var/lib\" \"$ROOTFS/var/lib/apt\" \"$ROOTFS/var/lib/apt/lists\" \"$ROOTFS/var/lib/apt/lists/partial\" \"$ROOTFS/var/cache/apt\" \"$ROOTFS/var/cache/apt/archives\" \"$ROOTFS/var/cache/apt/archives/partial\"; /system/bin/toybox printf '%s\\n' 'APT::Sandbox::User \"root\";' > \"$ROOTFS/etc/apt/apt.conf.d/99linux-dsu-sandbox\"; fi\n");
          scriptText.append("/system/bin/toybox mkdir -p \"$ROOTFS/var/lib/linux-dsu\"\n/system/bin/toybox touch \"$ROOTFS/var/lib/linux-dsu/user-packages\"\n");
-            scriptText.append("/system/bin/toybox printf '%s\\n' '[ -r /etc/os-release ] && . /etc/os-release' 'cd /' 'export PS1=\"root@${NAME:-Linux}:${PWD:-/}# \"' 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' 'record_user_packages() {' '  for package in \"$@\"; do' '    case \"$package\" in -*) continue;; esac' '    package=${package%%=*}' '    if [ -n \"$package\" ]; then' '      command grep -Fqx \"$package\" /var/lib/linux-dsu/user-packages 2>/dev/null || printf \"%s\\n\" \"$package\" >> /var/lib/linux-dsu/user-packages' '    fi' '  done' '}' 'wrap_install() {' '  command_name=$1; shift' '  packages=; capture=0' '  for argument in \"$@\"; do' '    if [ \"$capture\" = 1 ]; then packages=\"$packages $argument\"; elif [ \"$argument\" = install ] || [ \"$argument\" = add ]; then capture=1; fi' '  done' '  if [ \"$command_name\" = apt ] && [ ! -x /usr/bin/apt ] && [ ! -x /usr/bin/apt-get ]; then printf \"Alpine Linux uses apk; run: apk add ...\\n\" >&2; return 127; fi' '  if [ \"$command_name\" = apt ] && [ \"$capture\" = 1 ] && [ ! -f /var/lib/linux-dsu/.apt-updated ]; then command apt-get -o APT::Sandbox::User=root update && : > /var/lib/linux-dsu/.apt-updated || return $?; fi' '  if [ \"$command_name\" = apt ]; then command apt -o APT::Sandbox::User=root \"$@\"; else command \"$command_name\" \"$@\"; fi; status=$?' '  [ $status -eq 0 ] && [ -n \"$packages\" ] && record_user_packages $packages' '  return $status' '}' 'apt() { wrap_install apt \"$@\"; }' 'alias apt-get=\"apt-get -o APT::Sandbox::User=root\"' 'apk() { wrap_install apk \"$@\"; }' 'dnf() { wrap_install dnf \"$@\"; }' 'yum() { wrap_install yum \"$@\"; }' 'pkg() { wrap_install pkg \"$@\"; }' > \"$ROOTFS/root/.bashrc\"\n");
-         scriptText.append("/system/bin/toybox printf '%s\\n' '[ -f /root/.bashrc ] && . /root/.bashrc' > \"$ROOTFS/root/.profile\"\n");
-        scriptText.append("cd \"$ROOTFS\" || exit 1\n");
+             scriptText.append("/system/bin/toybox printf '%s\\n' '[ -r /etc/os-release ] && . /etc/os-release' 'cd /' 'export TERM=xterm-256color' 'PS1=$(printf \"\\033[1;33m\")root@${NAME:-Linux}:${PWD:-/}# $(printf \"\\033[0m\")' 'export PS1' 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' 'command_not_found_handle() {' '  printf \"\\033[1;33mcommand not found: %s\\033[0m\\n\" \"$1\" >&2' '  if command -v apk >/dev/null 2>&1; then printf \"Try: apk add %s\\n\" \"$1\" >&2; else printf \"Try: apt-get install %s\\n\" \"$1\" >&2; fi' '  return 127' '}' 'record_user_packages() {' '  for package in \"$@\"; do' '    case \"$package\" in -*) continue;; esac' '    package=${package%%=*}' '    if [ -n \"$package\" ]; then' '      command grep -Fqx \"$package\" /var/lib/linux-dsu/user-packages 2>/dev/null || printf \"%s\\n\" \"$package\" >> /var/lib/linux-dsu/user-packages' '    fi' '  done' '}' 'wrap_install() {' '  command_name=$1; shift' '  packages=; capture=0' '  for argument in \"$@\"; do' '    if [ \"$capture\" = 1 ]; then packages=\"$packages $argument\"; elif [ \"$argument\" = install ] || [ \"$argument\" = add ]; then capture=1; fi' '  done' '  if [ \"$command_name\" = apt ] && [ ! -x /usr/bin/apt ] && [ ! -x /usr/bin/apt-get ]; then printf \"\\033[1;33mAlpine Linux uses apk; run: apk add ...\\033[0m\\n\" >&2; return 127; fi' '  if [ \"$command_name\" = apt ] && [ \"$capture\" = 1 ] && [ ! -f /var/lib/linux-dsu/.apt-updated ]; then command apt-get -o APT::Sandbox::User=root update && : > /var/lib/linux-dsu/.apt-updated || return $?; fi' '  if [ \"$command_name\" = apt ]; then command apt -o APT::Sandbox::User=root \"$@\"; else command \"$command_name\" \"$@\"; fi; status=$?' '  [ $status -eq 0 ] && [ -n \"$packages\" ] && record_user_packages $packages' '  return $status' '}' 'apt() { wrap_install apt \"$@\"; }' 'alias apt-get=\"apt-get -o APT::Sandbox::User=root\"' 'apk() { wrap_install apk \"$@\"; }' 'dnf() { wrap_install dnf \"$@\"; }' 'yum() { wrap_install yum \"$@\"; }' 'pkg() { wrap_install pkg \"$@\"; }' > \"$ROOTFS/root/.bashrc\"\n");
+          scriptText.append("/system/bin/toybox printf '%s\\n' '[ -f /root/.bashrc ] && . /root/.bashrc 2>/dev/null' > \"$ROOTFS/root/.profile\"\n");
+          scriptText.append("/system/bin/toybox sed -i '/PS1=/d' \"$ROOTFS/root/.bashrc\" 2>/dev/null || true\n");
+          scriptText.append("/system/bin/toybox printf '%s\\n' 'PS1=\"\u001b[1;33mroot@${NAME:-Linux}:${PWD:-/}# \u001b[0m\"' 'export PS1' >> \"$ROOTFS/root/.bashrc\"\n");
+           scriptText.append("cd \"$ROOTFS\" || exit 1\n");
          scriptText.append("CHROOT_LOADER=\nfor loader in /lib/ld-linux-aarch64.so.1 /lib64/ld-linux-aarch64.so.1 /lib/ld-linux-arm64.so.1; do if [ -e \"$ROOTFS$loader\" ]; then CHROOT_LOADER=\"$loader\"; break; fi; done\n");
          scriptText.append("/system/bin/toybox chroot \"$ROOTFS\" \"$CHROOT_SHELL\" -c 'exit 0' >/dev/null 2>\"$ROOTFS/.linux-dsu-chroot-error\"\nstatus=$?\nif [ \"$status\" -ne 0 ]; then echo \"Linux-Dsu: chroot shell=$CHROOT_SHELL status=$status loader=${CHROOT_LOADER:-missing}\" >&2; /system/bin/toybox ls -l \"$ROOTFS$CHROOT_SHELL\" \"$ROOTFS/bin/sh\" \"$ROOTFS/lib/ld-linux-aarch64.so.1\" \"$ROOTFS/lib64/ld-linux-aarch64.so.1\" 2>&1 >&2; /system/bin/toybox cat \"$ROOTFS/.linux-dsu-chroot-error\" >&2 2>/dev/null || true; exit $status; fi\n");
          scriptText.append("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root TERM=xterm-256color /system/bin/toybox chroot \"$ROOTFS\" \"$CHROOT_SHELL\" -l\n");
@@ -241,7 +248,7 @@ public class LinuxTerminalActivity extends Activity {
         TerminalView terminal = new TerminalView(this, null);
         mTerminalView = terminal;
         terminal.setTextSize(dp(12));
-        terminal.setBackgroundColor(Color.BLACK);
+         terminal.setBackgroundColor(0xff050607);
          terminal.setFocusable(true);
          terminal.setFocusableInTouchMode(true);
          terminal.setTerminalViewClient(new PtyViewClient());
@@ -534,9 +541,12 @@ public class LinuxTerminalActivity extends Activity {
          if (session != null && session.isRunning()) session.write(value);
      }
 
-     private String normalizeTerminalPaste(String text) {
-         return text.replace("\r\n", "\n").replace('\r', '\n').replace('\n', '\r');
-     }
+      private String normalizeTerminalPaste(String text) {
+          if (text == null || text.isEmpty()) return "";
+          String normalized = text.replace("\r\n", "\n").replace('\r', '\n');
+          while (normalized.endsWith("\n\n")) normalized = normalized.substring(0, normalized.length() - 1);
+          return "\u001b[200~" + normalized + "\u001b[201~\r";
+      }
 
     private final class PtySessionClient implements TerminalSessionClient {
         private final TextView state;
@@ -546,7 +556,7 @@ public class LinuxTerminalActivity extends Activity {
               if (view != null && !isFinishing()) runOnUiThread(() -> { if (mTerminalView != null) mTerminalView.invalidate(); });
          }
         public void onTitleChanged(TerminalSession s) { }
-         public void onSessionFinished(TerminalSession s) { runOnUiThread(() -> { if (state != null && !isFinishing()) state.setText("已退出"); }); }
+          public void onSessionFinished(TerminalSession s) { runOnUiThread(() -> { if (state != null && !isFinishing()) { int exitStatus = s == null ? 1 : s.getExitStatus(); state.setText(exitStatus == 0 ? "已退出" : "失败(" + exitStatus + ")"); } }); }
         public void onCopyTextToClipboard(TerminalSession s, String text) {
             if (text == null || text.isEmpty()) return;
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);

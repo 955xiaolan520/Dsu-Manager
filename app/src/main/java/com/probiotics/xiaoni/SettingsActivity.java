@@ -31,8 +31,12 @@ import java.net.URL;
 import java.util.Locale;
 
 public final class SettingsActivity extends Activity {
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        Haptics.onTouch(getWindow().getDecorView(), event);
+        return super.dispatchTouchEvent(event);
+    }
     private static final String LANGUAGE_KEY = "language_mode";
-    private static final String CURRENT_VERSION = "3.5.8";
+    private static final String CURRENT_VERSION = "3.5.10";
     private static final String LATEST_RELEASE_API = "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest";
     private TextView updateStatus;
     private TextView releaseNotes;
