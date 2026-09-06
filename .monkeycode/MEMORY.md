@@ -26,3 +26,11 @@ This file records user instructions, preferences, and teachings for reference in
 - Context: GitHub commit attribution for the Dsu Manager repository
 - Instructions:
   - Configure repository commits with the user's GitHub identity `955xiaolan520 <955xiaolan520@users.noreply.github.com>`.
+
+### User Instruction Summary
+- Date: 2026-09-06
+- Context: Dsu Manager GitHub release workflow
+- Category: Workflow & Collaboration
+- Instructions:
+  - Synchronize all Dsu Manager-related source code to GitHub for each release.
+  - Publish both Debug and Release APK artifacts with the corresponding release.
