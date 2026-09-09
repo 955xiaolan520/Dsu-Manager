@@ -468,7 +468,7 @@ public class MainActivity extends Activity {
           bottomNavigationItems = items;
           addNavigationItem(items, t("首页", "Home"), 0, v -> selectTab(0));
          addNavigationItem(items, t("设置", "Settings"), 1, v -> selectTab(1));
-         addNavigationItem(items, t("关于", "About"), 2, v -> selectTab(2));
+           addNavigationItem(items, t("ROM", "ROM"), 2, v -> selectTab(2));
            addNavigationItem(items, t("终端", "Terminal"), 3, v -> selectTab(3));
           liquidIndicator = new LiquidGlassIndicator(this);
           liquidIndicator.setElevation(dp(4));
@@ -613,7 +613,7 @@ public class MainActivity extends Activity {
                 float swell = 4f * progress * (1f - progress);
                 liquidIndicator.setTranslationX((targetLeft - startLeft) * progress);
                 liquidIndicator.setScaleX(1.16f + .30f * swell);
-                liquidIndicator.setScaleY(1f + .045f * swell);
+                liquidIndicator.setScaleY(1f - .035f * swell);
             });
             slide.addListener(new android.animation.AnimatorListenerAdapter() {
                 @Override public void onAnimationEnd(android.animation.Animator animation) {
@@ -703,13 +703,13 @@ public class MainActivity extends Activity {
          if (homeScroll != null) homeScroll.smoothScrollTo(0, 0);
      }
 
-      private void selectTab(int tab) {
-           if (tab == currentTab) {
-               if (tab == 0) scrollToTop();
-               if (tab == 3) refreshMorePage();
+       private void selectTab(int tab) {
+            if (tab == currentTab) {
+                if (tab == 0) scrollToTop();
+                if (tab == 3) refreshMorePage();
                return;
            }
-           View next = tab == 0 ? homeScroll : tab == 1 ? buildSettingsPage() : tab == 2 ? buildAboutPage() : buildMorePage();
+           View next = tab == 0 ? homeScroll : tab == 1 ? buildSettingsPage() : tab == 2 ? buildRomPage() : buildMorePage();
          if (tab != 0) {
              ScrollView pageScroll = new ScrollView(this);
              pageScroll.setFillViewport(true);
@@ -726,7 +726,7 @@ public class MainActivity extends Activity {
           currentTab = tab;
       }
 
-      private void refreshMorePage() {
+       private void refreshMorePage() {
           if (pageHost == null) return;
           pageHost.removeAllViews();
           ScrollView pageScroll = new ScrollView(this);
@@ -797,7 +797,7 @@ public class MainActivity extends Activity {
              liquidIndicator.setPivotY(indicatorHeight / 2f);
            ValueAnimator flow = ValueAnimator.ofFloat(0f, 1f);
            liquidNavigationFlow = flow;
-             flow.setDuration(940);
+              flow.setDuration(620);
              flow.setInterpolator(new android.view.animation.PathInterpolator(.18f, .78f, .22f, 1f));
             flow.addUpdateListener(animation -> {
                 float progress = (Float) animation.getAnimatedValue();
@@ -807,7 +807,7 @@ public class MainActivity extends Activity {
                  float travel = progress < .43f ? 0f : (progress - .43f) / .57f;
                  liquidIndicator.setTranslationX(move * travel);
                  liquidIndicator.setScaleX(1f + 1.18f * stretch + .07f * settle);
-                 liquidIndicator.setScaleY(1f + .18f * stretch - .04f * settle);
+                  liquidIndicator.setScaleY(1f - .07f * stretch + .025f * settle);
             });
            flow.addListener(new android.animation.AnimatorListenerAdapter() {
                @Override public void onAnimationEnd(android.animation.Animator animation) {
@@ -827,6 +827,56 @@ public class MainActivity extends Activity {
            });
            pulseBottomNavigation();
            flow.start();
+       }
+
+       private LinearLayout buildRomPage() {
+           LinearLayout page = new LinearLayout(this);
+           page.setOrientation(LinearLayout.VERTICAL);
+           page.setPadding(dp(18), dp(22), dp(18), dp(30));
+           page.setBackgroundResource(R.drawable.liquid_backdrop);
+           TextView title = text(t("ROM 更新中心", "ROM Update Center"), 26, Color.WHITE);
+           title.setTypeface(null, 1);
+           page.addView(title, new LinearLayout.LayoutParams(-1, dp(48)));
+           TextView subtitle = text(t("小米 / Redmi / POCO 系统更新查询与下载", "Xiaomi / Redmi / POCO update lookup and downloads"), 13, 0xffe5edf7);
+           page.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
+            page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.button_blue, "xiaomi"));
+            page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.button_purple, "vivo"));
+            page.addView(romVendorCard("OPPO / 一加 / 真我", "ColorOS · 官方系统更新查询", R.drawable.button_orange, "oppo"));
+            return page;
+       }
+
+       private View romVendorCard(String heading, String detail, int background, String vendorId) {
+           LinearLayout card = new LinearLayout(this);
+           card.setOrientation(LinearLayout.VERTICAL);
+           card.setPadding(dp(18), dp(16), dp(18), dp(16));
+           card.setBackgroundResource(R.drawable.liquid_glass_panel);
+           TextView title = text(heading, 19, 0xff172b4d);
+           title.setTypeface(null, 1);
+           card.addView(title, new LinearLayout.LayoutParams(-1, dp(34)));
+           card.addView(text(detail, 13, 0xff5e6c83), new LinearLayout.LayoutParams(-1, dp(30)));
+           Button enter = new Button(this);
+           enter.setText(t("进入查询", "Open lookup"));
+           enter.setAllCaps(false);
+           enter.setTextColor(Color.WHITE);
+           enter.setBackgroundResource(background);
+           enter.setOnClickListener(v -> {
+               Haptics.perform(v);
+                Intent intent = new Intent(this,
+                        "oppo".equals(vendorId) ? OPlusLookupActivity.class
+                                : "vivo".equals(vendorId) ? VivoActivity.class : RomActivity.class);
+               intent.putExtra("vendor", vendorId);
+               startActivity(intent);
+           });
+           card.addView(enter, new LinearLayout.LayoutParams(-1, dp(46)));
+           LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+           lp.setMargins(0, 0, 0, dp(12));
+           card.setOnClickListener(v -> enter.performClick());
+           return addRomCardMargin(card, lp);
+       }
+
+       private View addRomCardMargin(View card, LinearLayout.LayoutParams lp) {
+           card.setLayoutParams(lp);
+           return card;
        }
 
         private void pulseBottomNavigation() {

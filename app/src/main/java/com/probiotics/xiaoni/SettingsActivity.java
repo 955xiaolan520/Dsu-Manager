@@ -178,8 +178,29 @@ public final class SettingsActivity extends Activity {
          downloadHint.setVisibility(android.view.View.GONE);
          LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, dp(50));
          hintLp.setMargins(0, 0, 0, dp(4));
-         root.addView(downloadHint, hintLp);
-        TextView thanksTitle = label(english ? "Acknowledgements" : "感谢", 16, Color.rgb(20, 29, 55));
+          root.addView(downloadHint, hintLp);
+         TextView aboutTitle = label(english ? "About" : "关于", 16, Color.rgb(20, 29, 55));
+         aboutTitle.setTypeface(null, 1);
+         aboutTitle.setTextColor(Color.rgb(78, 87, 151));
+          aboutTitle.setBackgroundResource(R.drawable.settings_language_title);
+         LinearLayout.LayoutParams aboutTitleLp = new LinearLayout.LayoutParams(-1, dp(34));
+         aboutTitleLp.setMargins(dp(4), dp(24), dp(4), dp(8));
+          root.addView(aboutTitle, aboutTitleLp);
+          Button aboutButton = new Button(this);
+          aboutButton.setText(english ? "View About" : "查看关于");
+          aboutButton.setAllCaps(false);
+          aboutButton.setBackgroundResource(R.drawable.rounded_panel);
+          root.addView(aboutButton, new LinearLayout.LayoutParams(-1, dp(48)));
+         TextView about = label(english
+                 ? "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nAuthor: Xiaonikelan\nManager version: " + CURRENT_VERSION
+                 : "Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n作者：小你可兰\n管理器版本：" + CURRENT_VERSION, 14, Color.rgb(80, 88, 105));
+         about.setGravity(Gravity.TOP | Gravity.START);
+         about.setPadding(dp(14), dp(12), dp(14), dp(12));
+          about.setBackgroundResource(R.drawable.liquid_glass_panel);
+          aboutButton.setOnClickListener(v -> about.setVisibility(about.getVisibility() == android.view.View.VISIBLE ? android.view.View.GONE : android.view.View.VISIBLE));
+          about.setVisibility(android.view.View.GONE);
+          root.addView(about, new LinearLayout.LayoutParams(-1, -2));
+         TextView thanksTitle = label(english ? "Acknowledgements" : "感谢", 16, Color.rgb(20, 29, 55));
         thanksTitle.setTypeface(null, 1);
         thanksTitle.setTextColor(Color.rgb(181, 103, 39));
         thanksTitle.setBackgroundResource(R.drawable.settings_thanks_title);

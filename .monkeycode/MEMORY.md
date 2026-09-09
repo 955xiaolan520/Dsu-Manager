@@ -34,3 +34,11 @@ This file records user instructions, preferences, and teachings for reference in
 - Instructions:
   - Synchronize all Dsu Manager-related source code to GitHub for each release.
   - Publish both Debug and Release APK artifacts with the corresponding release.
+
+### User Instruction Summary
+- Date: 2026-09-08
+- Context: OPlus OTA internal downloader debugging
+- Instructions:
+  - Keep OPlus downloads inside the Dsu Manager internal downloader using the existing DownloadService and JavaDownloader flow.
+  - Do not switch to Android DownloadManager or change the download approach without explicit confirmation.
+  - Investigate the server authorization and request format before changing the downloader implementation.

@@ -14,7 +14,12 @@ final class LiquidGlassIndicator extends View {
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint highlight = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint refraction = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint innerShadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF bounds = new RectF();
+    private final RectF topReflection = new RectF();
+    private final RectF inner = new RectF();
+    private final RectF lowerEdge = new RectF();
     private boolean pressed;
 
     LiquidGlassIndicator(Context context) {
@@ -25,6 +30,8 @@ final class LiquidGlassIndicator extends View {
         highlight.setStrokeWidth(dp(1));
         rim.setStyle(Paint.Style.STROKE);
         rim.setStrokeWidth(dp(1));
+        innerShadow.setStyle(Paint.Style.STROKE);
+        innerShadow.setStrokeWidth(dp(2));
     }
 
     private float dp(float value) {
@@ -49,17 +56,16 @@ final class LiquidGlassIndicator extends View {
 
         highlight.setColor(0xd0ffffff);
         highlight.setStrokeWidth(dp(pressed ? 2 : 1));
-        RectF topReflection = new RectF(bounds.left + dp(7), bounds.top + dp(3), bounds.right - dp(7), bounds.top + dp(14));
+        topReflection.set(bounds.left + dp(7), bounds.top + dp(3), bounds.right - dp(7), bounds.top + dp(14));
         canvas.drawArc(topReflection, 198, 144, false, highlight);
         rim.setColor(pressed ? 0xe6ffffff : 0xb8f4fbff);
         canvas.drawRoundRect(bounds, radius, radius, rim);
 
-        RectF inner = new RectF(bounds.left + dp(4), bounds.top + dp(4), bounds.right - dp(4), bounds.bottom - dp(4));
+        inner.set(bounds.left + dp(4), bounds.top + dp(4), bounds.right - dp(4), bounds.bottom - dp(4));
         highlight.setColor(0x35ffffff);
         highlight.setStrokeWidth(dp(1));
         canvas.drawRoundRect(inner, radius - dp(3), radius - dp(3), highlight);
 
-        Paint refraction = new Paint(Paint.ANTI_ALIAS_FLAG);
         refraction.setShader(new RadialGradient(bounds.centerX(), bounds.top + dp(4), bounds.width() * .68f,
                 new int[]{0x52ffffff, 0x1d8fd7eb, 0x0080b9db}, null, Shader.TileMode.CLAMP));
         canvas.drawRoundRect(inner, radius - dp(3), radius - dp(3), refraction);
@@ -71,11 +77,8 @@ final class LiquidGlassIndicator extends View {
         refraction.setColor(0x468b86da);
         canvas.drawArc(bounds, 188, 150, false, refraction);
 
-        Paint innerShadow = new Paint(Paint.ANTI_ALIAS_FLAG);
-        innerShadow.setStyle(Paint.Style.STROKE);
-        innerShadow.setStrokeWidth(dp(2));
         innerShadow.setColor(0x3d456b80);
-        RectF lowerEdge = new RectF(bounds.left + dp(3), bounds.top + dp(3), bounds.right - dp(3), bounds.bottom - dp(1));
+        lowerEdge.set(bounds.left + dp(3), bounds.top + dp(3), bounds.right - dp(3), bounds.bottom - dp(1));
         canvas.drawArc(lowerEdge, 12, 156, false, innerShadow);
     }
 
