@@ -1,0 +1,44 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INSTALL_DYNAMIC_SYSTEM" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.MANAGE_DYNAMIC_SYSTEM" />
+    <uses-permission android:name="android.permission.MANAGE_USERS" />
+    <uses-permission android:name="android.permission.REBOOT" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <application android:theme="@style/AppTheme" android:label="Dsu 管理器" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true" android:requestLegacyExternalStorage="true" android:extractNativeLibs="true">
+        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".SettingsActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".AboutActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".RomActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".VivoActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".OPlusActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".OPlusLookupActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".OPlusOtaActivity" android:screenOrientation="portrait" android:exported="false" />
+        <service android:name=".DownloadService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="dataSync" />
+        <activity android:name=".MoreActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".LinuxTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".AlpineTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".UbuntuTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".DebianTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".LocalTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <provider
+            android:name=".UpdateFileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

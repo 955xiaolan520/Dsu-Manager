@@ -1,0 +1,479 @@
+    
+<group title="">
+    <action interruptible="false" icon="file:///android_asset/samples/ota/icon/xiaomi.png" logo="file:///android_asset/samples/ota/icon/xiaomi.png" allow-shortcut="true">
+        <title>Xiaomi 数字系列 OTA</title>
+        <desc>官方 HyperOS OTA 查询与下载</desc>
+        <summary>选择设备与下载参数</summary>
+        <support>[ -x /data/user/0/com.dna.tools/files/tools/aria2c ] &amp;&amp; command -v app_process &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo 1 || echo 0</support>
+        <params>
+            <param title="设备型号" name="daihao_num" label="[Xiaomi数字/旗舰]">
+<option value="popsicle">小米 17 Pro Max / popsicle</option>
+<option value="nezha">小米 17 Ultra / nezha</option>
+<option value="warhol">Xiaomi 17T Pro / warhol</option>
+<option value="chagall">Xiaomi 17T / chagall</option>
+<option value="byron">小米 17 Max / byron</option>
+<option value="pandora">小米 17 Pro / pandora</option>
+<option value="pudding">小米 17 / pudding</option>
+<option value="klimt">小米 15T Pro / klimt</option>
+<option value="goya">小米 15T / goya</option>
+<option value="xuanyuan">小米 15 Ultra / xuanyuan</option>
+<option value="dijun">小米 15S Pro / dijun</option>
+<option value="haotian">小米 15 Pro / haotian</option>
+<option value="dada">小米 15 / dada</option>
+<option value="rothko">小米 14T Pro / rothko</option>
+<option value="degas">小米 14T / degas</option>
+<option value="aurora">小米 14 Ultra / Ultra Ti / aurora</option>
+<option value="chenfeng">小米 14 Civi / chenfeng</option>
+<option value="shennong_t">小米 14 Pro 钛金属卫星通讯版 / shennong_t</option>
+<option value="shennong">小米 14 Pro / Ti / 钛金属卫星通讯版 / shennong</option>
+<option value="houji">小米 14 / houji</option>
+<option value="corot">小米 13T Pro / corot</option>
+<option value="aristotle">小米 13T / aristotle</option>
+<option value="ishtar">小米 13 Ultra / ishtar</option>
+<option value="nuwa">小米 13 Pro / nuwa</option>
+<option value="fuxi">小米 13 / fuxi</option>
+<option value="diting">小米 12T Pro / diting</option>
+<option value="plato">小米 12T / plato</option>
+<option value="thor">小米 12S Ultra / thor</option>
+<option value="unicorn">小米 12S Pro / unicorn</option>
+<option value="mayfly">小米 12S / mayfly</option>
+<option value="taoyao">小米 12 Lite / taoyao</option>
+<option value="daumier">小米 12 Pro 天玑版 / daumier</option>
+<option value="psyche">小米 12X / psyche</option>
+<option value="zeus">小米 12 Pro / zeus</option>
+<option value="cupid">小米 12 / cupid</option>
+<option value="haydn">小米 11i / haydn</option>
+<option value="haydn">小米 11X Pro / haydn</option>
+<option value="vili">小米 11T Pro / vili</option>
+<option value="agate">小米 11T / agate</option>
+<option value="pissarro_in">小米 11i / Hypercharge / pissarro_in</option>
+<option value="alioth">小米 11X / alioth</option>
+<option value="lisa">小米 11 青春活力版 / lisa</option>
+<option value="lisa">小米 11 Lite 5G NE / lisa</option>
+<option value="star">小米 11 Pro / Ultra / star</option>
+<option value="venus">小米 11 / venus</option>
+<option value="thyme">小米 10S / thyme</option>
+<option value="cas">小米 10 至尊纪念版 / cas</option>
+<option value="cmi">小米 10 Pro / cmi</option>
+<option value="umi">小米 10(umi)</option>
+            </param>
+                <param title="版本类型" name="channel" label="版本类型" value="正式版">
+                    <option value="正式版">小米澎湃 OS 正式版</option>
+                    <option value="Beta">小米澎湃 OS Beta</option>
+                    <option value="演示机版本">小米澎湃 OS 演示机版本</option>
+                    <option value="国际版">小米澎湃 OS 国际版</option>
+                    <option value="EEA">小米澎湃 OS 欧洲 EEA 正式版</option>
+                    <option value="俄罗斯">小米澎湃 OS 俄罗斯正式版</option>
+                    <option value="中国台湾">小米澎湃 OS 中国台湾正式版</option>
+                    <option value="印度">小米澎湃 OS 印度正式版</option>
+                    <option value="印度尼西亚">小米澎湃 OS 印度尼西亚正式版</option>
+                    <option value="土耳其">小米澎湃 OS 土耳其正式版</option>
+                    <option value="开发者预览">小米澎湃 OS 开发者预览版</option>
+                </param>
+                <param title="下载节点" name="node" label="下载节点" value="aliyun">
+                    <option value="bigota">https://bigota.d.miui.com/</option>
+                    <option value="cdnorg">https://cdnorg.d.miui.com/</option>
+                    <option value="bn">https://bn.d.miui.com/</option>
+                    <option value="hugeota">https://hugeota.d.miui.com/</option>
+                    <option value="aliyun">https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/</option>
+                    <option value="all">全部节点（仅查看原始链接）</option>
+                </param>
+
+        </params>
+        <set>sh samples/ota/dna-xiaomi-md5-tracker.sh "$daihao_num" "$channel" "$method" "$node" "$mode" 2 "$out" "$filename" "$default_dir"</set>
+    </action>
+    <action interruptible="false" icon="file:///android_asset/samples/ota/icon/civi.png" logo="file:///android_asset/samples/ota/icon/civi.png" allow-shortcut="true">
+        <title>Xiaomi Civi 系列 OTA</title>
+        <desc>官方 HyperOS OTA 查询与下载</desc>
+        <summary>选择设备与下载参数</summary>
+        <support>[ -x /data/user/0/com.dna.tools/files/tools/aria2c ] &amp;&amp; command -v app_process &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo 1 || echo 0</support>
+        <params>
+            <param title="设备型号" name="daihao_civi" label="[Xiaomi/Civi]">
+<option value="konghou">Xiaomi YU7 后排移动控制屏 / konghou</option>
+<option value="luming">小米 Civi 5 Pro / luming</option>
+<option value="chenfeng">小米 Civi 4 Pro / chenfeng</option>
+<option value="yuechu">小米 Civi 3 / yuechu</option>
+<option value="ziyi">小米 Civi 2 / ziyi</option>
+<option value="zijin">小米 Civi 1S / zijin</option>
+<option value="mona">小米 Civi / mona</option>            </param>
+                <param title="版本类型" name="channel" label="版本类型" value="正式版">
+                    <option value="正式版">小米澎湃 OS 正式版</option>
+                    <option value="Beta">小米澎湃 OS Beta</option>
+                    <option value="演示机版本">小米澎湃 OS 演示机版本</option>
+                    <option value="国际版">小米澎湃 OS 国际版</option>
+                    <option value="EEA">小米澎湃 OS 欧洲 EEA 正式版</option>
+                    <option value="俄罗斯">小米澎湃 OS 俄罗斯正式版</option>
+                    <option value="中国台湾">小米澎湃 OS 中国台湾正式版</option>
+                    <option value="印度">小米澎湃 OS 印度正式版</option>
+                    <option value="印度尼西亚">小米澎湃 OS 印度尼西亚正式版</option>
+                    <option value="土耳其">小米澎湃 OS 土耳其正式版</option>
+                    <option value="开发者预览">小米澎湃 OS 开发者预览版</option>
+                </param>
+                <param title="下载节点" name="node" label="下载节点" value="aliyun">
+                    <option value="bigota">https://bigota.d.miui.com/</option>
+                    <option value="cdnorg">https://cdnorg.d.miui.com/</option>
+                    <option value="bn">https://bn.d.miui.com/</option>
+                    <option value="hugeota">https://hugeota.d.miui.com/</option>
+                    <option value="aliyun">https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/</option>
+                    <option value="all">全部节点（仅查看原始链接）</option>
+                </param>
+
+        </params>
+        <set>sh samples/ota/dna-xiaomi-md5-tracker.sh "$daihao_civi" "$channel" "$method" "$node" "$mode" 2 "$out" "$filename" "$default_dir"</set>
+    </action>
+    <action interruptible="false" icon="file:///android_asset/samples/ota/icon/mix.png" logo="file:///android_asset/samples/ota/icon/mix.png" allow-shortcut="true">
+        <title>Xiaomi MIX Fold / Flip 系列 OTA</title>
+        <desc>官方 HyperOS OTA 查询与下载</desc>
+        <summary>选择设备与下载参数</summary>
+        <support>[ -x /data/user/0/com.dna.tools/files/tools/aria2c ] &amp;&amp; command -v app_process &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo 1 || echo 0</support>
+        <params>
+            <param title="设备型号" name="daihao_mix" label="[Xiaomi/MIX]">
+                    <option value="goku">小米 MIX Fold 4</option>
+                    <option value="bixi">小米 MIX Flip 2</option>
+                    <option value="ruyi">小米 MIX Flip</option>
+                    <option value="babylon">小米 MIX Fold 3</option>
+                    <option value="zizhan">小米 MIX Fold 2</option>
+                    <option value="cetus">小米 MIX FOLD</option>
+                    <option value="odin">小米 MIX 4</option>
+            </param>
+                <param title="版本类型" name="channel" label="版本类型" value="正式版">
+                    <option value="正式版">小米澎湃 OS 正式版</option>
+                    <option value="Beta">小米澎湃 OS Beta</option>
+                    <option value="演示机版本">小米澎湃 OS 演示机版本</option>
+                    <option value="国际版">小米澎湃 OS 国际版</option>
+                    <option value="EEA">小米澎湃 OS 欧洲 EEA 正式版</option>
+                    <option value="俄罗斯">小米澎湃 OS 俄罗斯正式版</option>
+                    <option value="中国台湾">小米澎湃 OS 中国台湾正式版</option>
+                    <option value="印度">小米澎湃 OS 印度正式版</option>
+                    <option value="印度尼西亚">小米澎湃 OS 印度尼西亚正式版</option>
+                    <option value="土耳其">小米澎湃 OS 土耳其正式版</option>
+                    <option value="开发者预览">小米澎湃 OS 开发者预览版</option>
+                </param>
+                <param title="下载节点" name="node" label="下载节点" value="aliyun">
+                    <option value="bigota">https://bigota.d.miui.com/</option>
+                    <option value="cdnorg">https://cdnorg.d.miui.com/</option>
+                    <option value="bn">https://bn.d.miui.com/</option>
+                    <option value="hugeota">https://hugeota.d.miui.com/</option>
+                    <option value="aliyun">https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/</option>
+                    <option value="all">全部节点（仅查看原始链接）</option>
+                </param>
+
+        </params>
+        <set>sh samples/ota/dna-xiaomi-md5-tracker.sh "$daihao_mix" "$channel" "$method" "$node" "$mode" 2 "$out" "$filename" "$default_dir"</set>
+    </action>
+    <action interruptible="false" icon="file:///android_asset/samples/ota/icon/pad.png" logo="file:///android_asset/samples/ota/icon/pad.png" allow-shortcut="true">
+        <title>小米平板系列 OTA</title>
+        <desc>官方 HyperOS OTA 查询与下载</desc>
+        <summary>选择设备与下载参数</summary>
+        <support>[ -x /data/user/0/com.dna.tools/files/tools/aria2c ] &amp;&amp; command -v app_process &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo 1 || echo 0</support>
+        <params>
+            <param title="设备型号" name="daihao_pad" label="[Xiaomi/Pad]">
+                    <option value="piano">小米平板 8 Pro</option>
+                    <option value="yupei">小米平板 8</option>
+                    <option value="turner">小米平板 Mini / REDMI K Pad</option>
+                    <option value="violin">小米平板 7S Pro 12.5</option>
+                    <option value="jinghu">小米平板 7 Ultra</option>
+                    <option value="muyu">小米平板 7 Pro</option>
+                    <option value="uke">小米平板 7 / POCO Pad X1</option>
+                    <option value="sheng">小米平板 6S Pro 12.4</option>
+                    <option value="yudi">小米平板 6 Max 14</option>
+                    <option value="liuqin">小米平板 6 Pro</option>
+                    <option value="pipa">小米平板 6</option>
+                    <option value="dagu">小米平板 5 Pro 12.4</option>
+                    <option value="elish">小米平板 5 Pro Wi-Fi</option>
+                    <option value="enuma">小米平板 5 Pro 5G</option>
+                    <option value="nabu">小米平板 5</option>
+            </param>
+                <param title="版本类型" name="channel" label="版本类型" value="正式版">
+                    <option value="正式版">小米澎湃 OS 正式版</option>
+                    <option value="Beta">小米澎湃 OS Beta</option>
+                    <option value="演示机版本">小米澎湃 OS 演示机版本</option>
+                    <option value="国际版">小米澎湃 OS 国际版</option>
+                    <option value="EEA">小米澎湃 OS 欧洲 EEA 正式版</option>
+                    <option value="俄罗斯">小米澎湃 OS 俄罗斯正式版</option>
+                    <option value="中国台湾">小米澎湃 OS 中国台湾正式版</option>
+                    <option value="印度">小米澎湃 OS 印度正式版</option>
+                    <option value="印度尼西亚">小米澎湃 OS 印度尼西亚正式版</option>
+                    <option value="土耳其">小米澎湃 OS 土耳其正式版</option>
+                    <option value="开发者预览">小米澎湃 OS 开发者预览版</option>
+                </param>
+                <param title="下载节点" name="node" label="下载节点" value="aliyun">
+                    <option value="bigota">https://bigota.d.miui.com/</option>
+                    <option value="cdnorg">https://cdnorg.d.miui.com/</option>
+                    <option value="bn">https://bn.d.miui.com/</option>
+                    <option value="hugeota">https://hugeota.d.miui.com/</option>
+                    <option value="aliyun">https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/</option>
+                    <option value="all">全部节点（仅查看原始链接）</option>
+                </param>
+
+        </params>
+        <set>sh samples/ota/dna-xiaomi-md5-tracker.sh "$daihao_pad" "$channel" "$method" "$node" "$mode" 2 "$out" "$filename" "$default_dir"</set>
+    </action>
+    <action interruptible="false" icon="file:///android_asset/samples/ota/icon/redmi_a.png" logo="file:///android_asset/samples/ota/icon/redmi_a.png" allow-shortcut="true">
+        <title>Redmi 数字 / A 系列 OTA</title>
+        <desc>官方 HyperOS OTA 查询与下载</desc>
+        <summary>选择设备与下载参数</summary>
+        <support>[ -x /data/user/0/com.dna.tools/files/tools/aria2c ] &amp;&amp; command -v app_process &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo 1 || echo 0</support>
+        <params>
+            <param title="设备型号" name="daihao_a" label="[REDMI/数字A]">
+                    <option value="light">Redmi 10 5G(light)</option>
+                    <option value="rock">Redmi 11 Prime 4G(rock)</option>
+                    <option value="light">Redmi 11 Prime 5G(light)</option>
+                    <option value="fire">Redmi 12 国际(fire)</option>
+                    <option value="sky">Redmi 12 5G(sky)</option>
+                    <option value="earth">Redmi 12C(earth)</option>
+                    <option value="sky">Redmi 12 / 12R 5G(sky)</option>
+                    <option value="breeze">Redmi 13 5G(breeze)</option>
+                    <option value="moon">Redmi 13 国际(moon)</option>
+                    <option value="air">Redmi 13C / 13R 5G(air)</option>
+                    <option value="gale">Redmi 13C 国际(gale)</option>
+                    <option value="lake">Redmi 14C(lake)</option>
+                    <option value="creek">REDMI 15 4G(creek)</option>
+                    <option value="dew">REDMI 15C(dew)</option>
+                    <option value="tornado">REDMI 15C 5G(tornado)</option>
+                    <option value="spring">REDMI 15 5G(spring)</option>
+                    <option value="somalia">REDMI 17 5G(somalia)</option>
+                    <option value="steppe">REDMI M100(steppe)</option>
+            </param>
+                <param title="版本类型" name="channel" label="版本类型" value="正式版">
+                    <option value="正式版">小米澎湃 OS 正式版</option>
+                    <option value="Beta">小米澎湃 OS Beta</option>
+                    <option value="演示机版本">小米澎湃 OS 演示机版本</option>
+                    <option value="国际版">小米澎湃 OS 国际版</option>
+                    <option value="EEA">小米澎湃 OS 欧洲 EEA 正式版</option>
+                    <option value="俄罗斯">小米澎湃 OS 俄罗斯正式版</option>
+                    <option value="中国台湾">小米澎湃 OS 中国台湾正式版</option>
+                    <option value="印度">小米澎湃 OS 印度正式版</option>
+                    <option value="印度尼西亚">小米澎湃 OS 印度尼西亚正式版</option>
+                    <option value="土耳其">小米澎湃 OS 土耳其正式版</option>
+                    <option value="开发者预览">小米澎湃 OS 开发者预览版</option>
+                </param>
+                <param title="下载节点" name="node" label="下载节点" value="aliyun">
+                    <option value="bigota">https://bigota.d.miui.com/</option>
+                    <option value="cdnorg">https://cdnorg.d.miui.com/</option>
+                    <option value="bn">https://bn.d.miui.com/</option>
+                    <option value="hugeota">https://hugeota.d.miui.com/</option>
+                    <option value="aliyun">https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/</option>
+                    <option value="all">全部节点（仅查看原始链接）</option>
+                </param>
+
+        </params>
+        <set>sh samples/ota/dna-xiaomi-md5-tracker.sh "$daihao_a" "$channel" "$method" "$node" "$mode" 2 "$out" "$filename" "$default_dir"</set>
+    </action>
+    <action interruptible="false" icon="file:///android_asset/samples/ota/icon/redmi_note.png" logo="file:///android_asset/samples/ota/icon/redmi_note.png" allow-shortcut="true">
+        <title>Redmi Note 系列 OTA</title>
+        <desc>官方 HyperOS OTA 查询与下载</desc>
+        <summary>选择设备与下载参数</summary>
+        <support>[ -x /data/user/0/com.dna.tools/files/tools/aria2c ] &amp;&amp; command -v app_process &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo 1 || echo 0</support>
+        <params>
+            <param title="设备型号" name="daihao_note" label="[REDMI/Note]">
+<option value="iolite">REDMI Note 17 Pro 5G(iolite)</option>
+<option value="mist">REDMI Note 17 5G(mist)</option>
+<option value="fluorite">REDMI Note 15 Pro+ 5G(fluorite)</option>
+<option value="charoite">REDMI Note 15 Pro 4G(charoite)</option>
+<option value="lapis">REDMI Note 15 Pro 5G(lapis)</option>
+<option value="kunzite">REDMI Note 15 5G(kunzite)</option>
+<option value="spring">REDMI Note 15 5G(spring)</option>
+<option value="spinel">REDMI Note 15 4G(spinel)</option>
+<option value="tornado">REDMI Note 15R 5G(tornado)</option>
+<option value="amethyst">Redmi Note 14 Pro+(amethyst)</option>
+<option value="emerald_1">Redmi Note 14 Pro+(emerald_1)</option>
+<option value="malachite">Redmi Note 14 Pro(malachite)</option>
+<option value="obsidian">Redmi Note 14 Pro 4G(obsidian)</option>
+<option value="beryl">Redmi Note 14 5G(beryl)</option>
+<option value="tanzanite">Redmi Note 14 4G(tanzanite)</option>
+<option value="garnet">Redmi Note 13 Pro 5G(garnet)</option>
+<option value="garnet">Redmi Note 13 Pro+ 5G(garnet)</option>
+<option value="zircon">Redmi Note 13 Pro+ 5G(zircon)</option>
+<option value="emerald">Redmi Note 13 Pro 4G(emerald)</option>
+<option value="ruby">Redmi Note 13 Pro 4G(ruby)</option>
+<option value="emerald">Redmi Note 13C 5G(emerald)</option>
+<option value="sky">Redmi Note 13R Pro(sky)</option>
+<option value="gold">Redmi Note 13R Pro(gold)</option>
+<option value="pink">Redmi Note 13R(pink)</option>
+<option value="sapphire">Redmi Note 13 4G(sapphire)</option>
+<option value="sapphire">Redmi Note 13 5G(sapphire)</option>
+<option value="pearl">Redmi Note 12T Pro(pearl)</option>
+<option value="marble">Redmi Note 12 Turbo(marble)</option>
+<option value="ruby">Redmi Note 12 Pro / Pro+ / 探索版(ruby)</option>
+<option value="redwood">Redmi Note 12 极速版(redwood)</option>
+<option value="sunstone">Redmi Note 12 5G / Note 12R Pro(sunstone)</option>
+<option value="sweet_k6a">Redmi Note 12 Pro 4G(sweet_k6a)</option>
+<option value="sea">Redmi Note 12S(sea)</option>
+<option value="tapas">Redmi Note 12 4G(tapas)</option>
+<option value="topaz">Redmi Note 12 4G NFC(topaz)</option>
+<option value="xaga">Redmi Note 11T Pro / Pro+(xaga)</option>
+<option value="pissarro">Redmi Note 11 Pro / Pro+ / Pro+ 5G(pissarro)</option>
+<option value="veux">Redmi Note 11 Pro 5G(veux)</option>
+<option value="veux">Redmi Note 11E Pro(veux)</option>
+<option value="viva">Redmi Note 11 Pro 4G(viva)</option>
+<option value="vida">Redmi Note 11 Pro 4G 印度版(vida)</option>
+<option value="fleur">Redmi Note 11S 4G(fleur)</option>
+<option value="opal">Redmi Note 11S 5G(opal)</option>
+<option value="spes">Redmi Note 11 国际版(spes)</option>
+<option value="spesn">Redmi Note 11 NFC(spesn)</option>
+<option value="evergo">Redmi Note 11 5G / 11T 5G(evergo)</option>
+<option value="light">Redmi Note 11E(light)</option>
+<option value="lightcm">Redmi Note 11R(lightcm)</option>            </param>
+                <param title="版本类型" name="channel" label="版本类型" value="正式版">
+                    <option value="正式版">小米澎湃 OS 正式版</option>
+                    <option value="Beta">小米澎湃 OS Beta</option>
+                    <option value="演示机版本">小米澎湃 OS 演示机版本</option>
+                    <option value="国际版">小米澎湃 OS 国际版</option>
+                    <option value="EEA">小米澎湃 OS 欧洲 EEA 正式版</option>
+                    <option value="俄罗斯">小米澎湃 OS 俄罗斯正式版</option>
+                    <option value="中国台湾">小米澎湃 OS 中国台湾正式版</option>
+                    <option value="印度">小米澎湃 OS 印度正式版</option>
+                    <option value="印度尼西亚">小米澎湃 OS 印度尼西亚正式版</option>
+                    <option value="土耳其">小米澎湃 OS 土耳其正式版</option>
+                    <option value="开发者预览">小米澎湃 OS 开发者预览版</option>
+                </param>
+                <param title="下载节点" name="node" label="下载节点" value="aliyun">
+                    <option value="bigota">https://bigota.d.miui.com/</option>
+                    <option value="cdnorg">https://cdnorg.d.miui.com/</option>
+                    <option value="bn">https://bn.d.miui.com/</option>
+                    <option value="hugeota">https://hugeota.d.miui.com/</option>
+                    <option value="aliyun">https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/</option>
+                    <option value="all">全部节点（仅查看原始链接）</option>
+                </param>
+
+        </params>
+        <set>sh samples/ota/dna-xiaomi-md5-tracker.sh "$daihao_note" "$channel" "$method" "$node" "$mode" 2 "$out" "$filename" "$default_dir"</set>
+    </action>
+    <action interruptible="false" icon="file:///android_asset/samples/ota/icon/redmi_k.png" logo="file:///android_asset/samples/ota/icon/redmi_k.png" allow-shortcut="true">
+        <title>Redmi K / Turbo 系列 OTA</title>
+        <desc>官方 HyperOS OTA 查询与下载</desc>
+        <summary>选择设备与下载参数</summary>
+        <support>[ -x /data/user/0/com.dna.tools/files/tools/aria2c ] &amp;&amp; command -v app_process &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo 1 || echo 0</support>
+        <params>
+            <param title="设备型号" name="daihao_k" label="[REDMI/K-Turbo]">
+<option value="songyuan">Redmi K100 Pro Max(songyuan)</option>
+<option value="athens">Redmi K100 Pro(athens)</option>
+<option value="myron">Redmi K90 Pro Max(myron)</option>
+<option value="warsaw">Redmi K90 至尊版(warsaw)</option>
+<option value="prague">Redmi K90 Max(prague)</option>
+<option value="annibale">Redmi K90(annibale)</option>
+<option value="dali">Redmi K80 至尊版(dali)</option>
+<option value="rodin">Redmi K80 Pro(rodin)</option>
+<option value="zorn">Redmi K80(zorn)</option>
+<option value="rothko">Redmi K70 至尊版(rothko)</option>
+<option value="manet">Redmi K70 Pro(manet)</option>
+<option value="vermeer">Redmi K70(vermeer)</option>
+<option value="duchamp">Redmi K70E(duchamp)</option>
+<option value="corot">Redmi K60 至尊版(corot)</option>
+<option value="socrates">Redmi K60 Pro(socrates)</option>
+<option value="mondrian">Redmi K60(mondrian)</option>
+<option value="rembrandt">Redmi K60E(rembrandt)</option>
+<option value="diting">Redmi K50 至尊版(diting)</option>
+<option value="ingres">Redmi K50 电竞版(ingres)</option>
+<option value="xaga">Redmi K50i(xaga)</option>
+<option value="matisse">Redmi K50 Pro(matisse)</option>
+<option value="rubens">Redmi K50(rubens)</option>
+<option value="munch">Redmi K40S(munch)</option>
+<option value="ares">Redmi K40 游戏增强版(ares)</option>
+<option value="haydn">Redmi K40 Pro/Pro+(haydn)</option>
+<option value="alioth">Redmi K40(alioth)</option>
+<option value="dash">Redmi Turbo 5 MAX(dash)</option>
+<option value="klee">Redmi Turbo 5(klee)</option>
+<option value="onyx">Redmi Turbo 4 Pro(onyx)</option>
+<option value="rodin">Redmi Turbo 4(rodin)</option>
+<option value="peridot">Redmi Turbo 3(peridot)</option>            </param>
+                <param title="版本类型" name="channel" label="版本类型" value="正式版">
+                    <option value="正式版">小米澎湃 OS 正式版</option>
+                    <option value="Beta">小米澎湃 OS Beta</option>
+                    <option value="演示机版本">小米澎湃 OS 演示机版本</option>
+                    <option value="国际版">小米澎湃 OS 国际版</option>
+                    <option value="EEA">小米澎湃 OS 欧洲 EEA 正式版</option>
+                    <option value="俄罗斯">小米澎湃 OS 俄罗斯正式版</option>
+                    <option value="中国台湾">小米澎湃 OS 中国台湾正式版</option>
+                    <option value="印度">小米澎湃 OS 印度正式版</option>
+                    <option value="印度尼西亚">小米澎湃 OS 印度尼西亚正式版</option>
+                    <option value="土耳其">小米澎湃 OS 土耳其正式版</option>
+                    <option value="开发者预览">小米澎湃 OS 开发者预览版</option>
+                </param>
+                <param title="下载节点" name="node" label="下载节点" value="aliyun">
+                    <option value="bigota">https://bigota.d.miui.com/</option>
+                    <option value="cdnorg">https://cdnorg.d.miui.com/</option>
+                    <option value="bn">https://bn.d.miui.com/</option>
+                    <option value="hugeota">https://hugeota.d.miui.com/</option>
+                    <option value="aliyun">https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/</option>
+                    <option value="all">全部节点（仅查看原始链接）</option>
+                </param>
+
+        </params>
+        <set>sh samples/ota/dna-xiaomi-md5-tracker.sh "$daihao_k" "$channel" "$method" "$node" "$mode" 2 "$out" "$filename" "$default_dir"</set>
+    </action>
+    <action interruptible="false" icon="file:///android_asset/samples/ota/icon/poco.png" logo="file:///android_asset/samples/ota/icon/poco.png" allow-shortcut="true">
+        <title>POCO 系列 OTA</title>
+        <desc>官方 HyperOS OTA 查询与下载</desc>
+        <summary>选择设备与下载参数</summary>
+        <support>[ -x /data/user/0/com.dna.tools/files/tools/aria2c ] &amp;&amp; command -v app_process &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo 1 || echo 0</support>
+        <params>
+            <param title="设备型号" name="daihao_poco" label="[POCO]">
+<option value="dew">POCO C85 / dew</option>
+<option value="somalia">POCO C85x 5G / somalia</option>
+<option value="warm">POCO C75 5G / warm</option>
+<option value="serenity">POCO C71 / serenity</option>
+<option value="gale">POCO C65 / gale</option>
+<option value="earth">POCO C55 / earth</option>
+<option value="myron">POCO F8 Ultra / myron</option>
+<option value="annibale">POCO F8 Pro / annibale</option>
+<option value="miro">POCO F7 Ultra / miro</option>
+<option value="zorn">POCO F7 Pro / zorn</option>
+<option value="onyx">POCO F7 / onyx</option>
+<option value="vermeer">POCO F6 Pro / vermeer</option>
+<option value="peridot">POCO F6 / peridot</option>
+<option value="mondrian">POCO F5 Pro / mondrian</option>
+<option value="marble">POCO F5 / marble</option>
+<option value="ingres">POCO F4 GT / ingres</option>
+<option value="munch">POCO F4 / munch</option>
+<option value="ares">POCO F3 GT / ares</option>
+<option value="alioth">POCO F3 / alioth</option>
+<option value="flourite">POCO M8 Pro / flourite</option>
+<option value="flame">POCO M7 5G / flame</option>
+<option value="beryl">POCO M7 Pro 5G / beryl</option>
+<option value="breeze">POCO M6 Plus 5G / breeze</option>
+<option value="emerald">POCO M6 Pro 4G / emerald</option>
+<option value="sky">POCO M6 Pro 5G / sky</option>
+<option value="air">POCO M6 5G / air</option>
+<option value="moon">POCO M6 4G / moon</option>
+<option value="rock">POCO M5 / rock</option>
+<option value="evergreen">POCO M4 Pro 5G / evergreen</option>
+<option value="light">POCO M4 5G / light</option>
+<option value="fleur">POCO M4 Pro 4G / fleur</option>
+<option value="ruan">POCO Pad 5G / ruan</option>
+<option value="uke">POCO Pad X1 / uke</option>
+<option value="dizi">POCO Pad / dizi</option>
+<option value="dash">POCO X8 Pro Max / dash</option>
+<option value="klee">POCO X8 Pro / klee</option>
+<option value="rodin">POCO X7 Pro / rodin</option>
+<option value="malachite">POCO X7 / malachite</option>
+<option value="duchamp">POCO X6 Pro 5G / duchamp</option>
+<option value="garnet">POCO X6 5G / garnet</option>
+<option value="gold">POCO X6 Neo 5G / gold</option>
+<option value="redwood">POCO X5 Pro 5G / redwood</option>
+<option value="moonstone">POCO X5 5G / moonstone</option>
+<option value="veux">POCO X4 Pro 5G / veux</option>
+<option value="proxaga">POCO X4 GT / proxaga</option>
+            </param>
+                <param title="版本类型" name="channel" label="版本类型" value="正式版">
+                    <option value="正式版">小米澎湃 OS 正式版</option>
+                    <option value="Beta">小米澎湃 OS Beta</option>
+                    <option value="演示机版本">小米澎湃 OS 演示机版本</option>
+                    <option value="国际版">小米澎湃 OS 国际版</option>
+                    <option value="EEA">小米澎湃 OS 欧洲 EEA 正式版</option>
+                    <option value="俄罗斯">小米澎湃 OS 俄罗斯正式版</option>
+                    <option value="中国台湾">小米澎湃 OS 中国台湾正式版</option>
+                    <option value="印度">小米澎湃 OS 印度正式版</option>
+                    <option value="印度尼西亚">小米澎湃 OS 印度尼西亚正式版</option>
+                    <option value="土耳其">小米澎湃 OS 土耳其正式版</option>
+                    <option value="开发者预览">小米澎湃 OS 开发者预览版</option>
+                </param>
+                <param title="下载节点" name="node" label="下载节点" value="aliyun">
+                    <option value="bigota">https://bigota.d.miui.com/</option>
+                    <option value="cdnorg">https://cdnorg.d.miui.com/</option>
+                    <option value="bn">https://bn.d.miui.com/</option>
+                    <option value="hugeota">https://hugeota.d.miui.com/</option>
+                    <option value="aliyun">https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/</option>
+                    <option value="all">全部节点（仅查看原始链接）</option>
+                </param>

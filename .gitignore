@@ -1,0 +1,6 @@
+.tools/
+app/build/
+app/release-keystore.jks
+*.iml
+.gradle/
+Dsu.apk

@@ -1,0 +1,76 @@
+plugins { 
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android { namespace 'com.probiotics.xiaoni'; compileSdk 34
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 34; versionCode 360; versionName '3.6.0' }
+    signingConfigs { release { storeFile file('release-keystore.jks'); storePassword 'changeit'; keyAlias 'tianming-release'; keyPassword 'changeit' } }
+    signingConfigs.release {
+        enableV1Signing true
+        enableV2Signing true
+        enableV3Signing true
+    }
+    buildTypes { release { minifyEnabled false; signingConfig signingConfigs.release; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
+    buildFeatures { aidl true; buildConfig true }
+    packagingOptions { jniLibs { useLegacyPackaging true } }
+    sourceSets {
+        main {
+            res.srcDirs += ["$buildDir/generated/xiaomiRes"]
+            assets.srcDirs += ["$buildDir/generated/vivoAssets"]
+        }
+    }
+    def copyXiaomiCatalog = tasks.register('copyXiaomiCatalog') {
+        outputs.file("$buildDir/generated/xiaomiRes/raw/xiaomi_devices.txt")
+        doLast {
+            def output = file("$buildDir/generated/xiaomiRes")
+            output.mkdirs()
+            copy {
+                from '../小米系统的设备.txt'
+                into "$buildDir/generated/xiaomiRes/raw"
+                rename { 'xiaomi_devices.txt' }
+            }
+        }
+    }
+    tasks.matching { it.name.startsWith('generate') && it.name.endsWith('Resources') }.configureEach {
+        dependsOn copyXiaomiCatalog
+    }
+    tasks.matching { it.name.startsWith('map') && it.name.endsWith('SourceSetPaths') }.configureEach {
+        dependsOn copyXiaomiCatalog
+    }
+    def copyVivoCatalog = tasks.register('copyVivoCatalog') {
+        outputs.file("$buildDir/generated/vivoAssets/vivo_devices.txt")
+        doLast {
+            def output = file("$buildDir/generated/vivoAssets")
+            output.mkdirs()
+            copy {
+                from '../vivo设备清单.txt'
+                into output
+                rename { 'vivo_devices.txt' }
+            }
+        }
+    }
+    tasks.matching { it.name.startsWith('pre') && it.name.endsWith('Build') }.configureEach {
+        dependsOn copyVivoCatalog
+    }
+    lint { checkReleaseBuilds false; abortOnError false }
+}
+
+dependencies {
+    implementation 'com.github.topjohnwu.libsu:core:6.0.0'
+    implementation 'com.github.topjohnwu.libsu:service:6.0.0'
+    implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:4.3'
+    implementation 'org.apache.commons:commons-compress:1.27.1'
+    implementation 'org.tukaani:xz:1.10'
+    implementation 'com.termux.termux-app:terminal-view:0.118.0'
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}
