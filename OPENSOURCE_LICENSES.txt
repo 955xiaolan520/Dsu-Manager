@@ -1,7 +1,0 @@
-VIVO-OTA-Tracker-Android
-Copyright mytiantian001 and contributors.
-Licensed under the Apache License, Version 2.0.
-The upstream source repository and full license text are available at:
-https://github.com/mytiantian001/VIVO-OTA-Tracker-Android
-
-This project integrates the VIVO OTA request protocol and device catalog.

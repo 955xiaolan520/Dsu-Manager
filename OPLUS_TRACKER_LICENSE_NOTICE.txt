@@ -1,7 +1,0 @@
-OPlus OTA protocol reference
-
-This application implements the OTA request behavior documented by:
-https://github.com/JerryTse-OSS/OPlus-Tracker
-
-The referenced project is distributed under the GNU Lesser General Public License v3.0.
-This file records the source reference and does not include copied Python source.
