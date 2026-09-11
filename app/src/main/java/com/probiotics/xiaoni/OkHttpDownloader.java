@@ -81,8 +81,8 @@ public final class OkHttpDownloader {
                     .addHeader("Accept", "*/*")
                     .addHeader("Accept-Encoding", "identity");
             
-            // 小米CDN和阿里云都需要Referer
-            if (url.contains(".miui.com") || url.contains("aliyuncs.com")) {
+            // 只有cdnorg和阿里云需要Referer，bigota/hugeota不需要
+            if (url.contains("cdnorg.d.miui.com") || url.contains("aliyuncs.com")) {
                 headBuilder.addHeader("Referer", "https://www.miui.com/");
             }
             // vivo需要Referer
@@ -188,8 +188,8 @@ public final class OkHttpDownloader {
                     .addHeader("Accept", "*/*")
                     .addHeader("Accept-Encoding", "identity");
             
-            // 小米CDN和阿里云都需要Referer
-            if (url.contains(".miui.com") || url.contains("aliyuncs.com")) {
+            // 只有cdnorg和阿里云需要Referer，bigota/hugeota不需要
+            if (url.contains("cdnorg.d.miui.com") || url.contains("aliyuncs.com")) {
                 requestBuilder.addHeader("Referer", "https://www.miui.com/");
             }
             // vivo需要Referer
@@ -233,9 +233,8 @@ public final class OkHttpDownloader {
                 .addHeader("Accept", "*/*")
                 .addHeader("Accept-Encoding", "identity");
         
-        // 只有小米CDN需要Referer，阿里云OSS不需要
-        // 小米CDN和阿里云都需要Referer
-        if (url.contains(".miui.com") || url.contains("aliyuncs.com")) {
+        // 只有cdnorg和阿里云需要Referer，bigota/hugeota不需要
+        if (url.contains("cdnorg.d.miui.com") || url.contains("aliyuncs.com")) {
             requestBuilder.addHeader("Referer", "https://www.miui.com/");
         }
         // vivo需要Referer
