@@ -440,6 +440,12 @@ public final class VivoActivity extends Activity {
         downloadCard.addView(downloadActions, margins(-1, 44, 0, 0, 0));
         content.addView(downloadCard, margins(-1, -2, 0, 0, 16));
         downloadCard.setVisibility(View.GONE);
+        // v3.8.5：点击下载框 → 跳转下载管理页（与小米/OPPO、通知栏三方进度同步入口）
+        downloadCard.setOnClickListener(v -> {
+            Haptics.perform(v);
+            startActivity(new Intent(this, DownloadManagerActivity.class));
+            overridePendingTransition(R.anim.flip_in, R.anim.flip_out);
+        });
 
         status = label("正在加载 vivo 设备分类...", 13, 0xff596579);
         status.setPadding(dp(12), dp(7), dp(12), dp(7));
@@ -1318,11 +1324,8 @@ public final class VivoActivity extends Activity {
         }
         if (!result.size.isEmpty()) {
             long sizeBytes = parseSizeBytes(result.size);
-            String sizeDisplay = result.size;
-            if (sizeBytes > 0) {
-                long sizeMB = sizeBytes / (1024 * 1024);
-                sizeDisplay = sizeBytes + " (" + sizeMB + " MB)";
-            }
+            // v3.8.5：字节数 + 换算单位（1556685Byte (1.48 MB) 样式）
+            String sizeDisplay = sizeBytes > 0 ? sizeBytesDisplay(sizeBytes) : result.size;
             addPair(card, "文件大小", sizeDisplay);
         }
         if (!result.md5.isEmpty()) {
@@ -1471,6 +1474,19 @@ public final class VivoActivity extends Activity {
         } catch (Exception e) {
             return 0;
         }
+    }
+
+    /**
+     * v3.8.5：升级包大小显示为「1556685Byte (1.48 MB)」样式 ——
+     * 原始字节数 + 换算单位（≥1GB 用 GB，其余用 MB），满足「字节数后面带多少G」的需求。
+     */
+    private String sizeBytesDisplay(long bytes) {
+        if (bytes <= 0) return "";
+        double gb = bytes / 1073741824.0;
+        String converted = gb >= 1.0
+                ? String.format(Locale.CHINA, "%.2f GB", gb)
+                : String.format(Locale.CHINA, "%.2f MB", bytes / 1048576.0);
+        return bytes + "Byte (" + converted + ")";
     }
 
     private void copyText(String label, String value) {
@@ -1676,7 +1692,10 @@ public final class VivoActivity extends Activity {
             row.addView(divider, dividerLp);
 
             if (!fileSize.isEmpty()) {
-                TextView sizeLine = label("升级包大小: " + fileSize, 12.5f, 0xff334b66);
+                // v3.8.5：升级包大小显示「1556685Byte (1.48 MB)」样式（原始字节 + 换算 G/M）
+                long sizeBytes = parseSizeBytes(fileSize);
+                String sizeText = sizeBytes > 0 ? sizeBytesDisplay(sizeBytes) : fileSize;
+                TextView sizeLine = label("升级包大小: " + sizeText, 12.5f, 0xff334b66);
                 LinearLayout.LayoutParams sizeLp = new LinearLayout.LayoutParams(-1, -2);
                 sizeLp.topMargin = dp(10);
                 row.addView(sizeLine, sizeLp);
@@ -1961,6 +1980,13 @@ public final class VivoActivity extends Activity {
     private void restoreDownloadState() {
         android.content.SharedPreferences prefs = getSharedPreferences("vivo_download", MODE_PRIVATE);
         boolean isDownloading = prefs.getBoolean("is_downloading", false);
+        // v3.8.5：与下载服务状态对账 —— 服务侧任务已结束（取消/完成时 rom_download 被清除）
+        // 则本页下载框不再显示，修复「下载管理页取消后回到本页下载框残留」
+        if (isDownloading
+                && getSharedPreferences("rom_download", MODE_PRIVATE).getString("output", "").isEmpty()) {
+            clearDownloadState();
+            isDownloading = false;
+        }
         
         if (isDownloading && downloadCard != null) {
             String fileName = prefs.getString("file_name", "");

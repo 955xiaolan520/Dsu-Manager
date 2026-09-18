@@ -469,6 +469,12 @@ public final class RomActivity extends Activity {
         content.addView(downloadCard, downloadCardLp);
         downloadCard.setVisibility(View.GONE);
         downloadActionsRow.setVisibility(View.GONE);
+        // v3.8.5：点击下载框 → 跳转下载管理页（与下载管理/通知栏三方进度同步入口）
+        downloadCard.setOnClickListener(v -> {
+            Haptics.perform(v);
+            startActivity(new Intent(this, DownloadManagerActivity.class));
+            overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
+        });
 
         results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
@@ -507,6 +513,30 @@ public final class RomActivity extends Activity {
         IntentFilter filter = new IntentFilter(DownloadService.ACTION_UPDATE);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(downloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(downloadReceiver, filter);
+        // v3.8.5：回到本页时与下载服务对账（接收器在 onStop 已注销，
+        // 停留在下载管理页期间错过的「下载已取消/完成」广播在这里补偿）
+        if (downloadCard != null) resyncDownloadCard();
+    }
+
+    /**
+     * v3.8.5 修复三方取消同步：下载管理页 / 通知栏取消后，本页下载框不再残留。
+     * 任务已结束（持久化状态被清除）→ 收起下载框；任务仍在 → 按最新状态刷新。
+     */
+    private void resyncDownloadCard() {
+        if (downloadPrefs == null) return;
+        String address = downloadPrefs.getString("address", "");
+        String outputPath = downloadPrefs.getString("output", "");
+        if (address.isEmpty() || outputPath.isEmpty()) {
+            if (downloadCard.getVisibility() == View.VISIBLE) {
+                downloadCard.setVisibility(View.GONE);
+                downloadActionsRow.setVisibility(View.GONE);
+                pauseDownload = false;
+                cancelDownload = false;
+                downloadFailed = false;
+            }
+            return;
+        }
+        restoreDownloadState();
     }
 
     @Override protected void onStop() {
@@ -2049,9 +2079,17 @@ public final class RomActivity extends Activity {
         boolean paused = downloadPrefs.getBoolean("paused", true);
         String message = downloadPrefs.getString("message", "等待恢复下载");
         boolean failedState = message.startsWith("下载失败");
-        long[] savedProgress = Aria2Downloader.readSavedProgress(output);
-        long savedDone = savedProgress[0] >= 0 ? savedProgress[0] : downloadPrefs.getLong("done", 0);
-        long savedTotal = savedProgress[1] > 0 ? savedProgress[1] : downloadPrefs.getLong("total", -1);
+        // v3.8.5 修复暂停后误显 93%：aria2c 多线程分段并行写入，文件长度是「最远写入偏移」
+        // 而非真实已下载量（16 线程时约 15/16 ≈ 93%）。真实进度以服务持久化的
+        // done/total（逐秒解析 aria2c 输出）为准，仅 prefs 无记录时才回退文件探测。
+        long savedDone = downloadPrefs.getLong("done", -1);
+        long savedTotal = downloadPrefs.getLong("total", -1);
+        if (savedDone < 0 || savedTotal <= 0) {
+            long[] savedProgress = Aria2Downloader.readSavedProgress(output);
+            if (savedDone < 0 && savedProgress[0] >= 0) savedDone = savedProgress[0];
+            if (savedTotal <= 0 && savedProgress[1] > 0) savedTotal = savedProgress[1];
+        }
+        if (savedDone < 0) savedDone = 0;
         persistedDone = savedDone;
         persistedTotal = savedTotal;
         pauseDownload = paused;

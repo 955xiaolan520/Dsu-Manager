@@ -886,6 +886,12 @@ public final class OPlusOtaActivity extends Activity {
         downloadCard.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
         parent.addView(downloadCard, margins(-1, -2, 10));
         downloadCard.setVisibility(View.GONE);
+        // v3.8.5：点击下载框 → 跳转下载管理页（与小米/vivo、通知栏三方进度同步入口）
+        downloadCard.setOnClickListener(v -> {
+            Haptics.perform(v);
+            startActivity(new Intent(this, DownloadManagerActivity.class));
+            overridePendingTransition(R.anim.explode_in, R.anim.explode_out);
+        });
     }
 
     private void showDownloadCard(java.io.File file) {

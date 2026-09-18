@@ -67,7 +67,12 @@ public final class DownloadService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         createChannel();
-        startForeground(NOTIFICATION_ID, buildProgressNotification(false, "等待下载"));
+        // v3.8.5 修复通知栏消失：不再无条件 startForeground。
+        // 3.8.0+ 打开下载管理页会以 ACTION_QUERY 拉起服务，旧逻辑立即挂出「等待下载」
+        // 常驻前台通知且永不停止 —— 幽灵通知被系统/用户静音整个渠道后，
+        // 真正的下载进度通知也一并被压制（表现为「加了下载管理后通知栏就没了」）。
+        // 现在仅 ACTION_START / ACTION_RESUME 有真实任务时才进入前台，
+        // 空闲查询/指令处理完立即 stopSelf，通知渠道保持干净。
         PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
         if (power != null) {
             wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DsuManager:RomDownload");
@@ -76,15 +81,21 @@ public final class DownloadService extends Service {
         }
     }
 
+    /** 是否有进行中（含暂停等待）的下载任务 */
+    private boolean hasActiveTask() {
+        synchronized (lock) {
+            return worker != null && worker.isAlive() && !cancelled;
+        }
+    }
+
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_RESUME : intent.getAction();
         if (ACTION_START.equals(action)) {
-            // v3.8.2 修复通知栏不显示：上一任务结束已 stopForeground，但服务进程可能仍存活；
-            // 新任务必须重新进入前台，否则通知栏无下载通知，且 startForegroundService
-            // 会因 5 秒内未调用 startForeground 触发系统强制停止/崩溃。
-            ensureForeground();
             String address = intent.getStringExtra(EXTRA_ADDRESS);
             String output = intent.getStringExtra(EXTRA_OUTPUT);
+            // 新任务必须重新进入前台（服务进程可能跨任务存活），满足 startForegroundService
+            // 5 秒契约；放在读取 extras 之后，通知直接显示新任务文件名
+            ensureForeground();
             if (address != null && output != null) {
                 boolean downgrade = intent.getBooleanExtra(EXTRA_DOWNGRADE, false);
                 boolean oplus = intent.getBooleanExtra(EXTRA_OPLUS, false);
@@ -100,6 +111,9 @@ public final class DownloadService extends Service {
                         .putBoolean("paused", false)
                         .putInt("download_threads", threads)
                         .putLong("download_chunk_mb", chunkMB)
+                        // v3.8.5：新任务开始时清除上一个任务残留的 done/total/message，
+                        // 避免暂停瞬间恢复时显示旧任务的进度（如刚启动就显示 93%）
+                        .remove("done").remove("total").remove("message")
                         .apply();
                 File outputFile = new File(output);
                 boolean sameTask = address.equals(activeAddress) && output.equals(activeOutputPath);
@@ -123,6 +137,9 @@ public final class DownloadService extends Service {
                 }
             }
         } else if (ACTION_PAUSE.equals(action)) {
+            // v3.8.5：无进行中任务时安静退出（防止对已停止任务挂出「已暂停」通知）
+            if (!hasActiveTask()) { stopSelf(); return START_NOT_STICKY; }
+            ensureForeground();   // 指令可能经 startForegroundService 下发，须满足 5 秒前台契约
             paused = true;
             Aria2Downloader active = downloader;
             if (active != null) active.pause();
@@ -131,16 +148,19 @@ public final class DownloadService extends Service {
             getSystemService(NotificationManager.class)
                     .notify(NOTIFICATION_ID, buildProgressNotification(true, null));
         } else if (ACTION_RESUME.equals(action)) {
-            if (cancelled) return START_NOT_STICKY;
-            // v3.8.2：恢复任务同样确保前台状态（服务进程跨任务存活时 onCreate 不会再触发）
-            ensureForeground();
+            if (cancelled) { stopSelf(); return START_NOT_STICKY; }
             paused = false;
             synchronized (lock) { lock.notifyAll(); }
-            startSavedWorker();
+            if (startSavedWorker()) {
+                // 有任务可恢复：进入前台，通知栏恢复进度显示
+                ensureForeground();
+            } else {
+                // v3.8.5：无可恢复任务（已被取消/完成）→ 安静退出，不再挂前台通知
+                stopSelf();
+            }
         } else if (ACTION_CANCEL.equals(action)) {
             cancelled = true;
             paused = false;
-            // v3.8.2 按需求调整：取消的任务不再写入下载历史，仅下载成功才记录
             switchAddress = null;   // 用户主动取消：不再接续任何排队任务
             switchOutputPath = null;
             getSharedPreferences("rom_download", MODE_PRIVATE).edit().clear().apply();
@@ -150,36 +170,49 @@ public final class DownloadService extends Service {
             Thread currentWorker = worker;
             boolean workerAlive = currentWorker != null && currentWorker.isAlive();
             if (currentWorker != null) currentWorker.interrupt();
-            // 广播取消状态 → APP 内下载框同步关闭（通知栏/APP 任一侧取消都走这里）
+            // 广播取消状态 → APP 内下载框同步关闭（通知栏/下载管理/ROM 查询页任一侧取消都走这里）
             sendBroadcast(new Intent(ACTION_UPDATE).setPackage(getPackageName())
                     .putExtra(EXTRA_STATE, "下载已取消")
                     .putExtra(EXTRA_DONE, -1L)
                     .putExtra(EXTRA_TOTAL, -1L)
                     .putExtra(EXTRA_SPEED, -1L)
                     .putExtra(EXTRA_ETA, -1L));
-            // 通知栏立即退出进度状态：不等下载线程收尾，先移除卡住的进度条通知
-            if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE);
-            else stopForeground(true);
-            postFinalNotification("下载已取消");
-            // 工作线程仍存活时由其收尾后 stopSelf；否则现在就停止服务
-            if (!workerAlive) stopSelf();
+            if (workerAlive) {
+                // 真实任务取消：立即退出前台进度状态，随后补一条可点击的最终通知
+                ensureForeground();   // 满足可能的 startForegroundService 5 秒契约
+                if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE);
+                else stopForeground(true);
+                postFinalNotification("下载已取消");
+                // 工作线程收尾后由其 stopSelf
+            } else {
+                // v3.8.5：本就没有进行中的任务 → 安静退出，不再发布「下载已取消」噪音通知
+                stopSelf();
+            }
             return START_NOT_STICKY;
         } else if (ACTION_QUERY.equals(action)) {
-            broadcastSavedState();
+            if (hasActiveTask()) {
+                // 有进行中任务：回报最新持久化状态（下载管理页/ROM 查询页进入时刷新用）
+                ensureForeground();   // 满足可能的 startForegroundService 5 秒契约
+                broadcastSavedState();
+            } else {
+                // v3.8.5：空闲查询不驻留 —— 无任务时服务自行停止，杜绝「等待下载」幽灵通知
+                stopSelf();
+            }
         }
         return START_STICKY;
     }
 
-    private void startSavedWorker() {
+    /** 按持久化状态恢复任务；返回是否有任务在跑（供 RESUME 分支决定是否进入前台） */
+    private boolean startSavedWorker() {
         android.content.SharedPreferences prefs = getSharedPreferences("rom_download", MODE_PRIVATE);
         String address = prefs.getString("address", "");
         String output = prefs.getString("output", "");
         int threads = prefs.getInt("download_threads", 16);
         long chunkMB = prefs.getLong("download_chunk_mb", 8);
-        if (!address.isEmpty() && !output.isEmpty()) {
-            paused = false;
-            startWorker(address, new File(output), threads, chunkMB);
-        }
+        if (address.isEmpty() || output.isEmpty()) return false;
+        paused = false;
+        startWorker(address, new File(output), threads, chunkMB);
+        return true;
     }
 
     private void startWorker(String address, File output, int threads, long chunkMB) {
@@ -356,7 +389,9 @@ public final class DownloadService extends Service {
         android.content.SharedPreferences prefs = getSharedPreferences("rom_download", MODE_PRIVATE);
         String output = prefs.getString("output", "");
         if (output.isEmpty()) return;
-        long done = prefs.getLong("done", new File(output).isFile() ? new File(output).length() : 0);
+        // v3.8.5：不用文件长度兜底 —— aria2c 多线程分段并行写入时文件长度是最远写入偏移
+        // 而非真实已下载量（小米 16 线程下载暂停后误显 93% 的根源），进度以 prefs 为准
+        long done = prefs.getLong("done", 0);
         long total = prefs.getLong("total", -1);
         String state = prefs.getString("message", "正在下载");
         Intent update = new Intent(ACTION_UPDATE).setPackage(getPackageName())
@@ -368,10 +403,10 @@ public final class DownloadService extends Service {
 
     // ---------- 通知栏（状态栏下载状态，图九样式：系统原生下载进度模板） ----------
 
-    /** v3.8.2：确保服务处于前台并显示下载通知（可安全重复调用） */
+    /** v3.8.5：确保服务处于前台并显示下载通知（可安全重复调用，按当前暂停态构建标题） */
     private void ensureForeground() {
         try {
-            startForeground(NOTIFICATION_ID, buildProgressNotification(false, "准备下载"));
+            startForeground(NOTIFICATION_ID, buildProgressNotification(paused, null));
         } catch (Exception ignored) { }
     }
 
