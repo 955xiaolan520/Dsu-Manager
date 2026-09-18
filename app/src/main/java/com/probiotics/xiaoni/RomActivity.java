@@ -93,75 +93,18 @@ public final class RomActivity extends Activity {
     private Spinner region;
     private Spinner node;
     private EditText customFilename;
-    private LiquidGlassPanel downloadCard;
-    private ProgressBar downloadProgress;
-    private TextView downloadFileTitle;
-    private TextView downloadStatus;
-    private TextView downloadPercent;
-    private TextView downloadBytes;
-    private TextView downloadPath;
-    private Button pauseDownloadButton;
-    private Button cancelDownloadButton;
-    private LinearLayout downloadActionsRow;
+    // v3.8.8：多任务下载框（只渲染本页任务，其他页任务折叠条提示）
+    private PageTaskCards taskCards;
+    private LinearLayout taskArea;
     private ScrollView pageScroll;
-    private volatile boolean pauseDownload;
-    private volatile boolean cancelDownload;
-    private volatile boolean downloadFailed;
-    private volatile long lastAriaEta = -1;   // aria2c 实测剩余时间（秒）
     private boolean awaitingPermission;
     private String pendingAddress;
     private File pendingOutput;
     private String pendingPackageType;
-    private final Object downloadLock = new Object();
     private SharedPreferences downloadPrefs;
-    private long lastProgressBytes;
-    private long lastProgressTime;
-    private long speedWindowBytes;
-    private long speedWindowTime;
-    private long smoothedSpeed;
-    private long persistedDone;
-    private long persistedTotal;
-    private int preservedDownloadScrollY;
-    private boolean preserveDownloadScroll;
     private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (!DownloadService.ACTION_UPDATE.equals(intent.getAction())) return;
-            String state = intent.getStringExtra(DownloadService.EXTRA_STATE);
-            long done = intent.getLongExtra(DownloadService.EXTRA_DONE, -1);
-            long total = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
-            long speed = intent.getLongExtra(DownloadService.EXTRA_SPEED, -1);
-            long eta = intent.getLongExtra(DownloadService.EXTRA_ETA, -1);
-            if (speed > 0) smoothedSpeed = speed;   // aria2c 实测速度直供 UI
-            if (eta >= 0) lastAriaEta = eta;
-            if (state != null && ("下载完成".equals(state)
-                    || state.startsWith("下载失败")
-                    || state.startsWith("已暂停")
-                    || state.startsWith("下载已取消")
-                    || state.startsWith("正在下载"))) {
-                downloadStatus.setText(state);
-            }
-            // 通知栏侧「暂停/继续」操作 → 同步 APP 内按钮状态
-            if (state != null && state.startsWith("已暂停")) {
-                pauseDownload = true;
-                if (pauseDownloadButton != null) pauseDownloadButton.setText("继续");
-            } else if (state != null && state.startsWith("正在下载")) {
-                pauseDownload = false;
-                downloadFailed = false;
-                if (pauseDownloadButton != null) pauseDownloadButton.setText("暂停");
-            }
-            if (done >= 0 && total > 0) updateDownloadProgress(done, total);
-            if ("下载完成".equals(state)) {
-                downloadProgress.setProgress(100);
-                downloadPercent.setText("100%");
-                downloadActionsRow.setVisibility(View.GONE);
-                clearDownloadState();
-            } else if (state != null && state.startsWith("下载已取消")) {
-                // 通知栏侧「取消」→ APP 内下载框同步关闭
-                cancelDownload = true;
-                downloadActionsRow.setVisibility(View.GONE);
-                downloadCard.setVisibility(View.GONE);
-                clearDownloadState();
-            }
+            if (taskCards != null) taskCards.onBroadcast(intent);
         }
     };
     private LinearLayout versionBody;
@@ -217,7 +160,11 @@ public final class RomActivity extends Activity {
         gridMode = downloadPrefs.getBoolean("device_view_grid", false);
         buildUi();
         loadDevices();
-        restoreDownloadState();
+        // v3.8.8：本页多任务下载框初始对账（服务可能仍在下载本页任务）
+        if (taskCards != null) {
+            taskCards.resync();
+            taskCards.queryService();
+        }
     }
 
     @Override public boolean dispatchTouchEvent(android.view.MotionEvent event) {
@@ -384,97 +331,14 @@ public final class RomActivity extends Activity {
         rowC.addView(viewToggle, toggleLp);
         content.addView(rowC, new LinearLayout.LayoutParams(-1, -2));
 
-        downloadCard = glass();
-        downloadCard.setOrientation(LinearLayout.VERTICAL);
-        downloadCard.setPadding(dp(16), dp(14), dp(16), dp(14));
-        TextView downloadTitle = label("下载", 18, 0xff20375b);
-        downloadTitle.setTypeface(null, 1);
-        downloadCard.addView(downloadTitle, new LinearLayout.LayoutParams(-1, dp(30)));
-        downloadFileTitle = label("正在下载: 文件名", 13, 0xff20375b);
-        downloadFileTitle.setMaxLines(1);
-        downloadFileTitle.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        downloadCard.addView(downloadFileTitle, new LinearLayout.LayoutParams(-1, dp(28)));
-        LinearLayout progressHeader = new LinearLayout(this);
-        progressHeader.setGravity(Gravity.CENTER_VERTICAL);
-        downloadStatus = label("预计剩余 --", 13, 0xff596579);
-        downloadStatus.setMaxLines(1);
-        downloadStatus.setEllipsize(null);
-        downloadStatus.setGravity(Gravity.CENTER_VERTICAL);
-        downloadStatus.setLineSpacing(0, 1.05f);
-        progressHeader.addView(downloadStatus, new LinearLayout.LayoutParams(0, -2, 1));
-        downloadPercent = label("0%", 15, 0xff20375b);
-        downloadPercent.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        downloadPercent.setTypeface(null, 1);
-        LinearLayout.LayoutParams percentLp = new LinearLayout.LayoutParams(dp(64), dp(42));
-        percentLp.setMarginStart(dp(6));
-        progressHeader.addView(downloadPercent, percentLp);
-        downloadCard.addView(progressHeader, new LinearLayout.LayoutParams(-1, -2));
-        downloadProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        downloadProgress.setMax(100);
-        downloadProgress.setProgress(0);
-        downloadProgress.setProgressDrawable(getDrawable(R.drawable.progress_bar));
-        LinearLayout.LayoutParams progressLp = new LinearLayout.LayoutParams(-1, dp(14));
-        progressLp.setMargins(0, dp(2), 0, dp(6));
-        downloadCard.addView(downloadProgress, progressLp);
-        downloadBytes = label("已下载 0 B / 总大小获取中", 12, 0xff596579);
-        downloadBytes.setMaxLines(1);
-        downloadBytes.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams bytesLp = new LinearLayout.LayoutParams(-1, dp(24));
-        bytesLp.setMargins(0, dp(2), 0, 0);
-        downloadCard.addView(downloadBytes, bytesLp);
-        downloadPath = label("保存到: 未开始", 11, 0xff8a94a6);
-        downloadPath.setMaxLines(2);
-        downloadPath.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
-        pathLp.setMargins(0, dp(2), 0, dp(4));
-        downloadCard.addView(downloadPath, pathLp);
-        downloadActionsRow = new LinearLayout(this);
-        downloadActionsRow.setOrientation(LinearLayout.HORIZONTAL);
-        downloadActionsRow.setGravity(Gravity.CENTER_VERTICAL);
-        pauseDownloadButton = downloadButton("暂停");
-        pauseDownloadButton.setOnClickListener(v -> {
-            Haptics.perform(v);
-            if (downloadFailed) {
-                restartDownload();
-                return;
-            }
-            pauseDownload = !pauseDownload;
-            pauseDownloadButton.setText(pauseDownload ? "继续" : "暂停");
-            if (pauseDownload) {
-                sendDownloadCommand(DownloadService.ACTION_PAUSE);
-                downloadStatus.setText("正在暂停...");
-                saveDownloadState(true, "正在暂停...");
-            } else {
-                continueDownload();
-            }
-        });
-        cancelDownloadButton = downloadButton("取消");
-        cancelDownloadButton.setOnClickListener(v -> {
-            Haptics.perform(v);
-            cancelDownload = true;
-            sendDownloadCommand(DownloadService.ACTION_CANCEL);
-            downloadActionsRow.setVisibility(View.GONE);
-            downloadCard.setVisibility(View.GONE);
-            clearDownloadState();
-            status.setText("正在取消下载并清理缓存...");
-        });
-        LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(0, dp(44), 1);
-        downloadActionsRow.addView(pauseDownloadButton, new LinearLayout.LayoutParams(actionLp));
-        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, dp(44), 1);
-        cancelLp.setMargins(dp(10), 0, 0, 0);
-        downloadActionsRow.addView(cancelDownloadButton, cancelLp);
-        downloadCard.addView(downloadActionsRow, new LinearLayout.LayoutParams(-1, dp(44)));
-        LinearLayout.LayoutParams downloadCardLp = new LinearLayout.LayoutParams(-1, -2);
-        downloadCardLp.setMargins(0, dp(12), 0, dp(16));
-        content.addView(downloadCard, downloadCardLp);
-        downloadCard.setVisibility(View.GONE);
-        downloadActionsRow.setVisibility(View.GONE);
-        // v3.8.5：点击下载框 → 跳转下载管理页（与下载管理/通知栏三方进度同步入口）
-        downloadCard.setOnClickListener(v -> {
-            Haptics.perform(v);
-            startActivity(new Intent(this, DownloadManagerActivity.class));
-            overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
-        });
+        // v3.8.8：多任务下载区（本页每个任务一张独立卡片，其他页任务折叠条提示）
+        taskArea = new LinearLayout(this);
+        taskArea.setOrientation(LinearLayout.VERTICAL);
+        taskArea.setVisibility(View.GONE);
+        taskCards = new PageTaskCards(this, RomActivity.class.getSimpleName());
+        LinearLayout.LayoutParams taskAreaLp = new LinearLayout.LayoutParams(-1, -2);
+        taskAreaLp.setMargins(0, dp(12), 0, dp(16));
+        content.addView(taskArea, taskAreaLp);
 
         results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
@@ -501,11 +365,8 @@ public final class RomActivity extends Activity {
         
         pageScroll = scroll;
         setContentView(root);
-    }
-
-    private void sendDownloadCommand(String action) {
-        Intent intent = new Intent(this, DownloadService.class).setAction(action);
-        try { startService(intent); } catch (Exception ignored) { }
+        // v3.8.8：绑定多任务下载区（页面滚动联动 + 回页对账）
+        taskCards.attach(taskArea, pageScroll);
     }
 
     @Override protected void onStart() {
@@ -513,30 +374,11 @@ public final class RomActivity extends Activity {
         IntentFilter filter = new IntentFilter(DownloadService.ACTION_UPDATE);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(downloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(downloadReceiver, filter);
-        // v3.8.5：回到本页时与下载服务对账（接收器在 onStop 已注销，
-        // 停留在下载管理页期间错过的「下载已取消/完成」广播在这里补偿）
-        if (downloadCard != null) resyncDownloadCard();
-    }
-
-    /**
-     * v3.8.5 修复三方取消同步：下载管理页 / 通知栏取消后，本页下载框不再残留。
-     * 任务已结束（持久化状态被清除）→ 收起下载框；任务仍在 → 按最新状态刷新。
-     */
-    private void resyncDownloadCard() {
-        if (downloadPrefs == null) return;
-        String address = downloadPrefs.getString("address", "");
-        String outputPath = downloadPrefs.getString("output", "");
-        if (address.isEmpty() || outputPath.isEmpty()) {
-            if (downloadCard.getVisibility() == View.VISIBLE) {
-                downloadCard.setVisibility(View.GONE);
-                downloadActionsRow.setVisibility(View.GONE);
-                pauseDownload = false;
-                cancelDownload = false;
-                downloadFailed = false;
-            }
-            return;
+        // v3.8.8：回到本页与下载服务对账（本页任务全量刷新 + 其他页折叠条计数）
+        if (taskCards != null) {
+            taskCards.resync();
+            taskCards.queryService();
         }
-        restoreDownloadState();
     }
 
     @Override protected void onStop() {
@@ -587,39 +429,6 @@ public final class RomActivity extends Activity {
         View view = new View(this);
         view.setLayoutParams(new LinearLayout.LayoutParams(dp(widthDp), 1));
         return view;
-    }
-
-    private Button downloadButton(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setAllCaps(false);
-        button.setTextSize(13);
-        button.setMinWidth(0);
-        button.setMinHeight(0);
-        button.setPadding(dp(4), 0, dp(4), 0);
-        button.setBackgroundResource(R.drawable.liquid_glass_panel);
-        return button;
-    }
-
-    private void setDownloadControls(boolean visible) {
-        downloadActionsRow.setVisibility(visible ? View.VISIBLE : View.GONE);
-    }
-
-    private void showDownloadCard(String message) {
-        showDownloadCard(message, true);
-    }
-
-    private void showDownloadCard(String message, boolean scrollToCard) {
-        downloadCard.setVisibility(View.VISIBLE);
-        downloadCard.setBackgroundResource(R.drawable.liquid_glass_panel);
-        downloadActionsRow.setVisibility(View.VISIBLE);
-        downloadStatus.setText("下载");
-        if (pageScroll != null) {
-            final int target = scrollToCard
-                    ? Math.max(0, downloadCard.getTop() - dp(8))
-                    : preservedDownloadScrollY;
-            pageScroll.post(() -> pageScroll.scrollTo(0, target));
-        }
     }
 
     /**
@@ -1900,7 +1709,9 @@ public final class RomActivity extends Activity {
         String address = downloadUrl(file, version);
         File downloadDir = new File(Environment.getExternalStorageDirectory(), "Download/DsuManager");
         if (!downloadDir.exists() && !downloadDir.mkdirs() && !downloadDir.isDirectory()) {
-            showDownloadCard("无法创建下载目录，请检查存储权限");
+            status.setText("无法创建下载目录，请检查存储权限");
+            android.widget.Toast.makeText(this, "无法创建下载目录，请检查存储权限",
+                    android.widget.Toast.LENGTH_LONG).show();
             return;
         }
         String filename = customFilename == null ? "" : customFilename.getText().toString().trim();
@@ -1918,23 +1729,12 @@ public final class RomActivity extends Activity {
                 ? sourceName
                 : (filename.toLowerCase(Locale.ROOT).endsWith(extension) ? filename : filename + extension);
         File output = new File(downloadDir, downloadFile);
-        downloadFileTitle.setText("正在下载: " + output.getName());
-        downloadStatus.setText("下载");
-        downloadPath.setText("保存到: " + output.getAbsolutePath());
-        downloadBytes.setText("已下载 0 B / 总大小获取中");
-        downloadPercent.setText("0%");
-        downloadProgress.setProgress(0);
-        pauseDownloadButton.setText("暂停");
-        pauseDownloadButton.setEnabled(true);
         pendingAddress = address;
         pendingOutput = output;
         pendingPackageType = packageType;
-        persistedDone = 0;
-        persistedTotal = -1;
-        saveDownloadState(false, "准备下载...");
         if (!hasStorageAccess()) {
             awaitingPermission = true;
-            showDownloadCard(packageType + " 需要“所有文件访问”权限才能保存 ROM");
+            status.setText(packageType + " 需要“所有文件访问”权限才能保存 ROM");
             promptStorageAccess();
             return;
         }
@@ -1969,8 +1769,6 @@ public final class RomActivity extends Activity {
                     pendingAddress = null;
                     pendingOutput = null;
                     pendingPackageType = null;
-                    downloadCard.setVisibility(View.GONE);
-                    downloadActionsRow.setVisibility(View.GONE);
                     status.setText("已取消下载");
                 })
                 .show();
@@ -1992,178 +1790,24 @@ public final class RomActivity extends Activity {
         }
     }
 
+    /**
+     * v3.8.8：发起新下载任务 → PageTaskCards 多任务下载框。
+     * 同一文件重复发起由 DownloadService 去重（活跃中忽略 / 已暂停自动恢复）；
+     * 并行满 3 个时服务端自动排队「待下载」，本页卡片显示排队状态。
+     */
     private void startDownload() {
         String address = pendingAddress;
         File output = pendingOutput;
         String packageType = pendingPackageType;
-        if (address == null || output == null) return;
-        // 通知权限统一在引导页（APP 首页引导）授权，此处不再弹出任何授权弹窗
-        boolean retrying = downloadFailed;
-        pauseDownload = false;
-        cancelDownload = false;
-        downloadFailed = false;
-        lastProgressBytes = 0;
-        lastProgressTime = 0;
-        speedWindowBytes = 0;
-        speedWindowTime = 0;
-        smoothedSpeed = 0;
-        if (pageScroll != null) preservedDownloadScrollY = pageScroll.getScrollY();
-        boolean scrollToCard = !preserveDownloadScroll && !retrying && preservedDownloadScrollY <= 0;
-        preserveDownloadScroll = false;
-        showDownloadCard("下载", scrollToCard);
-        startDownloadService(address, output, packageType, true);
+        if (address == null || output == null || taskCards == null) return;
+        taskCards.start(address, output, packageType == null ? "小米 ROM" : packageType, 16, 8L);
+        status.setText("下载任务已提交: " + output.getName()
+                + "（并行中任务最多 3 个，超出的自动排队）");
     }
 
-    private void saveDownloadState(boolean paused, String message) {
-        if (downloadPrefs == null || pendingAddress == null || pendingOutput == null) return;
-        downloadPrefs.edit()
-                .putString("address", pendingAddress)
-                .putString("output", pendingOutput.getAbsolutePath())
-                .putString("package", pendingPackageType == null ? "下载" : pendingPackageType)
-                .putBoolean("paused", paused)
-                .putString("message", message == null ? "下载中" : message)
-                .putLong("done", persistedDone)
-                .putLong("total", persistedTotal)
-                .apply();
-    }
-
-    private void clearDownloadState() {
-        if (downloadPrefs != null) {
-            downloadPrefs.edit()
-                    .remove("address")
-                    .remove("output")
-                    .remove("package")
-                    .remove("paused")
-                    .remove("message")
-                    .remove("done")
-                    .remove("total")
-                    .apply();
-        }
-    }
-
-    private void restoreDownloadState() {
-        if (downloadPrefs == null) return;
-        String address = downloadPrefs.getString("address", "");
-        String outputPath = downloadPrefs.getString("output", "");
-        if (address.isEmpty() || outputPath.isEmpty()) return;
-        File output = new File(outputPath);
-        File partial = new File(output.getParentFile(), output.getName() + ".download");
-        File control = new File(output.getParentFile(), output.getName() + ".aria2");
-        if (!output.isFile() && !partial.isFile() && !control.isFile()) {
-            clearDownloadState();
-            return;
-        }
-        pendingAddress = address;
-        pendingOutput = output;
-        pendingPackageType = downloadPrefs.getString("package", "下载");
-        downloadPath.setText("保存到: " + output.getAbsolutePath());
-        // v3.8.2 修复：无论走哪个分支，文件名标题都必须更新（此前完成分支提前 return，
-        // 标题一直是占位符「正在下载: 文件名」）
-        downloadFileTitle.setText("正在下载: " + output.getName());
-        downloadCard.setVisibility(View.VISIBLE);
-        downloadActionsRow.setVisibility(View.VISIBLE);
-        preservedDownloadScrollY = pageScroll == null ? 0 : pageScroll.getScrollY();
-        // v3.8.2 修复完成判定：aria2c 直接写最终文件（--out），下载进行中 output 也存在，
-        // 旧逻辑把进行中的任务误判为「下载完成」：隐藏暂停/取消按钮 + 误删 .aria2 控制文件。
-        // 正确口径：文件存在 且 .aria2 / .download 控制文件都已消失，才算真正完成；
-        // 否则视为下载中/已暂停 → 恢复暂停/取消按钮，进度由服务广播继续刷新。
-        if (output.isFile() && !control.isFile() && !partial.isFile()) {
-            Aria2Downloader.deleteCheckpointFiles(output);
-            downloadStatus.setText("下载完成");
-            downloadPercent.setText("100%");
-            downloadProgress.setProgress(100);
-            downloadActionsRow.setVisibility(View.GONE);
-            clearDownloadState();
-            return;
-        }
-        boolean paused = downloadPrefs.getBoolean("paused", true);
-        String message = downloadPrefs.getString("message", "等待恢复下载");
-        boolean failedState = message.startsWith("下载失败");
-        // v3.8.5 修复暂停后误显 93%：aria2c 多线程分段并行写入，文件长度是「最远写入偏移」
-        // 而非真实已下载量（16 线程时约 15/16 ≈ 93%）。真实进度以服务持久化的
-        // done/total（逐秒解析 aria2c 输出）为准，仅 prefs 无记录时才回退文件探测。
-        long savedDone = downloadPrefs.getLong("done", -1);
-        long savedTotal = downloadPrefs.getLong("total", -1);
-        if (savedDone < 0 || savedTotal <= 0) {
-            long[] savedProgress = Aria2Downloader.readSavedProgress(output);
-            if (savedDone < 0 && savedProgress[0] >= 0) savedDone = savedProgress[0];
-            if (savedTotal <= 0 && savedProgress[1] > 0) savedTotal = savedProgress[1];
-        }
-        if (savedDone < 0) savedDone = 0;
-        persistedDone = savedDone;
-        persistedTotal = savedTotal;
-        pauseDownload = paused;
-        pauseDownloadButton.setText(paused ? "继续" : "暂停");
-        if (failedState) downloadFileTitle.setText("下载失败: " + output.getName());
-        downloadStatus.setText(failedState ? message
-                : (paused ? "已暂停，点击继续可断点续传" : "下载"));
-        if (savedTotal > 0) updateDownloadProgress(savedDone, savedTotal);
-        if (!paused) startDownloadService(address, output, pendingPackageType, false);
-    }
-
-    private void startDownloadService(String address, File output, String packageType, boolean newTask) {
-        // 小米固定使用16线程+8MB分片（最优配置）
-        Intent intent = new Intent(this, DownloadService.class)
-                .setAction(newTask ? DownloadService.ACTION_START : DownloadService.ACTION_RESUME)
-                .putExtra(DownloadService.EXTRA_ADDRESS, address)
-                .putExtra(DownloadService.EXTRA_OUTPUT, output.getAbsolutePath())
-                .putExtra(DownloadService.EXTRA_PACKAGE, packageType)
-                .putExtra("download_threads", 16)
-                .putExtra("download_chunk_mb", 8L);
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
-        else startService(intent);
-    }
-
-    // 下载执行已全部收敛到 DownloadService + Aria2Downloader（aria2c 多线程引擎），
-    // Activity 仅负责 UI 展示与指令下发。
-
-    private void updateDownloadProgress(long downloaded, long total) {
-        int percent = total > 0 ? (int) (downloaded * 100 / total) : 0;
-        persistedDone = downloaded;
-        persistedTotal = total;
-        downloadProgress.setProgress(percent);
-        downloadPercent.setText(total > 0 ? percent + "%" : "--");
-        long now = android.os.SystemClock.elapsedRealtime();
-        lastProgressBytes = downloaded;
-        if (speedWindowTime == 0 || downloaded < speedWindowBytes) {
-            speedWindowBytes = downloaded;
-            speedWindowTime = now;
-        }
-        long elapsed = now - speedWindowTime;
-        long delta = downloaded - speedWindowBytes;
-        // aria2c 速度广播（每秒）优先；无广播时回退到字节增量测速
-        if (elapsed >= 2000 && delta >= 0) {
-            long measured = delta * 1000L / elapsed;
-            if (measured > 0) smoothedSpeed = smoothedSpeed == 0 ? measured : (smoothedSpeed * 3 + measured) / 4;
-            speedWindowBytes = downloaded;
-            speedWindowTime = now;
-        }
-        if (!pauseDownload && total > downloaded) {
-            long remainingSeconds = lastAriaEta >= 0 ? lastAriaEta
-                    : (smoothedSpeed > 0 ? (total - downloaded) / smoothedSpeed : -1);
-            downloadStatus.setText("预计剩余 " + formatRemainingTime(remainingSeconds));
-        }
-        String speed = smoothedSpeed > 0 ? " · " + formatBytes(smoothedSpeed) + "/s" : "";
-        downloadBytes.setText(total > 0
-                ? "已下载 " + formatBytes(downloaded) + " / 总大小 " + formatBytes(total) + speed
-                : "已下载 " + formatBytes(downloaded) + " / 总大小获取中" + speed);
-        saveDownloadState(pauseDownload, downloadStatus.getText().toString());
-    }
-
-    private void continueDownload() {
-        if (pageScroll != null) preservedDownloadScrollY = pageScroll.getScrollY();
-        sendDownloadCommand(DownloadService.ACTION_RESUME);
-        runOnUiThread(() -> {
-            pauseDownloadButton.setText("暂停");
-            downloadStatus.setText("正在继续下载...");
-            saveDownloadState(false, "正在继续下载...");
-        });
-    }
-
-    private void restartDownload() {
-        if (pendingAddress == null || pendingOutput == null) return;
-        startDownload();
-    }
+    // v3.8.8：下载执行与状态持久化已全部收敛到 DownloadService（多任务版）+
+    // PageTaskCards（页面多任务下载框）+ DownloadTaskStore（持久化对账），
+    // 本页不再维护单任务下载状态。
 
     private String downloadUrl(String file, String version) {
         String value = file == null ? "" : file.trim();
@@ -2181,28 +1825,6 @@ public final class RomActivity extends Activity {
         if (!lowerPath.endsWith(".zip") && !lowerPath.endsWith(".tgz")) path += ".zip";
         String address = downloadBase() + path;
         return address;
-    }
-
-    private String formatBytes(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        String[] units = {"KiB", "MiB", "GiB", "TiB"};
-        double value = bytes;
-        int unit = -1;
-        while (value >= 1024 && unit < units.length - 1) {
-            value /= 1024;
-            unit++;
-        }
-        return String.format(Locale.ROOT, "%.1f %s", value, units[unit]);
-    }
-
-    private String formatRemainingTime(long seconds) {
-        if (seconds < 0) return "--";
-        long hours = seconds / 3600;
-        long minutes = (seconds % 3600) / 60;
-        long remainder = seconds % 60;
-        if (hours > 0) return hours + " 小时 " + minutes + " 分钟";
-        if (minutes > 0) return minutes + " 分钟";
-        return Math.max(1, remainder) + " 秒";
     }
 
     private String downloadBase() {

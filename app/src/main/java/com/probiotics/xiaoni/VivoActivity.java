@@ -126,65 +126,13 @@ public final class VivoActivity extends Activity {
     private ScrollView pageScroll;
     private int currentTab = 0;
     
-    // 下载相关组件
-    private LiquidGlassPanel downloadCard;
-    private TextView downloadFileTitle;
-    private TextView downloadStatus;
-    private TextView downloadPercent;
-    private TextView downloadBytes;
-    private TextView downloadPath;
-    private ProgressBar downloadProgress;
-    private Button pauseDownloadButton;
-    private Button cancelDownloadButton;
-    private boolean downloadPaused = false;
-    private long speedWindowBytes = 0;
-    private long speedWindowTime = 0;
-    private long smoothedSpeed = 0;
-    
+    // v3.8.8：多任务下载框（只渲染本页 vivo 任务，其他页任务折叠条提示）
+    private PageTaskCards taskCards;
+    private LinearLayout taskArea;
+
     private final android.content.BroadcastReceiver downloadReceiver = new android.content.BroadcastReceiver() {
         @Override public void onReceive(android.content.Context context, Intent intent) {
-            if (!DownloadService.ACTION_UPDATE.equals(intent.getAction())) return;
-            if (downloadStatus == null || downloadProgress == null) return; // 防止未初始化
-            
-            String state = intent.getStringExtra(DownloadService.EXTRA_STATE);
-            long done = intent.getLongExtra(DownloadService.EXTRA_DONE, -1);
-            long total = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
-            
-            // 在终止状态（完成/失败/取消）与进行状态（暂停/下载中）时更新 downloadStatus
-            if (state != null && ("下载完成".equals(state) || state.startsWith("下载失败")
-                    || state.startsWith("下载地址无效") || state.startsWith("已暂停")
-                    || state.startsWith("下载已取消") || state.startsWith("正在下载"))) {
-                downloadStatus.setText(state);
-                speedWindowBytes = 0;
-                speedWindowTime = 0;
-                smoothedSpeed = 0;
-            }
-            
-            // 通知栏侧「暂停/继续」操作 → 同步 APP 内按钮状态
-            if (state != null && state.startsWith("已暂停")) {
-                downloadPaused = true;
-                if (pauseDownloadButton != null) pauseDownloadButton.setText("继续");
-            } else if (state != null && state.startsWith("正在下载")) {
-                downloadPaused = false;
-                if (pauseDownloadButton != null) pauseDownloadButton.setText("暂停");
-            }
-            
-            if (done >= 0) updateDownloadProgress(done, total);
-            
-            if ("下载完成".equals(state)) {
-                downloadProgress.setProgress(100);
-                downloadPercent.setText("100%");
-                if (pauseDownloadButton != null) pauseDownloadButton.setVisibility(View.GONE);
-                if (cancelDownloadButton != null) cancelDownloadButton.setText("关闭");
-                clearDownloadState(); // 完成后清除持久化状态
-            } else if (state != null && state.startsWith("下载失败")) {
-                if (pauseDownloadButton != null) pauseDownloadButton.setText("重试");
-                clearDownloadState(); // 失败后清除持久化状态
-            } else if (state != null && state.startsWith("下载已取消")) {
-                // 通知栏侧「取消」→ APP 内下载框同步关闭
-                if (downloadCard != null) downloadCard.setVisibility(View.GONE);
-                clearDownloadState();
-            }
+            if (taskCards != null) taskCards.onBroadcast(intent);
         }
     };
 
@@ -251,8 +199,11 @@ public final class VivoActivity extends Activity {
             } else {
                 registerReceiver(downloadReceiver, filter);
             }
-            restoreDownloadState(); // 恢复下载状态
-            sendDownloadCommand(DownloadService.ACTION_QUERY);
+        }
+        // v3.8.8：回到本页与下载服务对账（本页 vivo 任务全量刷新 + 其他页折叠条计数）
+        if (taskCards != null) {
+            taskCards.resync();
+            taskCards.queryService();
         }
     }
     
@@ -372,80 +323,12 @@ public final class VivoActivity extends Activity {
         historyExpandContainer.setVisibility(View.GONE);
         content.addView(historyExpandContainer, margins(-1, -2, 0, 0, 16));
 
-        // 下载卡片（在 panels 之后，查询按钮下方）
-        downloadCard = glass();
-        downloadCard.setOrientation(LinearLayout.VERTICAL);
-        downloadCard.setPadding(dp(16), dp(14), dp(16), dp(14));
-        downloadCard.addView(label("下载", 17, 0xff20375b), margins(-1, -2, 0, 0, 8));
-        
-        downloadFileTitle = label("正在下载: 未开始", 14, 0xff20375b);
-        downloadFileTitle.setSingleLine(true);
-        downloadFileTitle.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        downloadCard.addView(downloadFileTitle, margins(-1, -2, 0, 0, 8));
-        
-        LinearLayout progressHeader = new LinearLayout(this);
-        progressHeader.setOrientation(LinearLayout.HORIZONTAL);
-        downloadStatus = label("预计剩余时间 --", 13, 0xff596579);
-        progressHeader.addView(downloadStatus, new LinearLayout.LayoutParams(0, -2, 1));
-        downloadPercent = label("0%", 15, 0xff20375b);
-        downloadPercent.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-        progressHeader.addView(downloadPercent, new LinearLayout.LayoutParams(-2, -2));
-        downloadCard.addView(progressHeader, margins(-1, -2, 0, 0, 8));
-        
-        downloadProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        downloadProgress.setMax(100);
-        if (Build.VERSION.SDK_INT >= 21) {
-            downloadProgress.setProgressDrawable(getDrawable(R.drawable.progress_bar));
-        } else {
-            downloadProgress.setProgressDrawable(getResources().getDrawable(R.drawable.progress_bar));
-        }
-        downloadCard.addView(downloadProgress, margins(-1, 8, 8, 0, 8));
-        
-        downloadBytes = label("", 12, 0xff596579);
-        downloadCard.addView(downloadBytes, margins(-1, -2, 0, 0, 6));
-        downloadPath = label("", 11, 0xff7a8798);
-        downloadPath.setMaxLines(2);
-        downloadCard.addView(downloadPath, margins(-1, -2, 0, 0, 8));
-        
-        LinearLayout downloadActions = new LinearLayout(this);
-        downloadActions.setOrientation(LinearLayout.HORIZONTAL);
-        pauseDownloadButton = glassButton("暂停", 13);
-        pauseDownloadButton.setOnClickListener(v -> {
-            if ("重试".contentEquals(pauseDownloadButton.getText())) {
-                sendDownloadCommand(DownloadService.ACTION_RESUME);
-                pauseDownloadButton.setText("暂停");
-                return;
-            }
-            downloadPaused = !downloadPaused;
-            sendDownloadCommand(downloadPaused ? DownloadService.ACTION_PAUSE : DownloadService.ACTION_RESUME);
-            pauseDownloadButton.setText(downloadPaused ? "继续" : "暂停");
-        });
-        downloadActions.addView(pauseDownloadButton, new LinearLayout.LayoutParams(0, dp(44), 1));
-        
-        View downloadSpacer = new View(this);
-        downloadActions.addView(downloadSpacer, new LinearLayout.LayoutParams(dp(12), dp(44)));
-        
-        cancelDownloadButton = glassButton("取消", 13);
-        cancelDownloadButton.setOnClickListener(v -> {
-            if ("关闭".contentEquals(cancelDownloadButton.getText())) {
-                downloadCard.setVisibility(View.GONE);
-                clearDownloadState(); // 关闭时清除持久化状态
-                return;
-            }
-            sendDownloadCommand(DownloadService.ACTION_CANCEL);
-            downloadCard.setVisibility(View.GONE);
-            clearDownloadState(); // 取消时清除持久化状态
-        });
-        downloadActions.addView(cancelDownloadButton, new LinearLayout.LayoutParams(0, dp(44), 1));
-        downloadCard.addView(downloadActions, margins(-1, 44, 0, 0, 0));
-        content.addView(downloadCard, margins(-1, -2, 0, 0, 16));
-        downloadCard.setVisibility(View.GONE);
-        // v3.8.5：点击下载框 → 跳转下载管理页（与小米/OPPO、通知栏三方进度同步入口）
-        downloadCard.setOnClickListener(v -> {
-            Haptics.perform(v);
-            startActivity(new Intent(this, DownloadManagerActivity.class));
-            overridePendingTransition(R.anim.flip_in, R.anim.flip_out);
-        });
+        // v3.8.8：多任务下载区（本页每个 vivo 任务一张独立卡片，其他页任务折叠条提示）
+        taskArea = new LinearLayout(this);
+        taskArea.setOrientation(LinearLayout.VERTICAL);
+        taskArea.setVisibility(View.GONE);
+        taskCards = new PageTaskCards(this, VivoActivity.class.getSimpleName());
+        content.addView(taskArea, margins(-1, -2, 0, 0, 16));
 
         status = label("正在加载 vivo 设备分类...", 13, 0xff596579);
         status.setPadding(dp(12), dp(7), dp(12), dp(7));
@@ -483,6 +366,8 @@ public final class VivoActivity extends Activity {
         });
         root.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
+        // v3.8.8：绑定多任务下载区（页面滚动联动 + 回页对账）
+        if (taskCards != null) taskCards.attach(taskArea, pageScroll);
 
         // 延迟初始化 Tab 指示器位置和初始状态
         tabRow.postDelayed(() -> {
@@ -1501,25 +1386,13 @@ public final class VivoActivity extends Activity {
         String safeName = (name == null || name.isEmpty() ? "vivo-update.zip" : name)
                 .replaceAll("[^a-zA-Z0-9._-]", "_");
         File output = new File(directory, safeName);
-        
-        // vivo固定使用4线程+16MB分片（最优配置）
-        int threads = 4;
-        long chunkSize = 16;
-        
-        showDownloadCard(output);
-        
-        Intent intent = new Intent(this, DownloadService.class)
-                .setAction(DownloadService.ACTION_START)
-                .putExtra(DownloadService.EXTRA_ADDRESS, url)
-                .putExtra(DownloadService.EXTRA_OUTPUT, output.getAbsolutePath())
-                .putExtra(DownloadService.EXTRA_PACKAGE, "vivo OTA")
-                .putExtra("download_threads", threads)
-                .putExtra("download_chunk_mb", chunkSize);
-        
-        if (Build.VERSION.SDK_INT >= 26) {
-            startForegroundService(intent);
-        } else {
-            startService(intent);
+
+        // v3.8.8：多任务下载框（vivo 固定 4 线程 + 16MB 分片；并行满 3 个自动排队）
+        if (taskCards == null) return;
+        taskCards.start(url, output, "vivo OTA", 4, 16L);
+        if (status != null) {
+            status.setText("下载任务已提交: " + output.getName()
+                    + "（并行中任务最多 3 个，超出的自动排队）");
         }
     }
 
@@ -1884,124 +1757,9 @@ public final class VivoActivity extends Activity {
         return params;
     }
     
-    private void updateDownloadProgress(long done, long total) {
-        if (total <= 0 || downloadProgress == null || downloadPercent == null || downloadBytes == null || downloadStatus == null) return;
-        int percent = (int) ((done * 100) / total);
-        downloadProgress.setProgress(percent);
-        downloadPercent.setText(percent + "%");
-        
-        long now = System.currentTimeMillis();
-        if (speedWindowTime > 0) {
-            long deltaBytes = done - speedWindowBytes;
-            long deltaTime = now - speedWindowTime;
-            if (deltaTime > 0) {
-                long instantSpeed = (deltaBytes * 1000) / deltaTime;
-                smoothedSpeed = smoothedSpeed == 0 ? instantSpeed : (smoothedSpeed * 7 + instantSpeed) / 8;
-            }
-        }
-        speedWindowBytes = done;
-        speedWindowTime = now;
-        
-        // 计算预计剩余时间
-        String etaStr = "--";
-        if (smoothedSpeed > 0) {
-            long remaining = total - done;
-            long etaSeconds = remaining / smoothedSpeed;
-            if (etaSeconds < 60) {
-                etaStr = etaSeconds + "秒";
-            } else if (etaSeconds < 3600) {
-                etaStr = (etaSeconds / 60) + "分钟";
-            } else {
-                etaStr = (etaSeconds / 3600) + "小时";
-            }
-        }
-        downloadStatus.setText("预计剩余时间 " + etaStr);
-        
-        String doneStr = formatBytes(done);
-        String totalStr = formatBytes(total);
-        String speedStr = smoothedSpeed > 0 ? formatBytes(smoothedSpeed) + "/s" : "计算中";
-        downloadBytes.setText("已下载 " + doneStr + " / " + totalStr + " · " + speedStr);
-    }
-    
-    private String formatBytes(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
-        return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
-    }
-    
-    private void sendDownloadCommand(String action) {
-        // v3.8.6 修复闪退：查询/暂停/继续/取消指令改用普通 startService 下发。
-        // 此前 startForegroundService 拉起服务后，服务空闲分支直接 stopSelf 而未调用
-        // startForeground，5 秒后系统抛 ForegroundServiceDidNotStartInTimeException
-        // （vivo 查询页 onResume 发送 ACTION_QUERY 即崩溃，堆栈指向本方法 1936 行）。
-        // 指令均在 APP 前台发起，无需前台服务；仅 ACTION_START（真正启动下载）才需要。
-        Intent intent = new Intent(this, DownloadService.class).setAction(action);
-        try { startService(intent); } catch (Exception ignored) { }
-    }
-    
-    private void showDownloadCard(File file) {
-        downloadCard.setVisibility(View.VISIBLE);
-        downloadFileTitle.setText("正在下载: " + file.getName());
-        downloadPath.setText("保存到: " + file.getAbsolutePath());
-        downloadStatus.setText("准备下载");
-        downloadPercent.setText("0%");
-        downloadBytes.setText("已下载 0 B / 总大小获取中");
-        downloadProgress.setProgress(0);
-        pauseDownloadButton.setText("暂停");
-        pauseDownloadButton.setVisibility(View.VISIBLE);
-        cancelDownloadButton.setText("取消");
-        downloadPaused = false;
-        speedWindowBytes = 0;
-        speedWindowTime = 0;
-        smoothedSpeed = 0;
-        
-        // 保存下载状态到 SharedPreferences
-        saveDownloadState(file.getName(), file.getAbsolutePath());
-    }
-    
-    private void saveDownloadState(String fileName, String filePath) {
-        android.content.SharedPreferences prefs = getSharedPreferences("vivo_download", MODE_PRIVATE);
-        prefs.edit()
-            .putBoolean("is_downloading", true)
-            .putString("file_name", fileName)
-            .putString("file_path", filePath)
-            .apply();
-    }
-    
-    private void clearDownloadState() {
-        android.content.SharedPreferences prefs = getSharedPreferences("vivo_download", MODE_PRIVATE);
-        prefs.edit()
-            .putBoolean("is_downloading", false)
-            .remove("file_name")
-            .remove("file_path")
-            .apply();
-    }
-    
-    private void restoreDownloadState() {
-        android.content.SharedPreferences prefs = getSharedPreferences("vivo_download", MODE_PRIVATE);
-        boolean isDownloading = prefs.getBoolean("is_downloading", false);
-        // v3.8.5：与下载服务状态对账 —— 服务侧任务已结束（取消/完成时 rom_download 被清除）
-        // 则本页下载框不再显示，修复「下载管理页取消后回到本页下载框残留」
-        if (isDownloading
-                && getSharedPreferences("rom_download", MODE_PRIVATE).getString("output", "").isEmpty()) {
-            clearDownloadState();
-            isDownloading = false;
-        }
-        
-        if (isDownloading && downloadCard != null) {
-            String fileName = prefs.getString("file_name", "");
-            String filePath = prefs.getString("file_path", "");
-            
-            if (!fileName.isEmpty() && !filePath.isEmpty()) {
-                downloadCard.setVisibility(View.VISIBLE);
-                downloadFileTitle.setText("正在下载: " + fileName);
-                downloadPath.setText("保存到: " + filePath);
-                downloadStatus.setText("恢复下载中...");
-                pauseDownloadButton.setVisibility(View.VISIBLE);
-            }
-        }
-    }
+    // v3.8.8：下载执行与状态持久化已全部收敛到 DownloadService（多任务版）+
+    // PageTaskCards（页面多任务下载框）+ DownloadTaskStore（持久化对账），
+    // 本页不再维护单任务下载状态。
 
     private static final class Device {
         final String model;

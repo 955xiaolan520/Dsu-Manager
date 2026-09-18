@@ -48,20 +48,42 @@ public final class DownloadManagerActivity extends Activity {
     private static final int TEAL_SOFT = 0xff4a7d8c;    // 次级文字
     private static final int TEAL_FAINT = 0xff6b8fa0;   // 弱化文字
 
-    // 当前任务实时状态（与 DownloadService 广播 / 通知栏同一数据源）
-    private String activeName = "";
-    private String activeOutput = "";
-    private String stateText = "";
-    private long done = -1, total = -1, speed = -1, eta = -1;
-    private boolean taskPaused;
+    // ---------- v3.8.8 多任务实时状态（与 DownloadService 广播 / DownloadTaskStore 同源） ----------
+
+    /** 单个任务的最新状态（广播增量更新，全量重渲染的数据源） */
+    private static final class TaskState {
+        String id = "";          // 输出文件绝对路径（唯一标识）
+        String page = "";        // 来源页面 simpleName
+        String pkg = "下载";      // 包类型文案
+        String message = "";     // 最新状态行
+        String output = "";      // 输出路径
+        long done = -1, total = -1, speed = -1, eta = -1;
+        boolean pending;         // 排队「待下载」
+        boolean paused;
+        boolean finished;        // 下载完成（短暂展示后由历史接管）
+        boolean failed;
+    }
+
+    /** 单张任务卡的视图引用（增量刷新，避免整页重建闪烁） */
+    private static final class CardViews {
+        LinearLayout card;
+        TextView title;
+        TextView state;
+        TextView percent;
+        TextView bytes;
+        TextView path;
+        ProgressBar progress;
+        Button pauseButton;
+        Button cancelButton;
+    }
+
+    private final java.util.LinkedHashMap<String, TaskState> states = new java.util.LinkedHashMap<>();
+    private final java.util.HashMap<String, CardViews> cards = new java.util.HashMap<>();
 
     // UI
-    private LinearLayout activeHost;      // 当前任务卡容器
+    private LinearLayout activeHost;      // 任务卡列表容器
     private LinearLayout historyHost;     // 历史列表容器
     private TextView historySummary;      // 历史统计
-    private ProgressBar progressBar;
-    private TextView percentLabel, bytesLabel, stateLabel;
-    private Button pauseResumeButton;
 
     private final List<JSONObject> history = new ArrayList<>();
     private BroadcastReceiver receiver;
@@ -192,18 +214,14 @@ public final class DownloadManagerActivity extends Activity {
         content.addView(historyHost, new LinearLayout.LayoutParams(-1, -2));
 
         loadHistory();
-        renderActive();
+        loadStatesFromStore();
+        renderTasks();
         renderHistory();
 
-        // 实时同步：接收下载服务广播（与通知栏同源）
+        // 实时同步：接收下载服务广播（与通知栏同源，按任务 ID 增量更新对应卡片）
         receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
-                String s = intent.getStringExtra(DownloadService.EXTRA_STATE);
-                long d = intent.getLongExtra(DownloadService.EXTRA_DONE, -1);
-                long t = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
-                long sp = intent.getLongExtra(DownloadService.EXTRA_SPEED, -1);
-                long e = intent.getLongExtra(DownloadService.EXTRA_ETA, -1);
-                onDownloadUpdate(s, d, t, sp, e);
+                onDownloadUpdate(intent);
             }
         };
         // Android 14+（targetSdk 34+）必须指定导出标志，否则 SecurityException 崩溃（3.8.0 崩溃根因）
@@ -213,7 +231,7 @@ public final class DownloadManagerActivity extends Activity {
         } else {
             registerReceiver(receiver, filter);
         }
-        // 进入页面立即拉取当前状态
+        // 进入页面立即拉取全部任务状态
         startService(new Intent(this, DownloadService.class).setAction(DownloadService.ACTION_QUERY));
     }
 
@@ -221,6 +239,8 @@ public final class DownloadManagerActivity extends Activity {
         super.onResume();
         // 回到页面时刷新历史（可能在其他页完成下载）
         loadHistory();
+        loadStatesFromStore();
+        renderTasks();
         renderHistory();
         startService(new Intent(this, DownloadService.class).setAction(DownloadService.ACTION_QUERY));
     }
@@ -230,61 +250,92 @@ public final class DownloadManagerActivity extends Activity {
         super.onDestroy();
     }
 
-    // ---------- 实时状态（三方同步：本页 / 通知栏 / ROM 查询页） ----------
+    // ---------- v3.8.8 多任务实时状态（广播增量更新 + store 对账） ----------
 
-    private void onDownloadUpdate(String state, long d, long t, long sp, long e) {
-        // v3.8.2 修复：任务取消 → 当前任务卡立即清空收起 + 历史即时刷新（此前一直挂在页面）
-        if (state != null && state.startsWith("下载已取消")) {
-            activeName = "";
-            activeOutput = "";
-            stateText = "";
-            taskPaused = false;
-            done = -1;
-            total = -1;
-            speed = -1;
-            eta = -1;
-            loadHistory();
-            renderActive();
-            renderHistory();
-            return;
-        }
-        if (state != null) stateText = state;
-        if (d >= 0) done = d;
-        if (t >= 0) total = t;
-        if (sp != -1) speed = sp;
-        if (e != -1) eta = e;
-        if (state != null) {
-            taskPaused = state.contains("暂停");
-            // 状态行里带文件名（正在下载: xxx.zip）
-            if (state.startsWith("正在下载: ")) activeName = state.substring("正在下载: ".length());
-            else if (state.startsWith("已暂停: ")) activeName = state.substring("已暂停: ".length());
-        }
-        // 从持久化状态读取输出路径；prefs 已清空 = 任务已结束，重置残留路径（v3.8.2）
-        String saved = getSharedPreferences("rom_download", MODE_PRIVATE).getString("output", "");
-        if (!saved.isEmpty()) activeOutput = saved;
-        else if (!"下载完成".equals(state)) activeOutput = "";
-        renderActive();
-        if ("下载完成".equals(state) || state != null && state.startsWith("下载完成")) {
-            loadHistory();
-            renderHistory();
+    /** 初始 / 回页对账：从 DownloadTaskStore 读取全部任务（服务可能在页面关闭期间结束任务） */
+    private void loadStatesFromStore() {
+        states.clear();
+        for (DownloadTaskStore.Item item : DownloadTaskStore.all(this)) {
+            TaskState s = new TaskState();
+            s.id = item.id;
+            s.page = item.page;
+            s.pkg = item.pkg;
+            s.output = item.output.getAbsolutePath();
+            s.message = item.message;
+            s.done = item.done;
+            s.total = item.total;
+            s.speed = item.speed;
+            s.eta = item.eta;
+            s.pending = item.isPending();
+            s.paused = item.isPaused();
+            states.put(s.id, s);
         }
     }
 
-    // ---------- 当前任务卡渲染 ----------
+    /** 广播到达：按任务 ID 增量更新对应卡片；任务结束（取消/完成/失败）时移除并刷历史 */
+    private void onDownloadUpdate(Intent intent) {
+        if (intent == null) return;
+        String taskId = intent.getStringExtra(DownloadService.EXTRA_TASK_ID);
+        if (taskId == null) return;
+        String state = intent.getStringExtra(DownloadService.EXTRA_STATE);
+        long d = intent.getLongExtra(DownloadService.EXTRA_DONE, -1);
+        long t = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
+        long sp = intent.getLongExtra(DownloadService.EXTRA_SPEED, -1);
+        long e = intent.getLongExtra(DownloadService.EXTRA_ETA, -1);
+        if (state != null && state.startsWith("下载已取消")) {
+            states.remove(taskId);
+            renderTasks();
+            return;
+        }
+        TaskState s = states.get(taskId);
+        if (s == null) {
+            // 未知任务（页面关闭期间新增）→ 全量对账
+            loadStatesFromStore();
+            renderTasks();
+            return;
+        }
+        if (state != null) {
+            s.message = state;
+            if (state.startsWith("已暂停")) s.paused = true;
+            else if (state.startsWith("正在下载")) {
+                s.paused = false;
+                s.pending = false;
+            } else if (state.startsWith("排队等待中")) {
+                s.pending = true;
+            } else if ("下载完成".equals(state)) {
+                s.finished = true;
+                loadHistory();
+                renderHistory();
+            } else if (state.startsWith("下载失败") || state.startsWith("下载地址无效")) {
+                s.failed = true;
+            }
+        }
+        if (d >= 0) s.done = d;
+        if (t >= 0) s.total = t;
+        if (sp > 0) s.speed = sp;
+        if (e >= 0) s.eta = e;
+        updateCard(taskId);
+    }
 
-    private void renderActive() {
+    /** 来源页面 simpleName → 中文标签 */
+    private static String pageLabel(String page) {
+        if ("RomActivity".equals(page)) return "小米";
+        if ("VivoActivity".equals(page)) return "vivo";
+        if ("OPlusOtaActivity".equals(page)) return "OPPO";
+        return page == null || page.isEmpty() ? "本机" : page;
+    }
+
+    // ---------- 任务卡列表渲染（v3.8.8：每任务一张卡，最多 3 并行 + 待下载队列） ----------
+
+    private void renderTasks() {
         activeHost.removeAllViews();
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(18), dp(16), dp(18), dp(16));
-        card.setBackground(enhancedGlass(dp(24)));
-        card.setElevation(dp(8));
-
-        boolean hasTask = !activeOutput.isEmpty() || stateText.contains("下载")
-                || (done >= 0 && total > 0 && !"下载已取消".equals(stateText));
-
-        if (!hasTask) {
-            // 空态玻璃卡
+        cards.clear();
+        if (states.isEmpty()) {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(18), dp(16), dp(18), dp(16));
+            card.setBackground(enhancedGlass(dp(24)));
+            card.setElevation(dp(8));
             TextView empty = label("当前没有下载任务", 15.5f, TEAL_DARK);
             empty.setGravity(Gravity.CENTER);
             empty.setTypeface(null, 1);
@@ -297,124 +348,212 @@ public final class DownloadManagerActivity extends Activity {
             activeHost.addView(card, lp);
             return;
         }
+        for (TaskState s : states.values()) {
+            View cardView = taskCard(s);
+            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+            cardLp.bottomMargin = dp(12);
+            activeHost.addView(cardView, cardLp);
+        }
+    }
 
-        // v3.8.6：与 ROM 查询页下载框完全同构 ——
-        // 「下载任务」标题 / 「正在下载: 文件名」/ 预计剩余 + 百分比 / 进度条 /
-        // 已下载 + 总大小 + 速度 / 保存路径 / 暂停 + 取消（不再显示通用「ROM 下载任务」）
-        TextView cardTitle = label("下载任务", 13.5f, TEAL_TITLE);
-        cardTitle.setTypeface(null, 1);
-        card.addView(cardTitle, new LinearLayout.LayoutParams(-1, dp(24)));
+    private View taskCard(TaskState s) {
+        CardViews views = new CardViews();
+        views.card = new LinearLayout(this);
+        views.card.setOrientation(LinearLayout.VERTICAL);
+        views.card.setPadding(dp(18), dp(16), dp(18), dp(16));
+        views.card.setBackground(enhancedGlass(dp(24)));
+        views.card.setElevation(dp(8));
 
-        String displayName = !activeOutput.isEmpty()
-                ? new File(activeOutput).getName()
-                : (activeName.isEmpty() ? "ROM 文件" : activeName);
-        TextView name = label("正在下载: " + displayName, 15.5f, TEAL_DARK);
-        name.setTypeface(null, 1);
-        name.setMaxLines(1);
-        name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        card.addView(name, new LinearLayout.LayoutParams(-1, dp(30)));
+        // 标签行：来源（小米 / vivo / OPPO）+ 包类型 + 排队徽章
+        LinearLayout meta = new LinearLayout(this);
+        meta.setOrientation(LinearLayout.HORIZONTAL);
+        meta.setGravity(Gravity.CENTER_VERTICAL);
+        TextView badgeView = new TextView(this);
+        badgeView.setTextSize(11);
+        badgeView.setTypeface(Typeface.DEFAULT_BOLD);
+        badgeView.setGravity(Gravity.CENTER);
+        badgeView.setPadding(dp(10), 0, dp(10), 0);
+        GradientDrawable badgeBg = new GradientDrawable();
+        badgeBg.setCornerRadius(dp(11));
+        if (s.pending) {
+            badgeBg.setColor(0x268A94A6);
+            badgeBg.setStroke(Math.max(1, dp(1)), 0x33000000);
+            badgeView.setTextColor(0xff667383);
+            badgeView.setText("◷ 待下载 · " + pageLabel(s.page));
+        } else if (s.finished) {
+            badgeBg.setColor(0x262FB47C);
+            badgeBg.setStroke(Math.max(1, dp(1)), 0x33000000);
+            badgeView.setTextColor(0xff1E8A60);
+            badgeView.setText("✓ 已完成 · " + pageLabel(s.page));
+        } else if (s.failed) {
+            badgeBg.setColor(0x26C0392B);
+            badgeBg.setStroke(Math.max(1, dp(1)), 0x33000000);
+            badgeView.setTextColor(0xffB03024);
+            badgeView.setText("✕ 失败 · " + pageLabel(s.page));
+        } else {
+            badgeBg.setColor(0x264472DE);
+            badgeBg.setStroke(Math.max(1, dp(1)), 0x33000000);
+            badgeView.setTextColor(0xFF3D6BD6);
+            badgeView.setText("⇩ 下载中 · " + pageLabel(s.page));
+        }
+        badgeView.setBackground(badgeBg);
+        meta.addView(badgeView, new LinearLayout.LayoutParams(-2, dp(22)));
+        TextView pkgView = label(s.pkg == null || s.pkg.isEmpty() ? "ROM 下载" : s.pkg, 11.5f, TEAL_FAINT);
+        pkgView.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+        meta.addView(pkgView, new LinearLayout.LayoutParams(0, dp(24), 1));
+        views.card.addView(meta, new LinearLayout.LayoutParams(-1, -2));
 
-        // 状态（预计剩余 / 已暂停 / 正在准备下载）+ 百分比
+        String name = s.output.isEmpty() ? "ROM 文件" : new File(s.output).getName();
+        String prefix = s.pending ? "待下载: " : s.finished ? "下载完成: "
+                : s.failed ? "下载失败: " : s.paused ? "已暂停: " : "正在下载: ";
+        views.title = label(prefix + name, 15.5f, TEAL_DARK);
+        views.title.setTypeface(null, 1);
+        views.title.setMaxLines(1);
+        views.title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, dp(30));
+        titleLp.topMargin = dp(4);
+        views.card.addView(views.title, titleLp);
+
+        // 状态（预计剩余 / 已暂停 / 排队中）+ 百分比
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        stateLabel = label(statusText(), 13, TEAL_SOFT);
-        stateLabel.setMaxLines(1);
-        stateLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        head.addView(stateLabel, new LinearLayout.LayoutParams(0, dp(42), 1));
-        percentLabel = label(percentText(), 16, TEAL_TITLE);
-        percentLabel.setTypeface(null, 1);
-        percentLabel.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        head.addView(percentLabel, new LinearLayout.LayoutParams(dp(72), dp(42)));
-        card.addView(head, new LinearLayout.LayoutParams(-1, -2));
+        views.state = label(stateLine(s), 13, TEAL_SOFT);
+        views.state.setMaxLines(1);
+        views.state.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        head.addView(views.state, new LinearLayout.LayoutParams(0, dp(42), 1));
+        views.percent = label(percentText(s), 16, TEAL_TITLE);
+        views.percent.setTypeface(null, 1);
+        views.percent.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+        head.addView(views.percent, new LinearLayout.LayoutParams(dp(72), dp(42)));
+        views.card.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
-        // 进度条
-        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setMax(100);
-        progressBar.setProgress(percentValue());
-        progressBar.setProgressDrawable(getDrawable(R.drawable.progress_bar));
+        views.progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        views.progress.setMax(100);
+        views.progress.setProgress(percentValue(s));
+        views.progress.setProgressDrawable(getDrawable(R.drawable.progress_bar));
         LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(-1, dp(16));
         barLp.setMargins(0, dp(2), 0, dp(6));
-        card.addView(progressBar, barLp);
+        views.card.addView(views.progress, barLp);
 
-        // 已下载 / 总大小 · 速度（与 ROM 查询页下载框同一文案格式）
-        bytesLabel = label(bytesText(), 12, TEAL_SOFT);
-        bytesLabel.setMaxLines(1);
-        bytesLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        card.addView(bytesLabel, new LinearLayout.LayoutParams(-1, dp(24)));
+        views.bytes = label(bytesText(s), 12, TEAL_SOFT);
+        views.bytes.setMaxLines(1);
+        views.bytes.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        views.card.addView(views.bytes, new LinearLayout.LayoutParams(-1, dp(24)));
 
-        // 保存路径
-        if (!activeOutput.isEmpty()) {
-            TextView path = label("保存到: " + activeOutput, 11, TEAL_FAINT);
-            path.setMaxLines(2);
-            path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-            LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
-            pathLp.bottomMargin = dp(4);
-            card.addView(path, pathLp);
-        }
+        views.path = label(s.output.isEmpty() ? "" : "保存到: " + s.output, 11, TEAL_FAINT);
+        views.path.setMaxLines(2);
+        views.path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
+        pathLp.bottomMargin = dp(4);
+        views.card.addView(views.path, pathLp);
 
-        // 操作按钮：暂停/继续 + 取消
+        // 操作按钮：暂停/继续 + 取消（每卡独立，指令带任务 ID）
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
-        pauseResumeButton = actionButton(taskPaused ? "▶ 继续" : "⏸ 暂停", 0xFF4472DE, 0xFF6C9BF2);
-        pauseResumeButton.setOnClickListener(v -> {
+        views.pauseButton = actionButton(
+                s.pending ? "◷ 排队中" : s.paused ? "▶ 继续" : s.finished ? "已完成" : "⏸ 暂停",
+                0xFF4472DE, 0xFF6C9BF2);
+        views.pauseButton.setEnabled(!s.pending && !s.finished);
+        views.pauseButton.setOnClickListener(v -> {
             Haptics.perform(v);
             startService(new Intent(this, DownloadService.class)
-                    .setAction(taskPaused ? DownloadService.ACTION_RESUME : DownloadService.ACTION_PAUSE));
+                    .setAction(s.paused ? DownloadService.ACTION_RESUME : DownloadService.ACTION_PAUSE)
+                    .putExtra(DownloadService.EXTRA_TASK_ID, s.id));
         });
-        actions.addView(pauseResumeButton, new LinearLayout.LayoutParams(0, dp(44), 1));
-        Button cancel = actionButton("✕ 取消", 0xFFC0392B, 0xFFE07A6B);
-        cancel.setOnClickListener(v -> {
+        actions.addView(views.pauseButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        views.cancelButton = actionButton(s.finished ? "知道了" : "✕ 取消", 0xFFC0392B, 0xFFE07A6B);
+        views.cancelButton.setOnClickListener(v -> {
             Haptics.perform(v);
+            if (s.finished) {
+                states.remove(s.id);
+                renderTasks();
+                return;
+            }
             new android.app.AlertDialog.Builder(this)
                     .setTitle("取消下载")
-                    .setMessage("确定取消当前下载任务？已下载的部分文件将被删除。")
+                    .setMessage("确定取消「" + name + "」？已下载的部分文件将被删除。")
                     .setPositiveButton("取消下载", (d, w) -> {
                         Haptics.perform(v);
+                        states.remove(s.id);
+                        renderTasks();
                         startService(new Intent(this, DownloadService.class)
-                                .setAction(DownloadService.ACTION_CANCEL));
+                                .setAction(DownloadService.ACTION_CANCEL)
+                                .putExtra(DownloadService.EXTRA_TASK_ID, s.id));
                     })
                     .setNegativeButton("返回", null)
                     .show();
         });
         LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, dp(44), 1);
         cancelLp.leftMargin = dp(10);
-        actions.addView(cancel, cancelLp);
-        card.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+        actions.addView(views.cancelButton, cancelLp);
+        views.card.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
 
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.bottomMargin = dp(12);
-        activeHost.addView(card, lp);
+        cards.put(s.id, views);
+        return views.card;
     }
 
-    private int percentValue() {
-        return total > 0 && done >= 0 ? (int) Math.max(0, Math.min(100, done * 100 / total)) : 0;
-    }
-
-    private String percentText() {
-        return total > 0 && done >= 0 ? percentValue() + "%" : "…";
-    }
-
-    /** v3.8.6：状态行文案 —— 与 ROM 查询页下载框一致（预计剩余 X / 已暂停 / 正在准备下载） */
-    private String statusText() {
-        if (stateText.startsWith("下载完成")) return "下载完成";
-        if (stateText.startsWith("下载失败") || stateText.startsWith("下载地址无效")) return stateText;
-        if (stateText.startsWith("下载已取消")) return "下载已取消";
-        if (taskPaused || stateText.startsWith("已暂停")) return "已暂停 · 点击「继续」断点续传";
-        if (eta > 0) return "预计剩余 " + formatRemainingTime(eta);
-        if (stateText.startsWith("正在准备") || stateText.endsWith("准备下载")) return "正在准备下载";
-        if (stateText.isEmpty() || stateText.startsWith("正在下载")) return "正在连接下载节点...";
-        return stateText;
-    }
-
-    private String bytesText() {
-        // v3.8.6：与 ROM 查询页下载框同一文案「已下载 X / 总大小 Y · 速度 Z/s」
-        String speedPart = speed > 0 ? " · 速度 " + formatBytes(speed) + "/s" : "";
-        if (done >= 0 && total > 0) {
-            return "已下载 " + formatBytes(done) + " / 总大小 " + formatBytes(total) + speedPart;
+    /** 单卡增量刷新（广播到达，不重建整页） */
+    private void updateCard(String taskId) {
+        TaskState s = states.get(taskId);
+        CardViews views = cards.get(taskId);
+        if (s == null) {
+            renderTasks();
+            return;
         }
-        if (done >= 0) {
-            return "已下载 " + formatBytes(done) + " / 总大小获取中" + speedPart;
+        if (views == null || views.title == null) {
+            renderTasks();
+            return;
+        }
+        String name = s.output.isEmpty() ? "ROM 文件" : new File(s.output).getName();
+        String prefix = s.pending ? "待下载: " : s.finished ? "下载完成: "
+                : s.failed ? "下载失败: " : s.paused ? "已暂停: " : "正在下载: ";
+        views.title.setText(prefix + name);
+        views.state.setText(stateLine(s));
+        views.percent.setText(percentText(s));
+        views.progress.setProgress(percentValue(s));
+        views.bytes.setText(bytesText(s));
+        views.path.setText(s.output.isEmpty() ? "" : "保存到: " + s.output);
+        views.pauseButton.setText(s.pending ? "◷ 排队中" : s.paused ? "▶ 继续" : s.finished ? "已完成" : "⏸ 暂停");
+        views.pauseButton.setEnabled(!s.pending && !s.finished);
+        views.cancelButton.setText(s.finished ? "知道了" : "✕ 取消");
+    }
+
+    private static int percentValue(TaskState s) {
+        return s.total > 0 && s.done >= 0
+                ? (int) Math.max(0, Math.min(100, s.done * 100 / s.total)) : 0;
+    }
+
+    private static String percentText(TaskState s) {
+        if (s.finished) return "100%";
+        if (s.pending) return "排队";
+        return s.total > 0 && s.done >= 0 ? percentValue(s) + "%" : "…";
+    }
+
+    /** 状态行文案（预计剩余 / 已暂停 / 排队等待 / 失败原因） */
+    private String stateLine(TaskState s) {
+        if (s.finished) return "下载完成 · 已保存到 Download/DsuManager";
+        if (s.failed) return s.message == null || s.message.isEmpty() ? "下载失败" : s.message;
+        if (s.pending) return s.message == null || s.message.isEmpty()
+                ? "排队等待中（最多同时下载 3 个）" : s.message;
+        if (s.paused) return "已暂停 · 点击「继续」断点续传";
+        if (s.eta > 0 && s.total > s.done) return "预计剩余 " + formatRemainingTime(s.eta);
+        if (s.message != null && (s.message.startsWith("正在准备") || s.message.endsWith("准备下载")))
+            return "正在准备下载";
+        return "正在连接下载节点...";
+    }
+
+    private String bytesText(TaskState s) {
+        if (s.finished) {
+            return "总大小 " + (s.total > 0 ? formatBytes(s.total) : formatBytes(s.done));
+        }
+        String speedPart = !s.paused && !s.pending && s.speed > 0
+                ? " · 速度 " + formatBytes(s.speed) + "/s" : "";
+        if (s.done >= 0 && s.total > 0) {
+            return "已下载 " + formatBytes(s.done) + " / 总大小 " + formatBytes(s.total) + speedPart;
+        }
+        if (s.done >= 0) {
+            return "已下载 " + formatBytes(s.done) + " / 总大小获取中" + speedPart;
         }
         return "正在获取下载信息...";
     }

@@ -95,55 +95,12 @@ public final class OPlusOtaActivity extends Activity {
     private int tabDragTarget = -1;
     private float tabDragStartX;
     private Runnable tabLongPress;
-    private LinearLayout downloadCard;
-    private TextView downloadFileTitle;
-    private TextView downloadStatus;
-    private TextView downloadPercent;
-    private TextView downloadBytes;
-    private TextView downloadPath;
-    private ProgressBar downloadProgress;
-    private Button pauseDownloadButton;
-    private Button cancelDownloadButton;
-    private boolean downloadPaused;
-    private long speedWindowBytes;
-    private long speedWindowTime;
-    private long smoothedSpeed;
+    // v3.8.8：多任务下载框（只渲染本页 OPPO 任务，其他页任务折叠条提示）
+    private PageTaskCards taskCards;
+    private LinearLayout taskArea;
     private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (!DownloadService.ACTION_UPDATE.equals(intent.getAction())) return;
-            String state = intent.getStringExtra(DownloadService.EXTRA_STATE);
-            long done = intent.getLongExtra(DownloadService.EXTRA_DONE, -1);
-            long total = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
-            if (state != null) {
-                downloadStatus.setText(state);
-                if ("下载完成".equals(state) || state.startsWith("下载失败")
-                        || state.startsWith("下载地址无效") || state.startsWith("下载已取消")) {
-                    speedWindowBytes = 0;
-                    speedWindowTime = 0;
-                    smoothedSpeed = 0;
-                }
-            }
-            // 通知栏侧「暂停/继续」操作 → 同步 APP 内按钮状态
-            if (state != null && state.startsWith("已暂停")) {
-                downloadPaused = true;
-                if (pauseDownloadButton != null) pauseDownloadButton.setText("继续");
-            } else if (state != null && state.startsWith("正在下载")) {
-                downloadPaused = false;
-                if (pauseDownloadButton != null) pauseDownloadButton.setText("暂停");
-            }
-            if (done >= 0) updateDownloadProgress(done, total);
-            if ("下载完成".equals(state)) {
-                downloadProgress.setProgress(100);
-                downloadPercent.setText("100%");
-                pauseDownloadButton.setVisibility(View.GONE);
-                cancelDownloadButton.setText("关闭");
-            } else if (state != null && state.startsWith("下载失败")) {
-                pauseDownloadButton.setText("重试");
-            } else if (state != null && state.startsWith("下载已取消")) {
-                // 通知栏侧「取消」→ APP 内下载框同步关闭
-                if (downloadCard != null) downloadCard.setVisibility(View.GONE);
-                if (cancelDownloadButton != null) cancelDownloadButton.setText("取消");
-            }
+            if (taskCards != null) taskCards.onBroadcast(intent);
         }
     };
 
@@ -230,7 +187,12 @@ public final class OPlusOtaActivity extends Activity {
         status = label(TAB_HINTS[0], 13, 0xff596579);
         status.setPadding(dp(12), dp(8), dp(12), dp(8));
         content.addView(status, margins(-1, -2, 6));
-        buildDownloadCard(content);
+        // v3.8.8：多任务下载区（本页每个 OPPO 任务一张独立卡片，其他页任务折叠条提示）
+        taskArea = new LinearLayout(this);
+        taskArea.setOrientation(LinearLayout.VERTICAL);
+        taskArea.setVisibility(View.GONE);
+        taskCards = new PageTaskCards(this, OPlusOtaActivity.class.getSimpleName());
+        content.addView(taskArea, margins(-1, -2, 10));
         results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
         content.addView(results, new LinearLayout.LayoutParams(-1, -2));
@@ -241,7 +203,7 @@ public final class OPlusOtaActivity extends Activity {
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         scroll.addView(content);
-        
+
         FrameLayout root = new FrameLayout(this);
         root.setBackground(createOPlusGradientBackground());
         root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -255,6 +217,8 @@ public final class OPlusOtaActivity extends Activity {
         });
         root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
+        // v3.8.8：绑定多任务下载区（页面滚动联动 + 回页对账）
+        if (taskCards != null) taskCards.attach(taskArea, scroll);
         selectTab(0);
         tabs.post(() -> moveTabIndicator(0, false));
     }
@@ -730,18 +694,11 @@ public final class OPlusOtaActivity extends Activity {
         java.io.File dir = new java.io.File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DsuManager");
         if (!dir.exists()) dir.mkdirs();
         java.io.File file = new java.io.File(dir, filename.replaceAll("[^a-zA-Z0-9._() -]", "_"));
-        // OPPO固定使用16线程+8MB分片（最优配置）
-        Intent intent = new Intent(this, DownloadService.class).setAction(DownloadService.ACTION_START)
-                .putExtra(DownloadService.EXTRA_ADDRESS, address)
-                .putExtra(DownloadService.EXTRA_OUTPUT, file.getAbsolutePath())
-                .putExtra(DownloadService.EXTRA_PACKAGE, "OPlus OTA")
-                .putExtra(DownloadService.EXTRA_OPLUS, true)
-                .putExtra(DownloadService.EXTRA_DOWNGRADE, downgrade)
-                .putExtra("download_threads", 16)
-                .putExtra("download_chunk_mb", 8L);
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
-        showDownloadCard(file);
-        status.setText("下载已开始: " + file.getName());
+        // v3.8.8：多任务下载框（OPPO 固定 16 线程 + 8MB 分片；并行满 3 个自动排队）
+        if (taskCards == null) return;
+        taskCards.start(address, file, "OPlus OTA", 16, 8L);
+        status.setText("下载任务已提交: " + file.getName()
+                + "（并行中任务最多 3 个，超出的自动排队）");
     }
 
     private String safeFilename(String value, String fallback) {
@@ -836,148 +793,10 @@ public final class OPlusOtaActivity extends Activity {
         return extension.matches("\\.[a-z0-9]{1,8}") ? extension : ".zip";
     }
 
-    private void buildDownloadCard(LinearLayout parent) {
-        downloadCard = glass();
-        downloadCard.setOrientation(LinearLayout.VERTICAL);
-        downloadCard.setPadding(dp(16), dp(14), dp(16), dp(14));
-        downloadCard.addView(label("下载任务", 17, 0xff20375b), margins(-1, 28, 2));
-        downloadFileTitle = label("正在下载: 未开始", 13, 0xff20375b);
-        downloadFileTitle.setSingleLine(true);
-        downloadFileTitle.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        downloadCard.addView(downloadFileTitle, margins(-1, 28, 2));
-        LinearLayout progressHeader = new LinearLayout(this);
-        downloadStatus = label("等待下载", 13, 0xff596579);
-        progressHeader.addView(downloadStatus, new LinearLayout.LayoutParams(0, dp(32), 1));
-        downloadPercent = label("0%", 15, 0xff20375b);
-        downloadPercent.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        progressHeader.addView(downloadPercent, new LinearLayout.LayoutParams(dp(58), dp(32)));
-        downloadCard.addView(progressHeader);
-        downloadProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        downloadProgress.setMax(100);
-        downloadProgress.setProgressDrawable(getDrawable(R.drawable.progress_bar));
-        downloadCard.addView(downloadProgress, margins(-1, 14, 5));
-        downloadBytes = label("已下载 0 B / 总大小获取中", 12, 0xff596579);
-        downloadCard.addView(downloadBytes, margins(-1, 24, 0));
-        downloadPath = label("保存到: 未开始", 11, 0xff7a8798);
-        downloadPath.setMaxLines(2);
-        downloadCard.addView(downloadPath, margins(-1, -2, 6));
-        LinearLayout actions = new LinearLayout(this);
-        pauseDownloadButton = button("暂停");
-        pauseDownloadButton.setOnClickListener(v -> {
-            if ("重试".contentEquals(pauseDownloadButton.getText())) {
-                sendDownloadCommand(DownloadService.ACTION_RESUME);
-                pauseDownloadButton.setText("暂停");
-                return;
-            }
-            downloadPaused = !downloadPaused;
-            sendDownloadCommand(downloadPaused ? DownloadService.ACTION_PAUSE : DownloadService.ACTION_RESUME);
-            pauseDownloadButton.setText(downloadPaused ? "继续" : "暂停");
-        });
-        cancelDownloadButton = button("取消");
-        cancelDownloadButton.setOnClickListener(v -> {
-            if ("关闭".contentEquals(cancelDownloadButton.getText())) { downloadCard.setVisibility(View.GONE); return; }
-            sendDownloadCommand(DownloadService.ACTION_CANCEL);
-            downloadCard.setVisibility(View.GONE);
-        });
-        actions.addView(pauseDownloadButton, new LinearLayout.LayoutParams(0, dp(44), 1));
-        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, dp(44), 1);
-        cancelLp.setMarginStart(dp(10));
-        actions.addView(cancelDownloadButton, cancelLp);
-        downloadCard.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
-        parent.addView(downloadCard, margins(-1, -2, 10));
-        downloadCard.setVisibility(View.GONE);
-        // v3.8.5：点击下载框 → 跳转下载管理页（与小米/vivo、通知栏三方进度同步入口）
-        downloadCard.setOnClickListener(v -> {
-            Haptics.perform(v);
-            startActivity(new Intent(this, DownloadManagerActivity.class));
-            overridePendingTransition(R.anim.explode_in, R.anim.explode_out);
-        });
-    }
-
-    private void showDownloadCard(java.io.File file) {
-        downloadCard.setVisibility(View.VISIBLE);
-        downloadPaused = false;
-        downloadFileTitle.setText("正在下载: " + file.getName());
-        downloadPath.setText("保存到: " + file.getAbsolutePath());
-        downloadStatus.setText("正在准备下载");
-        downloadBytes.setText("已下载 0 B / 总大小获取中");
-        speedWindowBytes = 0;
-        speedWindowTime = 0;
-        smoothedSpeed = 0;
-        downloadProgress.setProgress(0);
-        downloadPercent.setText("0%");
-        pauseDownloadButton.setVisibility(View.VISIBLE);
-        pauseDownloadButton.setText("暂停");
-        cancelDownloadButton.setText("取消");
-    }
-
-    private void restoreDownloadCard() {
-        android.content.SharedPreferences prefs = getSharedPreferences("rom_download", MODE_PRIVATE);
-        String output = prefs.getString("output", "");
-        if (output.isEmpty()) {
-            downloadCard.setVisibility(View.GONE);
-            return;
-        }
-        java.io.File file = new java.io.File(output);
-        downloadCard.setVisibility(View.VISIBLE);
-        downloadFileTitle.setText("正在下载: " + file.getName());
-        downloadPath.setText("保存到: " + file.getAbsolutePath());
-        String message = prefs.getString("message", "正在下载");
-        downloadStatus.setText(message);
-        long done = prefs.getLong("done", file.isFile() ? file.length() : 0);
-        long total = prefs.getLong("total", -1);
-        if (total > 0) updateDownloadProgress(done, total);
-        else {
-            downloadBytes.setText("已下载 " + formatBytes(done) + " / 总大小获取中");
-            downloadPercent.setText("0%");
-            downloadProgress.setProgress(0);
-        }
-        downloadPaused = prefs.getBoolean("paused", false);
-        boolean finished = "下载完成".equals(message);
-        boolean failed = message.startsWith("下载失败") || message.startsWith("下载地址无效");
-        pauseDownloadButton.setVisibility(finished ? View.GONE : View.VISIBLE);
-        pauseDownloadButton.setText(failed ? "重试" : downloadPaused ? "继续" : "暂停");
-        cancelDownloadButton.setText(finished ? "关闭" : "取消");
-        speedWindowBytes = 0;
-        speedWindowTime = 0;
-        smoothedSpeed = 0;
-    }
-
-    private void sendDownloadCommand(String action) {
-        Intent intent = new Intent(this, DownloadService.class).setAction(action);
-        try { startService(intent); } catch (Exception ignored) { }
-    }
-
-    private void updateDownloadProgress(long done, long total) {
-        int percent = total > 0 ? (int) Math.min(100, done * 100 / total) : 0;
-        long now = android.os.SystemClock.elapsedRealtime();
-        if (speedWindowTime == 0 || done < speedWindowBytes) {
-            speedWindowBytes = done;
-            speedWindowTime = now;
-        }
-        long elapsed = now - speedWindowTime;
-        long delta = done - speedWindowBytes;
-        if (elapsed >= 2000 && delta >= 0) {
-            long measured = delta * 1000L / elapsed;
-            smoothedSpeed = smoothedSpeed == 0 ? measured : (smoothedSpeed * 3 + measured) / 4;
-            speedWindowBytes = done;
-            speedWindowTime = now;
-        }
-        downloadProgress.setProgress(percent);
-        downloadPercent.setText(percent + "%");
-        if (total > 0 && done < total) {
-            if (smoothedSpeed > 0) {
-                long remaining = (total - done) / smoothedSpeed;
-                downloadStatus.setText("预计剩余 " + formatRemainingTime(remaining));
-            } else if (downloadStatus.getText().toString().startsWith("预计剩余")) {
-                downloadStatus.setText("正在下载");
-            }
-        }
-        String speed = smoothedSpeed > 0 ? " · 速度 " + formatBytes(smoothedSpeed) + "/s" : "";
-        downloadBytes.setText(total > 0
-                ? "已下载 " + formatBytes(done) + " / 总大小 " + formatBytes(total) + speed
-                : "已下载 " + formatBytes(done) + " / 总大小获取中" + speed);
-    }
+    // v3.8.8：下载执行与状态持久化已全部收敛到 DownloadService（多任务版）+
+    // PageTaskCards（页面多任务下载框）+ DownloadTaskStore（持久化对账），
+    // 本页不再维护单任务下载状态（原 buildDownloadCard / showDownloadCard /
+    // restoreDownloadCard / updateDownloadProgress / sendDownloadCommand 均已移除）。
 
     private String formatRemainingTime(long seconds) {
         if (seconds < 0) return "--";
@@ -1013,13 +832,6 @@ public final class OPlusOtaActivity extends Activity {
         if (link == null) return "";
         int lineBreak = link.indexOf('\n');
         return (lineBreak >= 0 ? link.substring(0, lineBreak) : link).trim();
-    }
-
-    private String formatBytes(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024L * 1024L) return String.format(Locale.ROOT, "%.1f KB", bytes / 1024d);
-        if (bytes < 1024L * 1024L * 1024L) return String.format(Locale.ROOT, "%.1f MB", bytes / 1024d / 1024d);
-        return String.format(Locale.ROOT, "%.2f GB", bytes / 1024d / 1024d / 1024d);
     }
 
     private CheckBox checkBox(String text) {
@@ -1183,12 +995,13 @@ public final class OPlusOtaActivity extends Activity {
 
     @Override protected void onStart() {
         super.onStart();
-        restoreDownloadCard();
         IntentFilter filter = new IntentFilter(DownloadService.ACTION_UPDATE);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(downloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(downloadReceiver, filter);
-        if (!getSharedPreferences("rom_download", MODE_PRIVATE).getString("output", "").isEmpty()) {
-            sendDownloadCommand(DownloadService.ACTION_QUERY);
+        // v3.8.8：回到本页与下载服务对账（本页 OPPO 任务全量刷新 + 其他页折叠条计数）
+        if (taskCards != null) {
+            taskCards.resync();
+            taskCards.queryService();
         }
     }
 

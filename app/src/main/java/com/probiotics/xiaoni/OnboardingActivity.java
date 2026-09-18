@@ -685,6 +685,8 @@ public final class OnboardingActivity extends Activity {
     private TextView allowAudio;
     private TextView allowMedia;
     private TextView pendingRow;
+    /** v3.8.8：底部「允许」一键授权流程进行中（系统授权弹窗回调后自动进入下一页） */
+    private boolean pendingAllowAll;
 
     private void showPermissionSheet() {
         FrameLayout wrap = new FrameLayout(this);
@@ -739,9 +741,10 @@ public final class OnboardingActivity extends Activity {
                 () -> requestPermissionSet("android.permission.READ_MEDIA_IMAGES,android.permission.READ_MEDIA_VIDEO",
                         1012, allowMedia));
 
-        // 底部操作（图二）：确定（蓝色粗体）在上、取消（蓝色）在下，垂直排列居中
+        // 底部操作（v3.8.8）：允许（蓝色粗体）在上、不允许（蓝色）在下 —— 「允许」一键发起全部
+        // 未授权权限的真实系统授权（此前「确定」只关弹窗不授权，导致通知权限缺失、通知栏不显示）
         Button confirm = new Button(this, null, 0);
-        confirm.setText(english ? "OK" : "确定");
+        confirm.setText(english ? "Allow" : "允许");
         confirm.setAllCaps(false);
         confirm.setTextSize(16.5f);
         confirm.setTypeface(Typeface.DEFAULT_BOLD);
@@ -753,14 +756,14 @@ public final class OnboardingActivity extends Activity {
         confirm.setPadding(0, 0, 0, 0);
         confirm.setOnClickListener(v -> {
             Haptics.perform(v);
-            dismissSheetThen();
+            requestAllThenDismiss();
         });
         LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-1, dp(46));
         confirmLp.topMargin = dp(10);
         sheet.addView(confirm, confirmLp);
 
         Button cancel = new Button(this, null, 0);
-        cancel.setText(english ? "Cancel" : "取消");
+        cancel.setText(english ? "Don't Allow" : "不允许");
         cancel.setAllCaps(false);
         cancel.setTextSize(15.5f);
         cancel.setTextColor(ACCENT);
@@ -922,6 +925,40 @@ public final class OnboardingActivity extends Activity {
                 .start();
     }
 
+    /**
+     * v3.8.8：底部「允许」一键授权 —— 收集全部未授权权限（通知 / 音频 / 照片和视频），
+     * 一次 requestPermissions 发起真实系统授权；回调到达后刷新各行状态并进入下一页。
+     * 已全部授权（或系统不支持）时直接关闭弹窗前进。
+     */
+    private void requestAllThenDismiss() {
+        java.util.List<String> need = new java.util.ArrayList<>();
+        String[][] groups = {
+                {"android.permission.POST_NOTIFICATIONS"},
+                {"android.permission.READ_MEDIA_AUDIO"},
+                {"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"}
+        };
+        for (String[] group : groups) {
+            boolean granted = true;
+            for (String p : group) {
+                if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) {
+                    granted = false;
+                    break;
+                }
+            }
+            if (!granted) need.addAll(java.util.Arrays.asList(group));
+        }
+        if (need.isEmpty()) {
+            // 已全部授权：三行立即标记「已允许」并前进
+            refreshPermissionRow(allowNotification, "android.permission.POST_NOTIFICATIONS");
+            refreshPermissionRow(allowAudio, "android.permission.READ_MEDIA_AUDIO");
+            refreshPermissionRow(allowMedia, "android.permission.READ_MEDIA_IMAGES");
+            dismissSheetThen();
+            return;
+        }
+        pendingAllowAll = true;
+        requestPermissions(need.toArray(new String[0]), 1013);
+    }
+
     private void requestPermissionSet(String permissions, int requestCode, TextView row) {
         String[] list = permissions.split(",");
         boolean allGranted = true;
@@ -955,6 +992,18 @@ public final class OnboardingActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        // v3.8.8：底部「允许」一键授权回调 → 刷新三行状态后进入下一页（拒绝也不阻塞引导）
+        if (requestCode == 1013) {
+            refreshPermissionRow(allowNotification, "android.permission.POST_NOTIFICATIONS");
+            refreshPermissionRow(allowAudio, "android.permission.READ_MEDIA_AUDIO");
+            refreshPermissionRow(allowMedia, "android.permission.READ_MEDIA_IMAGES");
+            if (pendingAllowAll) {
+                pendingAllowAll = false;
+                dismissSheetThen();
+            }
+            pendingRow = null;
+            return;
+        }
         if (pendingRow != null && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             markAllowed(pendingRow);
         }
