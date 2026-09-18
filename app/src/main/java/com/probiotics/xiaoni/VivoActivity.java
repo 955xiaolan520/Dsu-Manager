@@ -1931,12 +1931,13 @@ public final class VivoActivity extends Activity {
     }
     
     private void sendDownloadCommand(String action) {
+        // v3.8.6 修复闪退：查询/暂停/继续/取消指令改用普通 startService 下发。
+        // 此前 startForegroundService 拉起服务后，服务空闲分支直接 stopSelf 而未调用
+        // startForeground，5 秒后系统抛 ForegroundServiceDidNotStartInTimeException
+        // （vivo 查询页 onResume 发送 ACTION_QUERY 即崩溃，堆栈指向本方法 1936 行）。
+        // 指令均在 APP 前台发起，无需前台服务；仅 ACTION_START（真正启动下载）才需要。
         Intent intent = new Intent(this, DownloadService.class).setAction(action);
-        if (Build.VERSION.SDK_INT >= 26) {
-            startForegroundService(intent);
-        } else {
-            startService(intent);
-        }
+        try { startService(intent); } catch (Exception ignored) { }
     }
     
     private void showDownloadCard(File file) {

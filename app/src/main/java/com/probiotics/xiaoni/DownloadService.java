@@ -37,7 +37,12 @@ public final class DownloadService extends Service {
     public static final String EXTRA_ETA = "eta";
     /** 下载历史（下载管理页数据源）：name / path / size / time / status（done|cancelled|failed） */
     public static final String HISTORY_PREFS = "download_history";
-    private static final String CHANNEL = "rom_download";
+    // v3.8.6：全新通知渠道。旧渠道「rom_download」在 3.8.0~3.8.5 的幽灵常驻通知时代
+    // 极可能已被用户长按屏蔽或被系统静音 —— 渠道一旦被屏蔽，同一渠道 ID 的所有下载
+    // 通知永远不再显示（这正是「通知栏一直没有下载任务通知」的根源，3.8.5 治了幽灵
+    // 通知却治不了已受伤的渠道）。换全新 ID 获得干净渠道，旧渠道同步删除。
+    private static final String CHANNEL = "rom_download_v2";
+    private static final String LEGACY_CHANNEL = "rom_download";
     private static final int NOTIFICATION_ID = 42;
     private final Object lock = new Object();
     private volatile boolean paused;
@@ -93,9 +98,23 @@ public final class DownloadService extends Service {
         if (ACTION_START.equals(action)) {
             String address = intent.getStringExtra(EXTRA_ADDRESS);
             String output = intent.getStringExtra(EXTRA_OUTPUT);
+            // v3.8.6：进前台前先把通知数据源复位成新任务 —— 文件名 / 进度 / 速度 / 暂停位
+            // 全部清零，首条通知直接显示真实文件名，不再闪现默认占位「正在下载: ROM」
+            // 或上一任务残留的进度/速度
+            if (output != null) {
+                fileName = new File(output).getName();
+                lastDone = -1;
+                lastTotal = -1;
+                lastSpeedBps = -1;
+                lastEtaSeconds = -1;
+                lastPercent = -1;
+                lastNotifyAt = 0;
+                paused = false;
+            }
             // 新任务必须重新进入前台（服务进程可能跨任务存活），满足 startForegroundService
-            // 5 秒契约；放在读取 extras 之后，通知直接显示新任务文件名
+            // 5 秒契约
             ensureForeground();
+            warnIfNotificationsDisabled();
             if (address != null && output != null) {
                 boolean downgrade = intent.getBooleanExtra(EXTRA_DOWNGRADE, false);
                 boolean oplus = intent.getBooleanExtra(EXTRA_OPLUS, false);
@@ -137,8 +156,8 @@ public final class DownloadService extends Service {
                 }
             }
         } else if (ACTION_PAUSE.equals(action)) {
-            // v3.8.5：无进行中任务时安静退出（防止对已停止任务挂出「已暂停」通知）
-            if (!hasActiveTask()) { stopSelf(); return START_NOT_STICKY; }
+            // v3.8.6：无进行中任务时退出 —— 必须先补 startForeground 满足契约再停（见 quitIdle）
+            if (!hasActiveTask()) { quitIdle(startId); return START_NOT_STICKY; }
             ensureForeground();   // 指令可能经 startForegroundService 下发，须满足 5 秒前台契约
             paused = true;
             Aria2Downloader active = downloader;
@@ -148,15 +167,16 @@ public final class DownloadService extends Service {
             getSystemService(NotificationManager.class)
                     .notify(NOTIFICATION_ID, buildProgressNotification(true, null));
         } else if (ACTION_RESUME.equals(action)) {
-            if (cancelled) { stopSelf(); return START_NOT_STICKY; }
+            // v3.8.6：已取消 → 按契约退出（先 startForeground 再停止，防 5 秒超时崩溃）
+            if (cancelled) { quitIdle(startId); return START_NOT_STICKY; }
             paused = false;
             synchronized (lock) { lock.notifyAll(); }
             if (startSavedWorker()) {
                 // 有任务可恢复：进入前台，通知栏恢复进度显示
                 ensureForeground();
             } else {
-                // v3.8.5：无可恢复任务（已被取消/完成）→ 安静退出，不再挂前台通知
-                stopSelf();
+                // v3.8.6：无可恢复任务（已被取消/完成）→ 按契约安静退出
+                quitIdle(startId);
             }
         } else if (ACTION_CANCEL.equals(action)) {
             cancelled = true;
@@ -185,8 +205,8 @@ public final class DownloadService extends Service {
                 postFinalNotification("下载已取消");
                 // 工作线程收尾后由其 stopSelf
             } else {
-                // v3.8.5：本就没有进行中的任务 → 安静退出，不再发布「下载已取消」噪音通知
-                stopSelf();
+                // v3.8.6：本就没有进行中的任务 → 按契约安静退出（先 startForeground 再停止）
+                quitIdle(startId);
             }
             return START_NOT_STICKY;
         } else if (ACTION_QUERY.equals(action)) {
@@ -195,8 +215,11 @@ public final class DownloadService extends Service {
                 ensureForeground();   // 满足可能的 startForegroundService 5 秒契约
                 broadcastSavedState();
             } else {
-                // v3.8.5：空闲查询不驻留 —— 无任务时服务自行停止，杜绝「等待下载」幽灵通知
-                stopSelf();
+                // v3.8.6：空闲查询不驻留，但必须先 startForeground 满足契约再停止。
+                // v3.8.5 在此直接 stopSelf：vivo 查询页 onResume 经 startForegroundService
+                // 发查询指令，服务 5 秒内未 startForeground →
+                // ForegroundServiceDidNotStartInTimeException（本次 vivo 闪退根因）
+                quitIdle(startId);
             }
         }
         return START_STICKY;
@@ -343,6 +366,9 @@ public final class DownloadService extends Service {
             finishWithNotification("下载已取消");
             return;
         }
+        // v3.8.6：兜底退出路径同样先退出前台再停止，避免遗留前台通知
+        if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE);
+        else stopForeground(true);
         stopSelf();
     }
 
@@ -407,6 +433,38 @@ public final class DownloadService extends Service {
     private void ensureForeground() {
         try {
             startForeground(NOTIFICATION_ID, buildProgressNotification(paused, null));
+        } catch (Exception ignored) { }
+    }
+
+    /**
+     * v3.8.6 修复崩溃：本服务可能经 startForegroundService() 拉起（如 vivo 查询页 onResume
+     * 发送的状态查询），Android 8+ 要求此类拉起后 5 秒内必须调用 startForeground()，
+     * 否则系统抛 ForegroundServiceDidNotStartInTimeException（本次 vivo 查询页闪退根因）。
+     * 无任务退出前先补一次 startForeground 满足契约，随即移除通知并停止服务。
+     */
+    private void quitIdle(int startId) {
+        try {
+            startForeground(NOTIFICATION_ID, buildProgressNotification(false, "空闲"));
+        } catch (Exception ignored) { }
+        if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE);
+        else stopForeground(true);
+        stopSelf(startId);
+    }
+
+    /** v3.8.6：下载启动时检测通知是否被关闭（应用总开关 / 渠道被屏蔽），提示用户手动开启 */
+    private void warnIfNotificationsDisabled() {
+        try {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            boolean blocked = !nm.areNotificationsEnabled();
+            if (!blocked && Build.VERSION.SDK_INT >= 26) {
+                NotificationChannel channel = nm.getNotificationChannel(CHANNEL);
+                blocked = channel != null && channel.getImportance() == NotificationManager.IMPORTANCE_NONE;
+            }
+            if (blocked) {
+                android.widget.Toast.makeText(getApplicationContext(),
+                        "系统通知已被关闭：状态栏将看不到下载进度，请在系统设置中开启 Dsu 管理器的通知",
+                        android.widget.Toast.LENGTH_LONG).show();
+            }
         } catch (Exception ignored) { }
     }
 
@@ -506,10 +564,13 @@ public final class DownloadService extends Service {
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL, "ROM 下载",
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            // v3.8.6：删除可能已被屏蔽的旧渠道，创建全新干净渠道
+            try { nm.deleteNotificationChannel(LEGACY_CHANNEL); } catch (Exception ignored) { }
+            NotificationChannel channel = new NotificationChannel(CHANNEL, "ROM 下载进度",
                     NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("ROM 下载进度、速度与剩余时间");
-            getSystemService(NotificationManager.class).createNotificationChannel(channel);
+            nm.createNotificationChannel(channel);
         }
     }
 

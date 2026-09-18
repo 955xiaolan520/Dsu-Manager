@@ -90,7 +90,10 @@ public final class Aria2Downloader {
     public void run() {
         finished.set(false);
         try {
-            listener.onState(output.getName() + " 准备下载");
+            // v3.8.6：状态文案不再拼接文件名 —— 下载管理/查询页卡片会原样显示状态行，
+            // 拼上文件名会挤在一行被截断（如「PMA120_xxx.zip 准备下...」），
+            // 文件名已由标题行「正在下载: xxx」展示
+            listener.onState("正在准备下载");
             File dir = output.getParentFile();
             if (dir != null && !dir.isDirectory()) runCatching(() -> dir.mkdirs());
 

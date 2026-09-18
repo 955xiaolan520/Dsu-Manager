@@ -298,22 +298,31 @@ public final class DownloadManagerActivity extends Activity {
             return;
         }
 
-        // 文件名
-        TextView name = label(activeName.isEmpty() ? "ROM 下载任务" : activeName, 15.5f, TEAL_DARK);
+        // v3.8.6：与 ROM 查询页下载框完全同构 ——
+        // 「下载任务」标题 / 「正在下载: 文件名」/ 预计剩余 + 百分比 / 进度条 /
+        // 已下载 + 总大小 + 速度 / 保存路径 / 暂停 + 取消（不再显示通用「ROM 下载任务」）
+        TextView cardTitle = label("下载任务", 13.5f, TEAL_TITLE);
+        cardTitle.setTypeface(null, 1);
+        card.addView(cardTitle, new LinearLayout.LayoutParams(-1, dp(24)));
+
+        String displayName = !activeOutput.isEmpty()
+                ? new File(activeOutput).getName()
+                : (activeName.isEmpty() ? "ROM 文件" : activeName);
+        TextView name = label("正在下载: " + displayName, 15.5f, TEAL_DARK);
         name.setTypeface(null, 1);
         name.setMaxLines(1);
         name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        card.addView(name, new LinearLayout.LayoutParams(-1, dp(32)));
+        card.addView(name, new LinearLayout.LayoutParams(-1, dp(30)));
 
-        // 状态 + 百分比
+        // 状态（预计剩余 / 已暂停 / 正在准备下载）+ 百分比
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        stateLabel = label(stateText.isEmpty() ? "正在连接下载节点..." : stateText, 12, TEAL_SOFT);
+        stateLabel = label(statusText(), 13, TEAL_SOFT);
         stateLabel.setMaxLines(1);
         stateLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
         head.addView(stateLabel, new LinearLayout.LayoutParams(0, dp(42), 1));
-        percentLabel = label(percentText(), 17, TEAL_TITLE);
+        percentLabel = label(percentText(), 16, TEAL_TITLE);
         percentLabel.setTypeface(null, 1);
         percentLabel.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
         head.addView(percentLabel, new LinearLayout.LayoutParams(dp(72), dp(42)));
@@ -328,9 +337,10 @@ public final class DownloadManagerActivity extends Activity {
         barLp.setMargins(0, dp(2), 0, dp(6));
         card.addView(progressBar, barLp);
 
-        // 大小 / 速度 / ETA
+        // 已下载 / 总大小 · 速度（与 ROM 查询页下载框同一文案格式）
         bytesLabel = label(bytesText(), 12, TEAL_SOFT);
         bytesLabel.setMaxLines(1);
+        bytesLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
         card.addView(bytesLabel, new LinearLayout.LayoutParams(-1, dp(24)));
 
         // 保存路径
@@ -385,22 +395,47 @@ public final class DownloadManagerActivity extends Activity {
         return total > 0 && done >= 0 ? percentValue() + "%" : "…";
     }
 
+    /** v3.8.6：状态行文案 —— 与 ROM 查询页下载框一致（预计剩余 X / 已暂停 / 正在准备下载） */
+    private String statusText() {
+        if (stateText.startsWith("下载完成")) return "下载完成";
+        if (stateText.startsWith("下载失败") || stateText.startsWith("下载地址无效")) return stateText;
+        if (stateText.startsWith("下载已取消")) return "下载已取消";
+        if (taskPaused || stateText.startsWith("已暂停")) return "已暂停 · 点击「继续」断点续传";
+        if (eta > 0) return "预计剩余 " + formatRemainingTime(eta);
+        if (stateText.startsWith("正在准备") || stateText.endsWith("准备下载")) return "正在准备下载";
+        if (stateText.isEmpty() || stateText.startsWith("正在下载")) return "正在连接下载节点...";
+        return stateText;
+    }
+
     private String bytesText() {
-        StringBuilder sb = new StringBuilder();
+        // v3.8.6：与 ROM 查询页下载框同一文案「已下载 X / 总大小 Y · 速度 Z/s」
+        String speedPart = speed > 0 ? " · 速度 " + formatBytes(speed) + "/s" : "";
         if (done >= 0 && total > 0) {
-            sb.append(Aria2Downloader.formatBytes(done))
-                    .append(" / ").append(Aria2Downloader.formatBytes(total));
-        } else if (done >= 0) {
-            sb.append("已下载 ").append(Aria2Downloader.formatBytes(done));
+            return "已下载 " + formatBytes(done) + " / 总大小 " + formatBytes(total) + speedPart;
         }
-        if (speed > 0) {
-            if (sb.length() > 0) sb.append(" · ");
-            sb.append(Aria2Downloader.formatBytes(speed)).append("/s");
+        if (done >= 0) {
+            return "已下载 " + formatBytes(done) + " / 总大小获取中" + speedPart;
         }
-        if (eta > 0 && !taskPaused) {
-            sb.append(" · 剩余 ").append(Aria2Downloader.formatEta(eta));
-        }
-        return sb.length() > 0 ? sb.toString() : "正在获取下载信息...";
+        return "正在获取下载信息...";
+    }
+
+    /** v3.8.6：字节格式化 —— 与 ROM 查询页下载框一致（MB 一位小数 / GB 两位小数） */
+    private String formatBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format(Locale.CHINA, "%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024 * 1024) return String.format(Locale.CHINA, "%.1f MB", bytes / 1048576.0);
+        return String.format(Locale.CHINA, "%.2f GB", bytes / 1073741824.0);
+    }
+
+    /** v3.8.6：剩余时间格式化 —— 与 ROM 查询页下载框一致（X 小时 X 分钟 / X 分钟 / X 秒） */
+    private String formatRemainingTime(long seconds) {
+        if (seconds < 0) return "--";
+        long hours = seconds / 3600;
+        long minutes = (seconds % 3600) / 60;
+        long remainder = seconds % 60;
+        if (hours > 0) return hours + " 小时 " + minutes + " 分钟";
+        if (minutes > 0) return minutes + " 分钟";
+        return Math.max(1, remainder) + " 秒";
     }
 
     // ---------- 下载历史 ----------
