@@ -48,8 +48,8 @@ object VivoDeviceDatabase {
 
     /**
      * 系列内机型列表：最新机型排在最前（对齐小米 ROM 查询的排序口径）。
-     * MobileModels 页面每个系列内按发布时间「旧 → 新」排列，倒序即「新 → 旧」；
-     * merge 时追加的内置新增机型（通常为最新发布）同样落在最前。
+     * 合并数据为「内置（旧 → 新）+ 远端独有追加」，倒序后：
+     * 远端在线库独有的最新机型在最前，内置机型随后按新 → 旧排列，跨刷新顺序稳定。
      */
     fun devicesOf(series: String): List<VivoDevice> = database[series]?.asReversed() ?: emptyList()
 
@@ -177,13 +177,16 @@ object VivoDeviceDatabase {
     /**
      * 把内置 vivo_devices.json 合并进主数据（远端拉取结果或本地缓存）。
      *
-     * 合并规则：
-     * - 主数据条目在前，内置独有的条目按「该系列内已有条目之后」追加；
-     *   判定同一条目的键是 codename + model_sw_ver（同一机型有多个固件变体，各自独立成条）。
-     * - 内置独有的系列整组追加到末尾，保证本地新增的系列一定可见。
+     * 合并规则（v3.8.1 修复刷新后排列错乱）：
+     * - **内置（local）先行**：系列顺序与系列内机型顺序都以内置 JSON 为基准（旧 → 新，稳定），
+     *   避免缓存经 JSONObject 往返后系列顺序被打乱、刷新后机型排列跳变。
+     * - 远端 / 缓存独有条目按原顺序追加在同系列之后；配合 devicesOf() 的倒序展示，
+     *   远端独有的最新机型自然落在最前。
+     *   判定同一条目的键是 codename + model_sw_ver + model（同一机型有多个固件变体，各自独立成条）。
+     * - 内置独有的系列保持原位，远端独有的系列整组追加到末尾，两侧新增内容都可见。
      * - 系列名按去品牌前缀归一（内置 "X 系列" ↔ 远端 "VIVO X 系列"），
-     *   归一后同名系列合并进同一个键，展示名取主数据里的写法，避免出现两个 X 系列。
-     * - defaultSwVersion / optionalSwVersions 仅存在于内置 JSON，按 codename 继承给主数据条目。
+     *   归一后同名系列合并进同一个键，展示名取内置写法，避免出现两个 X 系列。
+     * - defaultSwVersion / optionalSwVersions 仅存在于内置 JSON，按 codename 继承给远端条目。
      */
     private fun mergeDeviceData(
         primary: Map<String, List<VivoDevice>>,
@@ -220,10 +223,12 @@ object VivoDeviceDatabase {
             }
         }
 
-        for ((series, devices) in primary) {
+        // 1) 内置先行：系列与机型顺序基准（旧 → 新，跨刷新稳定）
+        for ((series, devices) in local) {
             append(series, normalizeSeriesName(series), devices)
         }
-        for ((series, devices) in local) {
+        // 2) 远端 / 缓存随后：独有条目追加在同系列末尾（配合倒序展示 = 最前）
+        for ((series, devices) in primary) {
             val key = normalizeSeriesName(series)
             // 归一后已存在的系列 → 追加到该系列；否则作为新系列整组加入
             val target = keyBySeriesName.entries.firstOrNull { it.value == key }?.key ?: series

@@ -523,12 +523,25 @@ public class MainActivity extends Activity {
          card.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
          if (wide) card.setGravity(Gravity.CENTER_VERTICAL);
          card.setPadding(dp(16), dp(14), dp(16), dp(12));
-         GradientDrawable glass = new GradientDrawable();
-         glass.setOrientation(GradientDrawable.Orientation.TL_BR);
-         glass.setColors(new int[]{colors[0], colors[1], colors[2]});
-         glass.setCornerRadius(dp(22));
-         glass.setStroke(Math.max(1, dp(1)), 0x59FFFFFF);
-         // 白色半透明涟漪叠加在玻璃渐变之上，提供按压反馈
+         // 品牌液态玻璃框（与顶部 logo 框同构三层：品牌渐变底 + 白描边层 + 顶部高光带）
+         GradientDrawable base = new GradientDrawable();
+         base.setOrientation(GradientDrawable.Orientation.TL_BR);
+         base.setColors(new int[]{colors[0], colors[1], colors[2]});
+         base.setCornerRadius(dp(22));
+         GradientDrawable strokeLayer = new GradientDrawable();
+         strokeLayer.setColor(0x12000000);
+         strokeLayer.setStroke(Math.max(1, dp(1)), 0xCFFFFFFF);
+         strokeLayer.setCornerRadius(dp(21));
+         GradientDrawable highlight = new GradientDrawable();
+         highlight.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+         highlight.setColors(new int[]{0x00FFFFFF, 0x59FFFFFF, 0x00FFFFFF});
+         highlight.setCornerRadius(dp(15));
+         android.graphics.drawable.LayerDrawable glass =
+                 new android.graphics.drawable.LayerDrawable(
+                         new android.graphics.drawable.Drawable[]{base, strokeLayer, highlight});
+         glass.setLayerInset(1, 1, 1, 1, 1);
+         glass.setLayerInset(2, dp(2), dp(1), dp(2), dp(18));
+         // 白色半透明涟漪叠加在玻璃层之上，提供按压反馈
          android.graphics.drawable.RippleDrawable ripple =
                  new android.graphics.drawable.RippleDrawable(
                          new android.content.res.ColorStateList(

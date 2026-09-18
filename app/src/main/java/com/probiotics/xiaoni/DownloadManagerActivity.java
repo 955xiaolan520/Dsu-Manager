@@ -11,6 +11,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
@@ -40,6 +41,12 @@ import java.util.Locale;
  *  - 全程液态玻璃效果框 + 全局振动反馈
  */
 public final class DownloadManagerActivity extends Activity {
+
+    // 蓝绿色系（青碧）：玻璃背景上高对比可见
+    private static final int TEAL_TITLE = 0xff0e7d95;   // 标题蓝绿色
+    private static final int TEAL_DARK = 0xff155e70;    // 卡片主文字
+    private static final int TEAL_SOFT = 0xff4a7d8c;    // 次级文字
+    private static final int TEAL_FAINT = 0xff6b8fa0;   // 弱化文字
 
     // 当前任务实时状态（与 DownloadService 广播 / 通知栏同一数据源）
     private String activeName = "";
@@ -73,7 +80,7 @@ public final class DownloadManagerActivity extends Activity {
         setContentView(scroll);
         scroll.setBackgroundResource(R.drawable.liquid_backdrop);
 
-        // ---------- 标题栏（玻璃） ----------
+        // ---------- 标题栏（增强玻璃） ----------
         LiquidGlassPanel title = glass();
         title.setOrientation(LinearLayout.HORIZONTAL);
         title.setGravity(Gravity.CENTER_VERTICAL);
@@ -85,10 +92,10 @@ public final class DownloadManagerActivity extends Activity {
             overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
         });
         title.addView(back, new LinearLayout.LayoutParams(dp(42), dp(48)));
-        TextView heading = label("下载管理", 23, 0xff1a3356);
+        TextView heading = label("下载管理", 24, TEAL_TITLE);
         heading.setTypeface(null, 1);
         title.addView(heading, new LinearLayout.LayoutParams(0, dp(52), 1));
-        TextView badge = label("⇅ 同步中", 12, 0xff3b82f6);
+        TextView badge = label("⇅ 同步中", 12, TEAL_TITLE);
         badge.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
         badge.setPadding(dp(10), 0, dp(10), 0);
         title.addView(badge, new LinearLayout.LayoutParams(-2, dp(52)));
@@ -96,19 +103,19 @@ public final class DownloadManagerActivity extends Activity {
         titleLp.bottomMargin = dp(12);
         content.addView(title, titleLp);
 
-        // ---------- 队列说明条（玻璃） ----------
+        // ---------- 队列说明条（增强玻璃） ----------
         TextView queueTip = label("任务队列 · 新任务自动排队接续 · 通知栏 / ROM 查询 / 本页三方实时同步",
-                12, 0xff596579);
-        queueTip.setPadding(dp(12), dp(10), dp(12), dp(10));
-        queueTip.setBackgroundResource(R.drawable.liquid_glass_panel);
+                12, TEAL_SOFT);
+        queueTip.setPadding(dp(14), dp(12), dp(14), dp(12));
+        queueTip.setBackground(enhancedGlass(dp(18)));
         LinearLayout.LayoutParams tipLp = new LinearLayout.LayoutParams(-1, -2);
         tipLp.bottomMargin = dp(12);
         content.addView(queueTip, tipLp);
 
         // ---------- 当前任务卡 ----------
-        TextView section = label("当前任务", 15, 0xff1a3356);
+        TextView section = label("当前任务", 15.5f, TEAL_TITLE);
         section.setTypeface(null, 1);
-        content.addView(section, new LinearLayout.LayoutParams(-1, dp(30)));
+        content.addView(section, new LinearLayout.LayoutParams(-1, dp(32)));
         activeHost = new LinearLayout(this);
         activeHost.setOrientation(LinearLayout.VERTICAL);
         content.addView(activeHost, new LinearLayout.LayoutParams(-1, -2));
@@ -117,10 +124,10 @@ public final class DownloadManagerActivity extends Activity {
         LinearLayout historyHead = new LinearLayout(this);
         historyHead.setOrientation(LinearLayout.HORIZONTAL);
         historyHead.setGravity(Gravity.CENTER_VERTICAL);
-        TextView historyTitle = label("下载历史", 15, 0xff1a3356);
+        TextView historyTitle = label("下载历史", 15.5f, TEAL_TITLE);
         historyTitle.setTypeface(null, 1);
-        historyHead.addView(historyTitle, new LinearLayout.LayoutParams(0, dp(38), 1));
-        historySummary = label("", 12, 0xff596579);
+        historyHead.addView(historyTitle, new LinearLayout.LayoutParams(0, dp(40), 1));
+        historySummary = label("", 12, TEAL_SOFT);
         historySummary.setGravity(Gravity.CENTER_VERTICAL);
         historyHead.addView(historySummary, new LinearLayout.LayoutParams(0, dp(38), 1));
         Button clear = smallGlassButton("清空");
@@ -161,7 +168,13 @@ public final class DownloadManagerActivity extends Activity {
                 onDownloadUpdate(s, d, t, sp, e);
             }
         };
-        registerReceiver(receiver, new IntentFilter(DownloadService.ACTION_UPDATE));
+        // Android 14+（targetSdk 34+）必须指定导出标志，否则 SecurityException 崩溃（3.8.0 崩溃根因）
+        IntentFilter filter = new IntentFilter(DownloadService.ACTION_UPDATE);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(receiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(receiver, filter);
+        }
         // 进入页面立即拉取当前状态
         startService(new Intent(this, DownloadService.class).setAction(DownloadService.ACTION_QUERY));
     }
@@ -175,7 +188,7 @@ public final class DownloadManagerActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        if (receiver != null) unregisterReceiver(receiver);
+        try { if (receiver != null) unregisterReceiver(receiver); } catch (IllegalArgumentException ignored) { }
         super.onDestroy();
     }
 
@@ -209,20 +222,20 @@ public final class DownloadManagerActivity extends Activity {
         activeHost.removeAllViews();
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setBackgroundResource(R.drawable.liquid_glass_panel);
-        card.setElevation(dp(6));
+        card.setPadding(dp(18), dp(16), dp(18), dp(16));
+        card.setBackground(enhancedGlass(dp(24)));
+        card.setElevation(dp(8));
 
         boolean hasTask = !activeOutput.isEmpty() || stateText.contains("下载")
                 || (done >= 0 && total > 0 && !"下载已取消".equals(stateText));
 
         if (!hasTask) {
             // 空态玻璃卡
-            TextView empty = label("当前没有下载任务", 15, 0xff20375b);
+            TextView empty = label("当前没有下载任务", 15.5f, TEAL_DARK);
             empty.setGravity(Gravity.CENTER);
             empty.setTypeface(null, 1);
-            card.addView(empty, new LinearLayout.LayoutParams(-1, dp(32)));
-            TextView hint = label("去 ROM 更新中心选择机型开始下载，任务进度会实时同步到这里", 12, 0xff596579);
+            card.addView(empty, new LinearLayout.LayoutParams(-1, dp(34)));
+            TextView hint = label("去 ROM 更新中心选择机型开始下载，任务进度会实时同步到这里", 12.5f, TEAL_SOFT);
             hint.setGravity(Gravity.CENTER);
             card.addView(hint, new LinearLayout.LayoutParams(-1, -2));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
@@ -232,24 +245,24 @@ public final class DownloadManagerActivity extends Activity {
         }
 
         // 文件名
-        TextView name = label(activeName.isEmpty() ? "ROM 下载任务" : activeName, 15.5f, 0xff20375b);
+        TextView name = label(activeName.isEmpty() ? "ROM 下载任务" : activeName, 15.5f, TEAL_DARK);
         name.setTypeface(null, 1);
         name.setMaxLines(1);
         name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        card.addView(name, new LinearLayout.LayoutParams(-1, dp(30)));
+        card.addView(name, new LinearLayout.LayoutParams(-1, dp(32)));
 
         // 状态 + 百分比
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        stateLabel = label(stateText.isEmpty() ? "正在连接下载节点..." : stateText, 12, 0xff596579);
+        stateLabel = label(stateText.isEmpty() ? "正在连接下载节点..." : stateText, 12, TEAL_SOFT);
         stateLabel.setMaxLines(1);
         stateLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        head.addView(stateLabel, new LinearLayout.LayoutParams(0, dp(40), 1));
-        percentLabel = label(percentText(), 16, 0xff20375b);
+        head.addView(stateLabel, new LinearLayout.LayoutParams(0, dp(42), 1));
+        percentLabel = label(percentText(), 17, TEAL_TITLE);
         percentLabel.setTypeface(null, 1);
         percentLabel.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        head.addView(percentLabel, new LinearLayout.LayoutParams(dp(66), dp(40)));
+        head.addView(percentLabel, new LinearLayout.LayoutParams(dp(72), dp(42)));
         card.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
         // 进度条
@@ -257,18 +270,18 @@ public final class DownloadManagerActivity extends Activity {
         progressBar.setMax(100);
         progressBar.setProgress(percentValue());
         progressBar.setProgressDrawable(getDrawable(R.drawable.progress_bar));
-        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(-1, dp(14));
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(-1, dp(16));
         barLp.setMargins(0, dp(2), 0, dp(6));
         card.addView(progressBar, barLp);
 
         // 大小 / 速度 / ETA
-        bytesLabel = label(bytesText(), 12, 0xff596579);
+        bytesLabel = label(bytesText(), 12, TEAL_SOFT);
         bytesLabel.setMaxLines(1);
-        card.addView(bytesLabel, new LinearLayout.LayoutParams(-1, dp(22)));
+        card.addView(bytesLabel, new LinearLayout.LayoutParams(-1, dp(24)));
 
         // 保存路径
         if (!activeOutput.isEmpty()) {
-            TextView path = label("保存到: " + activeOutput, 11, 0xff8a94a6);
+            TextView path = label("保存到: " + activeOutput, 11, TEAL_FAINT);
             path.setMaxLines(2);
             path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
             LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
@@ -361,7 +374,7 @@ public final class DownloadManagerActivity extends Activity {
         if (historySummary != null) historySummary.setText(history.isEmpty() ? "" : "共 " + history.size() + " 条");
         historyHost.removeAllViews();
         if (history.isEmpty()) {
-            TextView empty = label("暂无下载历史 · 下载完成后可在此一键打开文件位置", 12.5f, 0xff8a94a6);
+            TextView empty = label("暂无下载历史 · 下载完成后可在此一键打开文件位置", 12.5f, TEAL_SOFT);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(0, dp(14), 0, dp(14));
             historyHost.addView(empty, new LinearLayout.LayoutParams(-1, -2));
@@ -382,9 +395,9 @@ public final class DownloadManagerActivity extends Activity {
 
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(12), dp(14), dp(12));
-        card.setBackgroundResource(R.drawable.liquid_glass_panel);
-        card.setElevation(dp(4));
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(enhancedGlass(dp(20)));
+        card.setElevation(dp(5));
 
         // 第一行：状态徽章 + 时间
         LinearLayout meta = new LinearLayout(this);
@@ -413,13 +426,13 @@ public final class DownloadManagerActivity extends Activity {
         badgeView.setBackground(badgeBgDrawable);
         badgeView.setTextColor(badgeFg);
         meta.addView(badgeView, new LinearLayout.LayoutParams(-2, dp(22)));
-        TextView timeView = label(time > 0 ? FMT.format(new Date(time)) : "", 11, 0xff8a94a6);
+        TextView timeView = label(time > 0 ? FMT.format(new Date(time)) : "", 11, TEAL_FAINT);
         timeView.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        meta.addView(timeView, new LinearLayout.LayoutParams(0, dp(22), 1));
+        meta.addView(timeView, new LinearLayout.LayoutParams(0, dp(24), 1));
         card.addView(meta, new LinearLayout.LayoutParams(-1, -2));
 
         // 文件名
-        TextView nameView = label(name.isEmpty() ? "ROM 文件" : name, 14, 0xff20375b);
+        TextView nameView = label(name.isEmpty() ? "ROM 文件" : name, 14, TEAL_DARK);
         nameView.setTypeface(null, 1);
         nameView.setMaxLines(2);
         nameView.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
@@ -430,7 +443,7 @@ public final class DownloadManagerActivity extends Activity {
         // 大小 + 路径
         String sizeText = size > 0 ? Aria2Downloader.formatBytes(size) : "";
         TextView detail = label((sizeText.isEmpty() ? "" : sizeText + " · ")
-                + (path.isEmpty() ? "" : new File(path).getParent()), 11, 0xff8a94a6);
+                + (path.isEmpty() ? "" : new File(path).getParent()), 11, TEAL_FAINT);
         detail.setMaxLines(1);
         detail.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
@@ -495,6 +508,36 @@ public final class DownloadManagerActivity extends Activity {
         return panel;
     }
 
+    /**
+     * 增强版液态玻璃框（三层，与品牌玻璃卡同构）：
+     *  1. 底层：白→浅青 对角渐变（通透玻璃底）
+     *  2. 中层：白色高光描边（玻璃边缘反光）
+     *  3. 顶层：顶部横向高光带（玻璃表面反光）
+     */
+    private android.graphics.drawable.LayerDrawable enhancedGlass(int radiusPx) {
+        GradientDrawable base = new GradientDrawable();
+        base.setOrientation(GradientDrawable.Orientation.TL_BR);
+        base.setColors(new int[]{0xF2FFFFFF, 0xE6E3F6FA, 0xD9D8ECF4});
+        base.setCornerRadius(radiusPx);
+
+        GradientDrawable strokeLayer = new GradientDrawable();
+        strokeLayer.setColor(0x00000000);
+        strokeLayer.setStroke(Math.max(1, dp(2)), 0xFFFFFFFF);
+        strokeLayer.setCornerRadius(Math.max(0, radiusPx - Math.max(1, dp(1))));
+
+        GradientDrawable highlight = new GradientDrawable();
+        highlight.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+        highlight.setColors(new int[]{0x00FFFFFF, 0x73FFFFFF, 0x00FFFFFF});
+        highlight.setCornerRadius(Math.max(0, radiusPx - dp(4)));
+
+        android.graphics.drawable.LayerDrawable layer =
+                new android.graphics.drawable.LayerDrawable(
+                        new android.graphics.drawable.Drawable[]{base, strokeLayer, highlight});
+        layer.setLayerInset(1, 1, 1, 1, 1);
+        layer.setLayerInset(2, dp(3), dp(2), dp(3), (int) (radiusPx * 1.35f));
+        return layer;
+    }
+
     private TextView label(String text, float size, int color) {
         TextView view = new TextView(this);
         view.setText(text);
@@ -509,7 +552,7 @@ public final class DownloadManagerActivity extends Activity {
         button.setText(text);
         button.setAllCaps(false);
         button.setTextSize(size);
-        button.setTextColor(0xff1a3356);
+        button.setTextColor(TEAL_TITLE);
         button.setGravity(Gravity.CENTER);
         button.setMinWidth(0);
         button.setMinHeight(0);

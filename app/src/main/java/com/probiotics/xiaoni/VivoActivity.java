@@ -770,27 +770,43 @@ public final class VivoActivity extends Activity {
         return row;
     }
 
-    /** IMEI 行操作按钮：与输入框同高同圆角的玻璃胶囊（对角渐变 + 白描边高光），修复玻璃框错位问题 */
+    /** IMEI 行操作按钮：全胶囊形三层液态玻璃（渐变底 + 白描边 + 顶部高光），与输入框同高对齐 */
     private Button imeiActionButton(String text) {
         Button button = new Button(this, null, 0);
         button.setText(text);
         button.setAllCaps(false);
-        button.setTextSize(13f);
+        button.setTextSize(13.5f);
         button.setTypeface(null, 1);
-        button.setTextColor(0xff1a3356);
+        button.setTextColor(0xff0e7d95);
         button.setGravity(Gravity.CENTER);
         button.setMinWidth(0);
         button.setMinHeight(0);
         button.setIncludeFontPadding(false);
         button.setPadding(0, 0, 0, 0);
         button.setStateListAnimator(null);
-        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setOrientation(android.graphics.drawable.GradientDrawable.Orientation.TL_BR);
-        bg.setColors(new int[]{0xE6FFFFFF, 0xB8E8F0F5});
-        bg.setCornerRadius(dp(14));
-        bg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
-        button.setBackground(bg);
-        button.setElevation(dp(2));
+        // 三层液态玻璃：白→浅青渐变底 + 2dp 白描边 + 顶部高光带，全胶囊圆角（高 50dp / 半径 25dp）
+        android.graphics.drawable.GradientDrawable base = new android.graphics.drawable.GradientDrawable();
+        base.setOrientation(android.graphics.drawable.GradientDrawable.Orientation.TL_BR);
+        base.setColors(new int[]{0xF2FFFFFF, 0xE6E3F6FA, 0xD9D8ECF4});
+        base.setCornerRadius(dp(25));
+        android.graphics.drawable.GradientDrawable strokeLayer = new android.graphics.drawable.GradientDrawable();
+        strokeLayer.setColor(0x00000000);
+        strokeLayer.setStroke(Math.max(1, dp(2)), 0xFFFFFFFF);
+        strokeLayer.setCornerRadius(dp(24));
+        android.graphics.drawable.GradientDrawable highlight = new android.graphics.drawable.GradientDrawable();
+        highlight.setOrientation(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT);
+        highlight.setColors(new int[]{0x00FFFFFF, 0x73FFFFFF, 0x00FFFFFF});
+        highlight.setCornerRadius(dp(20));
+        android.graphics.drawable.LayerDrawable glass = new android.graphics.drawable.LayerDrawable(
+                new android.graphics.drawable.Drawable[]{base, strokeLayer, highlight});
+        glass.setLayerInset(1, 1, 1, 1, 1);
+        glass.setLayerInset(2, dp(3), dp(2), dp(3), dp(14));
+        // 白色涟漪按压反馈
+        button.setBackground(new android.graphics.drawable.RippleDrawable(
+                new android.content.res.ColorStateList(
+                        new int[][]{{android.R.attr.state_pressed}}, new int[]{0x33FFFFFF}),
+                glass, null));
+        button.setElevation(dp(3));
         return button;
     }
 
@@ -1350,23 +1366,27 @@ public final class VivoActivity extends Activity {
             LinearLayout changelogHeader = new LinearLayout(this);
             changelogHeader.setOrientation(LinearLayout.HORIZONTAL);
             changelogHeader.setGravity(Gravity.CENTER_VERTICAL);
-            changelogHeader.setPadding(dp(14), 0, dp(14), 0);
+            changelogHeader.setPadding(dp(16), 0, dp(16), 0);
             changelogHeader.setBackgroundResource(R.drawable.liquid_glass_panel);
-            TextView changelogTitle = label("▸ 更新日志", 14, 0xff20375b);
+            TextView changelogTitle = label("▸ 更新日志", 14, 0xff155e70);
             changelogTitle.setTypeface(null, 1);
-            changelogHeader.addView(changelogTitle, new LinearLayout.LayoutParams(0, dp(44), 1));
-            TextView changelogHint = label("点击展开详情", 11, 0xff8a94a6);
-            changelogHeader.addView(changelogHint, new LinearLayout.LayoutParams(-2, dp(44)));
+            changelogTitle.setGravity(Gravity.CENTER);
+            changelogHeader.addView(changelogTitle, new LinearLayout.LayoutParams(0, dp(46), 1));
+            TextView changelogHint = label("点击展开详情", 11, 0xff4a7d8c);
+            changelogHint.setGravity(Gravity.CENTER_VERTICAL);
+            changelogHeader.addView(changelogHint, new LinearLayout.LayoutParams(-2, dp(46)));
 
             LinearLayout changelogBody = new LinearLayout(this);
             changelogBody.setOrientation(LinearLayout.VERTICAL);
-            changelogBody.setPadding(dp(14), dp(12), dp(14), dp(12));
+            changelogBody.setGravity(Gravity.CENTER_HORIZONTAL);
+            changelogBody.setPadding(dp(16), dp(12), dp(16), dp(12));
             changelogBody.setBackgroundResource(R.drawable.liquid_glass_panel);
             changelogBody.setVisibility(View.GONE);
             TextView changelogText = label("正在加载更新日志...", 13, 0xff334b66);
             changelogText.setLineSpacing(dp(4), 1f);
             changelogText.setTextIsSelectable(true);
-            changelogBody.addView(changelogText);
+            changelogText.setGravity(Gravity.CENTER);
+            changelogBody.addView(changelogText, new LinearLayout.LayoutParams(-1, -2));
 
             final boolean[] loaded = {false};
             changelogHeader.setOnClickListener(vh -> {
@@ -1574,28 +1594,30 @@ public final class VivoActivity extends Activity {
     }
 
     /**
-     * 查询历史面板（同步自上游 HistoryCard，改为就地展开）：
-     * 顶部「点击回填 · 长按删除 · 一键清空」提示条 + 历史条目玻璃卡。
+     * 查询历史面板（图三：就地展开，直接重显完整查询结果）：
+     * 顶部操作提示条（加大加宽，文字完整显示）+ 每条历史完整结果玻璃卡（版本 / 大小 / 链接等）。
      */
     private void renderHistoryPanel() {
         if (historyExpandContainer == null) return;
         historyExpandContainer.removeAllViews();
         if (historyEntries.isEmpty()) {
-            TextView empty = label("暂无查询历史 · 查询成功后自动记录", 12, 0xff8a94a6);
-            empty.setPadding(dp(14), dp(12), dp(14), dp(12));
+            TextView empty = label("暂无查询历史 · 查询成功后自动记录", 13, 0xff6b8fa0);
+            empty.setPadding(dp(16), dp(16), dp(16), dp(16));
+            empty.setGravity(Gravity.CENTER);
             empty.setBackgroundResource(R.drawable.liquid_glass_panel);
             historyExpandContainer.addView(empty, margins(-1, -2, 0, 0, 0));
             return;
         }
-        // 操作提示条 + 清空按钮
+        // 操作提示条：加大加宽（高 52dp），文字完整显示不被挤压，「清空全部」按钮加宽
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(dp(14), 0, dp(10), 0);
+        head.setPadding(dp(18), 0, dp(12), 0);
         head.setBackgroundResource(R.drawable.liquid_glass_panel);
-        TextView tip = label("点击回填 · 长按删除", 12, 0xff596579);
-        head.addView(tip, new LinearLayout.LayoutParams(0, dp(40), 1));
-        Button clear = glassButton("清空全部", 12);
+        TextView tip = label("点击卡片回填 · 长按删除", 13.5f, 0xff155e70);
+        tip.setTypeface(null, 1);
+        head.addView(tip, new LinearLayout.LayoutParams(0, dp(52), 1));
+        Button clear = glassButton("清空全部", 13);
         clear.setOnClickListener(v -> {
             Haptics.perform(v);
             historyEntries.clear();
@@ -1603,43 +1625,95 @@ public final class VivoActivity extends Activity {
             historyButton.setText("查询历史 (0)");
             renderHistoryPanel();
         });
-        head.addView(clear, new LinearLayout.LayoutParams(-2, dp(32)));
-        historyExpandContainer.addView(head, margins(-1, 40, 0, 0, 8));
+        LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(dp(102), dp(40));
+        head.addView(clear, clearLp);
+        historyExpandContainer.addView(head, margins(-1, 52, 0, 0, 10));
 
         java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.CHINA);
         for (int i = 0; i < historyEntries.size(); i++) {
             final org.json.JSONObject entry = historyEntries.get(i);
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.VERTICAL);
-            row.setPadding(dp(16), dp(10), dp(16), dp(10));
-            row.setBackgroundResource(R.drawable.liquid_glass_panel);
-            TextView title = label(entry.optString("model") + " · " + entry.optString("resultVersion"), 14, 0xff20375b);
-            title.setTypeface(null, 1);
-            row.addView(title);
-            String pkg = entry.optBoolean("isFullPackage", true) ? "完整包" : "增量包";
-            String server = "GLOBAL".equals(entry.optString("queryDomain")) ? "海外" : "国行";
-            TextView meta = label(fmt.format(new java.util.Date(entry.optLong("timestamp")))
-                    + " · " + entry.optString("swVersion")
-                    + " · " + pkg + " · " + server, 11, 0xff596579);
-            LinearLayout.LayoutParams metaLp = new LinearLayout.LayoutParams(-1, -2);
-            metaLp.topMargin = dp(3);
-            row.addView(meta, metaLp);
-            row.setOnClickListener(v -> {
-                Haptics.perform(v);
-                backfillFromHistory(entry);
-            });
-            row.setOnLongClickListener(v -> {
-                Haptics.perform(v);
-                historyEntries.remove(entry);
-                persistHistory();
-                historyButton.setText("查询历史 (" + historyEntries.size() + ")");
-                renderHistoryPanel();
-                return true;
-            });
-            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
-            rowLp.topMargin = dp(8);
-            historyExpandContainer.addView(row, rowLp);
+            historyExpandContainer.addView(historyResultCard(entry, fmt));
         }
+    }
+
+    /** 历史完整结果卡：重显查询结果（机型 / 版本 / 大小 / 链接等，图三要求）。 */
+    private View historyResultCard(org.json.JSONObject entry, java.text.SimpleDateFormat fmt) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(18), dp(14), dp(18), dp(14));
+        row.setBackgroundResource(R.drawable.liquid_glass_panel);
+        row.setElevation(dp(3));
+
+        // 标题：机型 · 查询到的版本（15sp 加粗，完整显示）
+        TextView title = label(entry.optString("model") + " · " + entry.optString("resultVersion"), 15, 0xff155e70);
+        title.setTypeface(null, 1);
+        row.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        // 元信息：时间 · 查询条件版本 · 包类型 · 服务器（12sp）
+        String pkg = entry.optBoolean("isFullPackage", true) ? "完整包" : "增量包";
+        String server = "GLOBAL".equals(entry.optString("queryDomain")) ? "海外服务器" : "国行服务器";
+        TextView meta = label(fmt.format(new java.util.Date(entry.optLong("timestamp")))
+                + " · " + entry.optString("swVersion")
+                + " · " + pkg + " · " + server, 12, 0xff4a7d8c);
+        LinearLayout.LayoutParams metaLp = new LinearLayout.LayoutParams(-1, -2);
+        metaLp.topMargin = dp(4);
+        row.addView(meta, metaLp);
+
+        String downloadUrl = entry.optString("downloadUrl", "");
+        String fileSize = entry.optString("fileSize", "");
+
+        // 结果明细区（重新显示一遍查询到的结果）
+        if (!fileSize.isEmpty() || !downloadUrl.isEmpty()) {
+            View divider = new View(this);
+            divider.setBackgroundColor(0x1f2f6fd8);
+            LinearLayout.LayoutParams dividerLp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1)));
+            dividerLp.topMargin = dp(10);
+            row.addView(divider, dividerLp);
+
+            if (!fileSize.isEmpty()) {
+                TextView sizeLine = label("升级包大小: " + fileSize, 12.5f, 0xff334b66);
+                LinearLayout.LayoutParams sizeLp = new LinearLayout.LayoutParams(-1, -2);
+                sizeLp.topMargin = dp(10);
+                row.addView(sizeLine, sizeLp);
+            }
+            if (!downloadUrl.isEmpty()) {
+                TextView urlTitle = label("下载链接:", 12.5f, 0xff334b66);
+                LinearLayout.LayoutParams urlTitleLp = new LinearLayout.LayoutParams(-1, -2);
+                urlTitleLp.topMargin = dp(6);
+                row.addView(urlTitle, urlTitleLp);
+                TextView urlText = label(downloadUrl, 11, 0xff0e7d95);
+                urlText.setTextIsSelectable(true);
+                urlText.setLineSpacing(dp(2), 1f);
+                LinearLayout.LayoutParams urlLp = new LinearLayout.LayoutParams(-1, -2);
+                urlLp.topMargin = dp(2);
+                row.addView(urlText, urlLp);
+            }
+            // 快捷操作：复制链接
+            Button copy = glassButton("复制下载链接", 12.5f);
+            copy.setOnClickListener(v -> {
+                Haptics.perform(v);
+                copyText("下载链接", downloadUrl);
+            });
+            LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(-1, 40);
+            copyLp.topMargin = dp(10);
+            row.addView(copy, copyLp);
+        }
+
+        row.setOnClickListener(v -> {
+            Haptics.perform(v);
+            backfillFromHistory(entry);
+        });
+        row.setOnLongClickListener(v -> {
+            Haptics.perform(v);
+            historyEntries.remove(entry);
+            persistHistory();
+            historyButton.setText("查询历史 (" + historyEntries.size() + ")");
+            renderHistoryPanel();
+            return true;
+        });
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.topMargin = dp(10);
+        return row;
     }
 
     /** 历史条目一键回填（同步自上游）：切到对应页签并恢复全部查询条件。 */
@@ -1746,7 +1820,7 @@ public final class VivoActivity extends Activity {
         return button;
     }
 
-    private Button glassButton(String text, int textSize) {
+    private Button glassButton(String text, float textSize) {
         Button button = new Button(this);
         button.setText(text);
         button.setTextSize(textSize);
@@ -1782,7 +1856,7 @@ public final class VivoActivity extends Activity {
         return edit;
     }
 
-    private TextView label(String text, int textSize, int color) {
+    private TextView label(String text, float textSize, int color) {
         TextView label = new TextView(this);
         label.setText(text);
         label.setTextSize(textSize);
