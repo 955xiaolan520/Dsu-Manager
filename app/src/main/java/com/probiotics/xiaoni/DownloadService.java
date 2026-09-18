@@ -11,6 +11,8 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import java.io.File;
 import java.util.Locale;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /**
  * ROM 下载前台服务 —— 唯一下载后端为 aria2c 多线程引擎（Aria2Downloader）。
@@ -33,6 +35,8 @@ public final class DownloadService extends Service {
     public static final String EXTRA_TOTAL = "total";
     public static final String EXTRA_SPEED = "speed";
     public static final String EXTRA_ETA = "eta";
+    /** 下载历史（下载管理页数据源）：name / path / size / time / status（done|cancelled|failed） */
+    public static final String HISTORY_PREFS = "download_history";
     private static final String CHANNEL = "rom_download";
     private static final int NOTIFICATION_ID = 42;
     private final Object lock = new Object();
@@ -130,6 +134,10 @@ public final class DownloadService extends Service {
         } else if (ACTION_CANCEL.equals(action)) {
             cancelled = true;
             paused = false;
+            // 下载历史：用户取消（任务切换不走此分支，不会误记）
+            recordHistory(fileName, activeOutputPath.isEmpty()
+                    ? getSharedPreferences("rom_download", MODE_PRIVATE).getString("output", "")
+                    : activeOutputPath, lastDone, "cancelled");
             switchAddress = null;   // 用户主动取消：不再接续任何排队任务
             switchOutputPath = null;
             getSharedPreferences("rom_download", MODE_PRIVATE).edit().clear().apply();
@@ -236,6 +244,9 @@ public final class DownloadService extends Service {
                     downloader = null;
                     completed[0] = true;
                     Aria2Downloader.deleteCheckpointFiles(completedFile);
+                    // 下载历史：完成记录（供下载管理页「打开文件位置」使用）
+                    recordHistory(completedFile.getName(), completedFile.getAbsolutePath(),
+                            completedFile.length(), "done");
                     broadcast("下载完成", completedFile.length(), completedFile.length());
                     getSharedPreferences("rom_download", MODE_PRIVATE).edit()
                             .remove("address").remove("output").remove("package")
@@ -262,6 +273,7 @@ public final class DownloadService extends Service {
                 return;
             }
             if (failed[0]) {
+                recordHistory(fileName, activeOutputPath, lastDone, "failed");
                 finishWithNotification("下载失败: " + failMessage[0]);
                 return;
             }
@@ -314,6 +326,29 @@ public final class DownloadService extends Service {
         sendBroadcast(update);
     }
 
+    /** 下载历史持久化（最多保留 50 条，新的在前）。下载管理页数据源。 */
+    public static void recordHistory(android.content.Context context,
+            String name, String path, long size, String status) {
+        try {
+            android.content.SharedPreferences prefs =
+                    context.getSharedPreferences(HISTORY_PREFS, MODE_PRIVATE);
+            JSONArray array = new JSONArray(prefs.getString("items", "[]"));
+            JSONObject item = new JSONObject();
+            item.put("name", name == null ? "" : name)
+                    .put("path", path == null ? "" : path)
+                    .put("size", size)
+                    .put("time", System.currentTimeMillis())
+                    .put("status", status);
+            array.put(item);
+            while (array.length() > 50) array.remove(0);
+            prefs.edit().putString("items", array.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    private void recordHistory(String name, String path, long size, String status) {
+        recordHistory(this, name, path, size, status);
+    }
+
     private void broadcastSavedState() {
         android.content.SharedPreferences prefs = getSharedPreferences("rom_download", MODE_PRIVATE);
         String output = prefs.getString("output", "");
@@ -359,7 +394,7 @@ public final class DownloadService extends Service {
      * 进度条 + 暂停/取消按钮 —— 与 APP 内下载框同一数据源、同步刷新。
      */
     private Notification buildProgressNotification(boolean paused, String titleOverride) {
-        Intent open = new Intent(this, RomActivity.class);
+        Intent open = new Intent(this, DownloadManagerActivity.class);
         PendingIntent pending = PendingIntent.getActivity(this, NOTIFICATION_ID, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         int percent = lastTotal > 0 && lastDone >= 0 ? (int) (lastDone * 100 / lastTotal) : -1;
@@ -411,7 +446,7 @@ public final class DownloadService extends Service {
 
     /** 发布最终状态通知（下载已取消/完成/失败），不停止服务本身 */
     private void postFinalNotification(String text) {
-        Intent open = new Intent(this, RomActivity.class);
+        Intent open = new Intent(this, DownloadManagerActivity.class);
         PendingIntent pending = PendingIntent.getActivity(this, NOTIFICATION_ID, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification done = new Notification.Builder(this, CHANNEL)

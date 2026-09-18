@@ -108,6 +108,8 @@ public final class VivoActivity extends Activity {
     private static final int HISTORY_MAX = 20;
     private final List<org.json.JSONObject> historyEntries = new ArrayList<>();
     private Button historyButton;
+    /** 查询历史下方展开容器（图三：点击「查询历史」就地展开，不再弹窗） */
+    private LinearLayout historyExpandContainer;
     private Button refreshCatalogButton;
 
     /** 历史条目的查询条件签名（与上游 querySignature 一致：能唯一确定查询的输入字段）。 */
@@ -345,13 +347,13 @@ public final class VivoActivity extends Activity {
             content.addView(panel, new LinearLayout.LayoutParams(-1, -2));
         }
 
-        // 查询历史 + 在线刷新机型库（同步自上游 HistoryCard 与机型库在线更新）
+        // 查询历史（下方展开，不再弹窗）+ 在线刷新机型库（同步自上游 HistoryCard 与机型库在线更新）
         LinearLayout historyRow = new LinearLayout(this);
         historyRow.setOrientation(LinearLayout.HORIZONTAL);
         historyButton = glassButton("查询历史 (0)", 13);
         historyButton.setOnClickListener(v -> {
             Haptics.perform(v);
-            showHistoryDialog();
+            toggleHistoryPanel();
         });
         historyRow.addView(historyButton, new LinearLayout.LayoutParams(0, dp(46), 1));
         View historySpacer = new View(this);
@@ -362,7 +364,13 @@ public final class VivoActivity extends Activity {
             refreshCatalog();
         });
         historyRow.addView(refreshCatalogButton, new LinearLayout.LayoutParams(0, dp(46), 1));
-        content.addView(historyRow, margins(-1, 46, 0, 0, 16));
+        content.addView(historyRow, margins(-1, 46, 0, 0, 8));
+
+        // 历史展开容器（默认收起；点击「查询历史」在正下方展开/收起）
+        historyExpandContainer = new LinearLayout(this);
+        historyExpandContainer.setOrientation(LinearLayout.VERTICAL);
+        historyExpandContainer.setVisibility(View.GONE);
+        content.addView(historyExpandContainer, margins(-1, -2, 0, 0, 16));
 
         // 下载卡片（在 panels 之后，查询按钮下方）
         downloadCard = glass();
@@ -708,7 +716,10 @@ public final class VivoActivity extends Activity {
         return panel;
     }
 
-    /** IMEI 输入行：输入框（15 位数字，留空自动生成）+ 一键随机按钮（同步自上游 UI）。 */
+    /**
+     * IMEI 输入行（图三）：输入框 + 「本机」「随机」双按钮（同步自上游 ImeiSource：DEVICE / RANDOM）。
+     * 按钮统一玻璃胶囊样式：高度与输入框一致（50dp）、同款圆角与描边，修复与输入框视觉不齐的问题。
+     */
     private LinearLayout buildImeiRow(String target) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -723,16 +734,64 @@ public final class VivoActivity extends Activity {
         }
         row.addView(imeiInput, new LinearLayout.LayoutParams(0, dp(50), 1));
 
-        View spacer = new View(this);
-        row.addView(spacer, new LinearLayout.LayoutParams(dp(10), dp(50)));
+        View spacer1 = new View(this);
+        row.addView(spacer1, new LinearLayout.LayoutParams(dp(8), dp(50)));
 
-        Button randomBtn = glassButton("随机", 12);
+        // 本机：读取设备 IMEI（子线程，读不到回退系统属性，仍读不到提示并随机）
+        Button deviceBtn = imeiActionButton("本机");
+        deviceBtn.setOnClickListener(v -> {
+            Haptics.perform(v);
+            executor.execute(() -> {
+                String imei = com.mytiantian.updater.vivo.VivoImei.INSTANCE.readDeviceSync(getApplicationContext());
+                runOnUiThread(() -> {
+                    if (imei != null && imei.length() == 15) {
+                        imeiInput.setText(imei);
+                        status.setText("已填入本机 IMEI");
+                    } else {
+                        // Android 10+ 三方应用读不到 IMEI：自动随机并提示
+                        imeiInput.setText(com.mytiantian.updater.vivo.VivoImei.INSTANCE.random());
+                        status.setText("本机 IMEI 不可读（系统限制），已自动随机生成");
+                    }
+                });
+            });
+        });
+        row.addView(deviceBtn, new LinearLayout.LayoutParams(dp(64), dp(50)));
+
+        View spacer2 = new View(this);
+        row.addView(spacer2, new LinearLayout.LayoutParams(dp(8), dp(50)));
+
+        // 随机：一键生成 15 位随机 IMEI
+        Button randomBtn = imeiActionButton("随机");
         randomBtn.setOnClickListener(v -> {
             Haptics.perform(v);
             imeiInput.setText(com.mytiantian.updater.vivo.VivoImei.INSTANCE.random());
         });
-        row.addView(randomBtn, new LinearLayout.LayoutParams(dp(74), dp(50)));
+        row.addView(randomBtn, new LinearLayout.LayoutParams(dp(64), dp(50)));
         return row;
+    }
+
+    /** IMEI 行操作按钮：与输入框同高同圆角的玻璃胶囊（对角渐变 + 白描边高光），修复玻璃框错位问题 */
+    private Button imeiActionButton(String text) {
+        Button button = new Button(this, null, 0);
+        button.setText(text);
+        button.setAllCaps(false);
+        button.setTextSize(13f);
+        button.setTypeface(null, 1);
+        button.setTextColor(0xff1a3356);
+        button.setGravity(Gravity.CENTER);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setIncludeFontPadding(false);
+        button.setPadding(0, 0, 0, 0);
+        button.setStateListAnimator(null);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setOrientation(android.graphics.drawable.GradientDrawable.Orientation.TL_BR);
+        bg.setColors(new int[]{0xE6FFFFFF, 0xB8E8F0F5});
+        bg.setCornerRadius(dp(14));
+        bg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+        button.setBackground(bg);
+        button.setElevation(dp(2));
+        return button;
     }
 
     /** 升级服务器域名选择（同步自上游 Domain 枚举）。0=国行 CN，1=海外 GLOBAL。 */
@@ -963,6 +1022,8 @@ public final class VivoActivity extends Activity {
             try {
                 // 机型库：内置 vivo_devices.json + 在线缓存合并（同步自上游 VivoDeviceDatabase）
                 com.mytiantian.updater.vivo.VivoDeviceDatabase.INSTANCE.load(this);
+                // 机型库已全自动获取（内置 JSON + 在线刷新），旧版本遗留的本地 TXT 清单一并清理
+                cleanupLegacyTxt();
                 JSONObject loaded = new JSONObject();
                 for (String series : com.mytiantian.updater.vivo.VivoDeviceDatabase.INSTANCE.getSeries()) {
                     // 平板电脑 / 穿戴设备独立成系列，其余归入手机页签
@@ -989,6 +1050,22 @@ public final class VivoActivity extends Activity {
                 runOnUiThread(() -> status.setText("设备分类读取失败: " + error.getMessage()));
             }
         });
+    }
+
+    /** 清理旧版本遗留的本地 vivo 设备清单 TXT（机型库已全自动在线获取，不再需要）。 */
+    private void cleanupLegacyTxt() {
+        try {
+            File dir = new File(android.os.Environment
+                    .getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "DsuManager");
+            if (dir == null || !dir.isDirectory()) return;
+            String[] legacyNames = {"vivo设备清单.txt", "vivo 设备清单.txt", "vivo_devices.txt"};
+            for (String name : legacyNames) {
+                File legacy = new File(dir, name);
+                if (legacy.isFile() && legacy.delete()) {
+                    android.util.Log.d("VivoActivity", "已清理旧机型清单: " + name);
+                }
+            }
+        } catch (Exception ignored) { }
     }
 
     private void initializeTabData(String tab, Spinner categorySpinner) {
@@ -1243,31 +1320,21 @@ public final class VivoActivity extends Activity {
         }
         addPair(card, "升级服务器", "GLOBAL".equals(domainName) ? "海外服务器" : "国行服务器");
 
-        // 更新日志（同步自上游 ResultCard：changelogUrl 有效时提供 H5 日志正文查看）
-        if (!result.changelogUrl.isEmpty() && !"(Not found)".equals(result.changelogUrl)) {
-            Button changelogBtn = glassButton("查看更新日志", 13);
-            changelogBtn.setOnClickListener(v1 -> {
-                Haptics.perform(v1);
-                showChangelog(modelName, result.changelogUrl);
-            });
-            card.addView(changelogBtn, margins(-1, 44, 12, 0, 0));
-        }
-        
         if (available) {
             LinearLayout buttonRow = new LinearLayout(this);
             buttonRow.setOrientation(LinearLayout.HORIZONTAL);
-            
+
             Button download = glassButton("下载此版本", 13);
             download.setOnClickListener(v1 -> startDownload(downloadUrl, result.filename));
             buttonRow.addView(download, new LinearLayout.LayoutParams(0, dp(46), 1));
-            
+
             LinearLayout spacer = new LinearLayout(this);
             buttonRow.addView(spacer, new LinearLayout.LayoutParams(dp(12), dp(46)));
 
             Button copyLink = glassButton("复制下载链接", 13);
             copyLink.setOnClickListener(v1 -> copyText("下载链接", downloadUrl));
             buttonRow.addView(copyLink, new LinearLayout.LayoutParams(0, dp(46), 1));
-            
+
             card.addView(buttonRow, margins(-1, -2, 12, 0, 0));
         } else if (!result.version.isEmpty()) {
             // 有版本信息但无法拼接下载链接
@@ -1276,6 +1343,59 @@ public final class VivoActivity extends Activity {
             card.addView(hint, margins(-1, -2, 10, 0, 0));
         } else {
             addPair(card, "查询结果", "当前版本已是最新，或暂无可用更新");
+        }
+
+        // 更新日志折叠区（下载 / 复制按钮下方）：默认收起，点击展开直接加载正文，不提供链接跳转
+        if (!result.changelogUrl.isEmpty() && !"(Not found)".equals(result.changelogUrl)) {
+            LinearLayout changelogHeader = new LinearLayout(this);
+            changelogHeader.setOrientation(LinearLayout.HORIZONTAL);
+            changelogHeader.setGravity(Gravity.CENTER_VERTICAL);
+            changelogHeader.setPadding(dp(14), 0, dp(14), 0);
+            changelogHeader.setBackgroundResource(R.drawable.liquid_glass_panel);
+            TextView changelogTitle = label("▸ 更新日志", 14, 0xff20375b);
+            changelogTitle.setTypeface(null, 1);
+            changelogHeader.addView(changelogTitle, new LinearLayout.LayoutParams(0, dp(44), 1));
+            TextView changelogHint = label("点击展开详情", 11, 0xff8a94a6);
+            changelogHeader.addView(changelogHint, new LinearLayout.LayoutParams(-2, dp(44)));
+
+            LinearLayout changelogBody = new LinearLayout(this);
+            changelogBody.setOrientation(LinearLayout.VERTICAL);
+            changelogBody.setPadding(dp(14), dp(12), dp(14), dp(12));
+            changelogBody.setBackgroundResource(R.drawable.liquid_glass_panel);
+            changelogBody.setVisibility(View.GONE);
+            TextView changelogText = label("正在加载更新日志...", 13, 0xff334b66);
+            changelogText.setLineSpacing(dp(4), 1f);
+            changelogText.setTextIsSelectable(true);
+            changelogBody.addView(changelogText);
+
+            final boolean[] loaded = {false};
+            changelogHeader.setOnClickListener(vh -> {
+                Haptics.perform(vh);
+                boolean expanding = changelogBody.getVisibility() != View.VISIBLE;
+                changelogBody.setVisibility(expanding ? View.VISIBLE : View.GONE);
+                changelogTitle.setText(expanding ? "▾ 更新日志" : "▸ 更新日志");
+                changelogHint.setText(expanding ? "点击收起" : "点击展开详情");
+                // 展开动画：轻微淡入
+                if (expanding) {
+                    changelogBody.setAlpha(0f);
+                    changelogBody.animate().alpha(1f).setDuration(220).start();
+                }
+                if (expanding && !loaded[0]) {
+                    loaded[0] = true;
+                    executor.execute(() -> {
+                        String content = null;
+                        try {
+                            content = new com.mytiantian.updater.vivo.VivoOtaClient(getApplicationContext())
+                                    .fetchChangelog(result.changelogUrl);
+                        } catch (Exception ignored) { }
+                        final String text = (content == null || content.isEmpty())
+                                ? "更新日志加载失败，请稍后重试" : content;
+                        runOnUiThread(() -> changelogText.setText(text));
+                    });
+                }
+            });
+            card.addView(changelogHeader, margins(-1, 44, 12, 0, 0));
+            card.addView(changelogBody, margins(-1, -2, 8, 0, 0));
         }
 
         results.addView(card, margins(-1, -2, 0, 0, 16));
@@ -1368,37 +1488,7 @@ public final class VivoActivity extends Activity {
     }
 
     // ===== 同步自 VIVO-OTA-Tracker：更新日志 / 查询历史 / 在线刷新机型库 =====
-
-    /** 更新日志弹窗（同步自上游 ResultCard / ChangelogScreen）：后台抓取 H5 日志并解析正文。 */
-    private void showChangelog(String modelName, String changelogUrl) {
-        TextView body = label("正在加载更新日志...", 13, 0xff334b66);
-        body.setLineSpacing(dp(3), 1f);
-        body.setTextIsSelectable(true);
-        body.setPadding(dp(20), dp(16), dp(20), dp(16));
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(body);
-        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
-                .setTitle(modelName + " · 更新日志")
-                .setView(scroll)
-                .setPositiveButton("关闭", null)
-                .setNeutralButton("浏览器打开", (d, w) -> {
-                    try {
-                        startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(changelogUrl)));
-                    } catch (Exception ignored) { }
-                })
-                .show();
-        executor.execute(() -> {
-            String content = null;
-            try {
-                // 直接调用 Kotlin 客户端：更新日志抓取无需初始化加密
-                content = new com.mytiantian.updater.vivo.VivoOtaClient(getApplicationContext())
-                        .fetchChangelog(changelogUrl);
-            } catch (Exception ignored) { }
-            final String text = (content == null || content.isEmpty())
-                    ? "更新日志加载失败，可点击「浏览器打开」查看原页面" : content;
-            runOnUiThread(() -> body.setText(text));
-        });
-    }
+    // 更新日志改为查询结果卡内的折叠区（renderResult 内联加载），不再使用弹窗与链接跳转。
 
     /** 查询成功后保存历史（同步自上游 QueryHistoryEntry 字段，同签名去重、上限 20 条）。 */
     private void saveHistory(String modelName, String pd, String v, String version, int android,
@@ -1434,7 +1524,15 @@ public final class VivoActivity extends Activity {
             historyEntries.add(0, entry);
             while (historyEntries.size() > HISTORY_MAX) historyEntries.remove(historyEntries.size() - 1);
             persistHistory();
-            historyButton.setText("查询历史 (" + historyEntries.size() + ")");
+            historyButton.setText(historyExpandContainer != null
+                    && historyExpandContainer.getVisibility() == View.VISIBLE
+                    ? "收起历史 (" + historyEntries.size() + ")"
+                    : "查询历史 (" + historyEntries.size() + ")");
+            // 历史面板正展开时同步刷新条目
+            if (historyExpandContainer != null
+                    && historyExpandContainer.getVisibility() == View.VISIBLE) {
+                renderHistoryPanel();
+            }
         } catch (Exception ignored) { }
     }
 
@@ -1459,26 +1557,55 @@ public final class VivoActivity extends Activity {
         } catch (Exception ignored) { }
     }
 
-    /** 查询历史弹窗（同步自上游 HistoryCard）：点击条目一键回填表单，长按删除单条。 */
-    private void showHistoryDialog() {
+    /** 查询历史：点击「查询历史」在按钮正下方展开/收起（图三，不再弹窗）。 */
+    private void toggleHistoryPanel() {
+        if (historyExpandContainer == null) return;
+        boolean expanding = historyExpandContainer.getVisibility() != View.VISIBLE;
+        if (expanding) {
+            renderHistoryPanel();
+            historyExpandContainer.setVisibility(View.VISIBLE);
+            historyExpandContainer.setAlpha(0f);
+            historyExpandContainer.animate().alpha(1f).setDuration(220).start();
+            historyButton.setText("收起历史 (" + historyEntries.size() + ")");
+        } else {
+            historyExpandContainer.setVisibility(View.GONE);
+            historyButton.setText("查询历史 (" + historyEntries.size() + ")");
+        }
+    }
+
+    /**
+     * 查询历史面板（同步自上游 HistoryCard，改为就地展开）：
+     * 顶部「点击回填 · 长按删除 · 一键清空」提示条 + 历史条目玻璃卡。
+     */
+    private void renderHistoryPanel() {
+        if (historyExpandContainer == null) return;
+        historyExpandContainer.removeAllViews();
         if (historyEntries.isEmpty()) {
-            android.widget.Toast.makeText(this, "暂无查询历史", android.widget.Toast.LENGTH_SHORT).show();
+            TextView empty = label("暂无查询历史 · 查询成功后自动记录", 12, 0xff8a94a6);
+            empty.setPadding(dp(14), dp(12), dp(14), dp(12));
+            empty.setBackgroundResource(R.drawable.liquid_glass_panel);
+            historyExpandContainer.addView(empty, margins(-1, -2, 0, 0, 0));
             return;
         }
-        LinearLayout list = new LinearLayout(this);
-        list.setOrientation(LinearLayout.VERTICAL);
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(list);
-        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
-                .setTitle("查询历史（点击回填 · 长按删除）")
-                .setView(scroll)
-                .setNegativeButton("清空全部", (d, w) -> {
-                    historyEntries.clear();
-                    persistHistory();
-                    historyButton.setText("查询历史 (0)");
-                })
-                .setPositiveButton("关闭", null)
-                .show();
+        // 操作提示条 + 清空按钮
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(dp(14), 0, dp(10), 0);
+        head.setBackgroundResource(R.drawable.liquid_glass_panel);
+        TextView tip = label("点击回填 · 长按删除", 12, 0xff596579);
+        head.addView(tip, new LinearLayout.LayoutParams(0, dp(40), 1));
+        Button clear = glassButton("清空全部", 12);
+        clear.setOnClickListener(v -> {
+            Haptics.perform(v);
+            historyEntries.clear();
+            persistHistory();
+            historyButton.setText("查询历史 (0)");
+            renderHistoryPanel();
+        });
+        head.addView(clear, new LinearLayout.LayoutParams(-2, dp(32)));
+        historyExpandContainer.addView(head, margins(-1, 40, 0, 0, 8));
+
         java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.CHINA);
         for (int i = 0; i < historyEntries.size(); i++) {
             final org.json.JSONObject entry = historyEntries.get(i);
@@ -1499,7 +1626,6 @@ public final class VivoActivity extends Activity {
             row.addView(meta, metaLp);
             row.setOnClickListener(v -> {
                 Haptics.perform(v);
-                dialog.dismiss();
                 backfillFromHistory(entry);
             });
             row.setOnLongClickListener(v -> {
@@ -1507,13 +1633,12 @@ public final class VivoActivity extends Activity {
                 historyEntries.remove(entry);
                 persistHistory();
                 historyButton.setText("查询历史 (" + historyEntries.size() + ")");
-                dialog.dismiss();
-                showHistoryDialog();
+                renderHistoryPanel();
                 return true;
             });
             LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
-            rowLp.topMargin = i == 0 ? 0 : dp(8);
-            list.addView(row, rowLp);
+            rowLp.topMargin = dp(8);
+            historyExpandContainer.addView(row, rowLp);
         }
     }
 

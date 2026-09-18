@@ -22,6 +22,7 @@
         <activity android:name=".SettingsActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".AboutActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".RomActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".DownloadManagerActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".VivoActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".OPlusActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".OPlusLookupActivity" android:screenOrientation="portrait" android:exported="false" />

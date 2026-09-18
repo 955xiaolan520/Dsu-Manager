@@ -123,6 +123,7 @@ public final class OnboardingActivity extends Activity {
     private EditText verifyInput;
     private ScrollView agreementScroll;
     private int verifyA, verifyB, verifyC;
+    private boolean verifyPlus1, verifyPlus2;   // true = 加法，false = 减法
     private GestureDetector gestureDetector;
     private View fadeContentRoot;   // 内容根视图（就绪页→首页淡入淡出用，背景渐变常驻防黑屏）
 
@@ -403,7 +404,8 @@ public final class OnboardingActivity extends Activity {
         verifyPrefix.setTextColor(INK_SOFT);
         verifyRow.addView(verifyPrefix, new LinearLayout.LayoutParams(-2, -2));
         verifyLabel = new TextView(this);
-        verifyLabel.setText(String.format(Locale.ROOT, "%d - %d - %d = ?", verifyA, verifyB, verifyC));
+        verifyLabel.setText(String.format(Locale.ROOT, "%d %s %d %s %d = ?",
+                verifyA, verifyPlus1 ? "+" : "−", verifyB, verifyPlus2 ? "+" : "−", verifyC));
         verifyLabel.setTextSize(14.5f);
         verifyLabel.setTextColor(0xff3c4757);
         verifyLabel.setTypeface(Typeface.DEFAULT_BOLD);
@@ -976,7 +978,7 @@ public final class OnboardingActivity extends Activity {
     private boolean answerCorrect() {
         if (verifyInput == null) return false;
         try {
-            return Integer.parseInt(verifyInput.getText().toString().trim()) == verifyA - verifyB - verifyC;
+            return Integer.parseInt(verifyInput.getText().toString().trim()) == verificationAnswer();
         } catch (Exception e) {
             return false;
         }
@@ -1057,10 +1059,18 @@ public final class OnboardingActivity extends Activity {
     private void generateVerification() {
         Random random = new Random();
         do {
-            verifyA = 40 + random.nextInt(59);   // 40-98
-            verifyB = 1 + random.nextInt(19);    // 1-19
-            verifyC = 1 + random.nextInt(19);    // 1-19
-        } while (verifyA - verifyB - verifyC <= 0);
+            verifyA = 20 + random.nextInt(79);   // 20-98
+            verifyB = 1 + random.nextInt(49);    // 1-49
+            verifyC = 1 + random.nextInt(29);    // 1-29
+            verifyPlus1 = random.nextBoolean();  // 第一个运算符随机：+ 或 -
+            verifyPlus2 = random.nextBoolean();  // 第二个运算符随机：+ 或 -
+        } while (verificationAnswer() <= 0);
+    }
+
+    /** 当前算式的答案（加法 / 减法混合运算，从左到右计算） */
+    private int verificationAnswer() {
+        int step = verifyPlus1 ? verifyA + verifyB : verifyA - verifyB;
+        return verifyPlus2 ? step + verifyC : step - verifyC;
     }
 
     // ---------- 绘制工具 ----------

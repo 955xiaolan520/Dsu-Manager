@@ -1053,32 +1053,80 @@ public class MainActivity extends Activity {
            page.setOrientation(LinearLayout.VERTICAL);
            page.setPadding(dp(18), dp(22), dp(18), dp(30));
            page.setBackgroundResource(R.drawable.liquid_backdrop);
+           // 标题行：ROM 更新中心（左）+ 下载管理入口（右，图二）
+           LinearLayout titleRow = new LinearLayout(this);
+           titleRow.setOrientation(LinearLayout.HORIZONTAL);
+           titleRow.setGravity(Gravity.CENTER_VERTICAL);
            TextView title = text(t("ROM 更新中心", "ROM Update Center"), 26, Color.WHITE);
            title.setTypeface(null, 1);
-           page.addView(title, new LinearLayout.LayoutParams(-1, dp(48)));
+           titleRow.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+           Button downloadManager = new Button(this, null, 0);
+           downloadManager.setText(t("⬇ 下载管理", "⬇ Downloads"));
+           downloadManager.setAllCaps(false);
+           downloadManager.setTextSize(13.5f);
+           downloadManager.setTextColor(Color.WHITE);
+           downloadManager.setGravity(Gravity.CENTER);
+           downloadManager.setPadding(dp(16), 0, dp(16), 0);
+           downloadManager.setMinWidth(0);
+           downloadManager.setMinHeight(0);
+           downloadManager.setIncludeFontPadding(false);
+           downloadManager.setStateListAnimator(null);
+           // 白色半透明玻璃胶囊（同引导页次按钮），与品牌玻璃卡视觉统一
+           GradientDrawable dlMgrBg = new GradientDrawable();
+           dlMgrBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+           dlMgrBg.setColors(new int[]{0x66FFFFFF, 0x33FFFFFF});
+           dlMgrBg.setCornerRadius(dp(22));
+           dlMgrBg.setStroke(Math.max(1, dp(1)), 0xB3FFFFFF);
+           downloadManager.setBackground(dlMgrBg);
+           downloadManager.setElevation(dp(6));
+           downloadManager.setOnClickListener(v -> {
+               Haptics.perform(v);
+               startActivity(new Intent(this, DownloadManagerActivity.class));
+               // 下载管理：缩放 + 淡入转场
+               overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
+           });
+           titleRow.addView(downloadManager, new LinearLayout.LayoutParams(-2, dp(44)));
+           page.addView(titleRow, new LinearLayout.LayoutParams(-1, dp(48)));
            TextView subtitle = text(t("小米 / Redmi / POCO 系统更新查询与下载", "Xiaomi / Redmi / POCO update lookup and downloads"), 13, 0xffe5edf7);
            page.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
-            page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.button_blue, "xiaomi"));
-            page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.button_purple, "vivo"));
-            page.addView(romVendorCard("OPPO / 一加 / 真我", "ColorOS · 官方系统更新查询", R.drawable.button_orange, "oppo"));
-            page.addView(romVendorCard("提取镜像", "在线直链 / 本地 ROM 包 · payload.bin 分区镜像提取", R.drawable.button_green, "extract"));
+            page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.vendor_glass_blue, "xiaomi"));
+            page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.vendor_glass_purple, "vivo"));
+            page.addView(romVendorCard("OPPO / 一加 / 真我", "ColorOS · 官方系统更新查询", R.drawable.vendor_glass_orange, "oppo"));
+            page.addView(romVendorCard("提取镜像", "在线直链 / 本地 ROM 包 · payload.bin 分区镜像提取", R.drawable.vendor_glass_green, "extract"));
             return page;
         }
 
-       private View romVendorCard(String heading, String detail, int background, String vendorId) {
+       private View romVendorCard(String heading, String detail, int glassBackground, String vendorId) {
            LinearLayout card = new LinearLayout(this);
            card.setOrientation(LinearLayout.VERTICAL);
            card.setPadding(dp(18), dp(16), dp(18), dp(16));
-           card.setBackgroundResource(R.drawable.liquid_glass_panel);
-           TextView title = text(heading, 19, 0xff172b4d);
+           // 品牌液态玻璃框（同首页 logo 框结构：品牌渐变底 + 白描边 + 顶部高光）
+           card.setBackgroundResource(glassBackground);
+           card.setElevation(dp(7));
+           TextView title = text(heading, 19, Color.WHITE);
            title.setTypeface(null, 1);
            card.addView(title, new LinearLayout.LayoutParams(-1, dp(34)));
-           card.addView(text(detail, 13, 0xff5e6c83), new LinearLayout.LayoutParams(-1, dp(30)));
-           Button enter = new Button(this);
+           TextView desc = text(detail, 13, 0xE6FFFFFF);
+           card.addView(desc, new LinearLayout.LayoutParams(-1, dp(30)));
+           Button enter = new Button(this, null, 0);
            enter.setText(t("进入查询", "Open lookup"));
            enter.setAllCaps(false);
-           enter.setTextColor(Color.WHITE);
-           enter.setBackgroundResource(background);
+           enter.setTextSize(14.5f);
+           enter.setGravity(Gravity.CENTER);
+           enter.setPadding(0, 0, 0, 0);
+           enter.setMinWidth(0);
+           enter.setMinHeight(0);
+           enter.setIncludeFontPadding(false);
+           enter.setTextColor(0xff172b4d);
+           enter.setStateListAnimator(null);
+           // 白色玻璃胶囊按钮（深色玻璃框上的高对比主操作）
+           GradientDrawable enterBg = new GradientDrawable();
+           enterBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+           enterBg.setColors(new int[]{0xFFFFFFFF, 0xE6E2E8F0});
+           enterBg.setCornerRadius(dp(23));
+           enterBg.setStroke(Math.max(1, dp(1)), 0xFFFFFFFF);
+           enter.setBackground(enterBg);
+           enter.setElevation(dp(5));
             enter.setOnClickListener(v -> {
                 Haptics.perform(v);
                  Intent intent = new Intent(this,

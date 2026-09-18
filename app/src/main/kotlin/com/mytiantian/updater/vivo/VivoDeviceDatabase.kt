@@ -46,7 +46,12 @@ object VivoDeviceDatabase {
 
     val series: List<String> get() = database.keys.toList()
 
-    fun devicesOf(series: String): List<VivoDevice> = database[series] ?: emptyList()
+    /**
+     * 系列内机型列表：最新机型排在最前（对齐小米 ROM 查询的排序口径）。
+     * MobileModels 页面每个系列内按发布时间「旧 → 新」排列，倒序即「新 → 旧」；
+     * merge 时追加的内置新增机型（通常为最新发布）同样落在最前。
+     */
+    fun devicesOf(series: String): List<VivoDevice> = database[series]?.asReversed() ?: emptyList()
 
     fun dataVersion(): Int = version.get()
 

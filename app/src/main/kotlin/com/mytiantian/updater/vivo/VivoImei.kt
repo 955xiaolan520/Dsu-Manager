@@ -60,6 +60,17 @@ object VivoImei {
         return if (fromTelephony.length == LENGTH) fromTelephony else readFromSystemProperty()
     }
 
+    /**
+     * 同步尽力读取（Java 侧 / 子线程调用，无协程挂起）：
+     * READ_PHONE_STATE 已授予则读 TelephonyManager，否则直接走系统属性兜底。
+     */
+    fun readDeviceSync(context: Context): String {
+        val granted = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+        val fromTelephony = if (granted) readFromTelephony(context) else ""
+        return if (fromTelephony.length == LENGTH) fromTelephony else readFromSystemProperty()
+    }
+
     @Suppress("MissingPermission", "HardwareIds")
     private fun readFromTelephony(context: Context): String {
         return try {
