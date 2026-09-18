@@ -1380,6 +1380,15 @@ public final class VivoActivity extends Activity {
         android.widget.Toast.makeText(this, label + " 已复制", android.widget.Toast.LENGTH_SHORT).show();
     }
 
+    /** v3.9.0：从下载链接提取文件名（取最后路径段、去掉 query/fragment；无扩展名时回退通用名） */
+    private String fileNameFromUrl(String url) {
+        if (url == null || url.isEmpty()) return "vivo-update.zip";
+        String path = url.split("[?#]", 2)[0];
+        int slash = path.lastIndexOf('/');
+        String name = slash >= 0 ? path.substring(slash + 1) : path;
+        return name.isEmpty() || !name.contains(".") ? "vivo-update.zip" : name;
+    }
+
     private void startDownload(String url, String name) {
         File directory = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DsuManager");
         if (!directory.exists()) directory.mkdirs();
@@ -1573,16 +1582,30 @@ public final class VivoActivity extends Activity {
                 sizeLp.topMargin = dp(10);
                 row.addView(sizeLine, sizeLp);
             }
-            // v3.8.2 按需求调整：不再直接显示下载链接长文本，仅保留「复制下载链接」按钮
+            // v3.9.0：复制链接 + 下载此版本 两个独立按钮分开排列（各占一半，均可直达）
             if (!downloadUrl.isEmpty()) {
-                Button copy = glassButton("复制下载链接", 12.5f);
+                LinearLayout buttons = new LinearLayout(this);
+                buttons.setOrientation(LinearLayout.HORIZONTAL);
+
+                Button copy = glassButton("复制链接", 12.5f);
                 copy.setOnClickListener(v -> {
                     Haptics.perform(v);
                     copyText("下载链接", downloadUrl);
                 });
-                LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(-1, dp(40));
-                copyLp.topMargin = dp(10);
-                row.addView(copy, copyLp);
+                buttons.addView(copy, new LinearLayout.LayoutParams(0, dp(40), 1));
+
+                Button download = glassButton("下载此版本", 12.5f);
+                download.setOnClickListener(v -> {
+                    Haptics.perform(v);
+                    startDownload(downloadUrl, fileNameFromUrl(downloadUrl));
+                });
+                LinearLayout.LayoutParams dlLp = new LinearLayout.LayoutParams(0, dp(40), 1);
+                dlLp.leftMargin = dp(10);
+                buttons.addView(download, dlLp);
+
+                LinearLayout.LayoutParams buttonsLp = new LinearLayout.LayoutParams(-1, dp(40));
+                buttonsLp.topMargin = dp(10);
+                row.addView(buttons, buttonsLp);
             }
         }
 

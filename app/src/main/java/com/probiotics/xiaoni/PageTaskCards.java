@@ -107,6 +107,12 @@ public final class PageTaskCards {
         if (taskId == null) return;
         if (page.equals(taskPage)) {
             String state = intent.getStringExtra(DownloadService.EXTRA_STATE);
+            // v3.9.0：任务在本页之外被取消（下载管理页 / 通知栏）→ 广播到达立即收起本页卡片
+            if (state != null && state.startsWith("下载已取消")) {
+                removeCard(taskId);
+                renderOthersBar(DownloadTaskStore.countOthers(activity, page));
+                return;
+            }
             long done = intent.getLongExtra(DownloadService.EXTRA_DONE, -1);
             long total = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
             Card card = cards.get(taskId);
@@ -128,8 +134,15 @@ public final class PageTaskCards {
         // 移除已结束（不在 store 中）的卡片
         Map<String, DownloadTaskStore.Item> live = new HashMap<>();
         for (DownloadTaskStore.Item item : items) live.put(item.id, item);
+        long now = System.currentTimeMillis();
         for (String id : new java.util.ArrayList<>(cards.keySet())) {
-            if (!live.containsKey(id)) removeCard(id);
+            if (live.containsKey(id)) continue;
+            Card card = cards.get(id);
+            // v3.9.0 防误删：本地刚发起的任务（<20s）服务端可能尚未 persist 到 store
+            //（onResume 对账先于服务端广播到达），宽限期内不按「store 缺失」移除卡片，
+            // 等待服务端广播 / 下次对账确认；只有明确超时仍不存在的才真正收起。
+            if (card != null && now - card.createdAt < 20000) continue;
+            removeCard(id);
         }
         for (DownloadTaskStore.Item item : items) {
             Card card = cards.get(item.id);
@@ -145,6 +158,10 @@ public final class PageTaskCards {
 
     private Card addCard(String taskId, File output, String pkg) {
         if (container == null || cards.containsKey(taskId)) return cards.get(taskId);
+        // v3.9.0 根因修复：页面下载区容器初始为 GONE（无任务时占位隐藏），
+        // 此前添加卡片后从不恢复可见 —— 导致「只弹下载任务已提交提示、下载框不出现」，
+        // 以及卡片清空后容器保持 GONE、再次下载也不显示（vivo 丢失场景）。
+        container.setVisibility(View.VISIBLE);
         Card card = new Card(taskId);
         card.panel = new LiquidGlassPanel(activity);
         card.panel.setOrientation(LinearLayout.VERTICAL);
@@ -332,7 +349,9 @@ public final class PageTaskCards {
         if (container == null) return;
         if (othersCount <= 0) {
             if (othersBar != null) othersBar.setVisibility(View.GONE);
+            // v3.9.0：本页仍有任务卡时容器必须保持可见（此前只在「其他页有任务」时才置 VISIBLE）
             if (cards.isEmpty()) container.setVisibility(View.GONE);
+            else container.setVisibility(View.VISIBLE);
             return;
         }
         container.setVisibility(View.VISIBLE);
@@ -362,6 +381,8 @@ public final class PageTaskCards {
 
     private static final class Card {
         final String id;
+        /** v3.9.0：卡片本地创建时间（resync 对账宽限期判定，防服务端 persist 时序内误删） */
+        final long createdAt = System.currentTimeMillis();
         LiquidGlassPanel panel;
         TextView title;
         TextView status;
