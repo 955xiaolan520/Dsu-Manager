@@ -94,6 +94,30 @@ public final class VivoActivity extends Activity {
     private Spinner wearablePackageType;
     private Spinner wearableFullOrIncremental;
     private EditText wearableSerialInput;
+
+    // ===== 同步自 VIVO-OTA-Tracker：IMEI 输入（手机/手动）与升级服务器域名选择（各面板） =====
+    private EditText phoneImeiInput;
+    private EditText manualImeiInput;
+    private Spinner phoneDomainSpinner;
+    private Spinner tabletDomainSpinner;
+    private Spinner manualDomainSpinner;
+    private Spinner wearableDomainSpinner;
+
+    // ===== 同步自 VIVO-OTA-Tracker：查询历史（一键回填，最多 20 条，按时间降序） =====
+    private static final String HISTORY_PREFS = "vivo_query_history";
+    private static final int HISTORY_MAX = 20;
+    private final List<org.json.JSONObject> historyEntries = new ArrayList<>();
+    private Button historyButton;
+    private Button refreshCatalogButton;
+
+    /** 历史条目的查询条件签名（与上游 querySignature 一致：能唯一确定查询的输入字段）。 */
+    private static String historySignature(org.json.JSONObject e) {
+        return e.optBoolean("manualMode") + "|" + e.optString("manualCodename").trim() + "|"
+                + e.optString("manualModelSwVer").trim() + "|" + e.optString("manualModelName").trim() + "|"
+                + e.optString("querySoftwareVersion").trim() + "|" + e.optInt("androidVersion") + "|"
+                + e.optString("deviceType").trim() + "|" + e.optBoolean("isFullPackage") + "|"
+                + e.optString("queryChannel").trim() + "|" + e.optString("queryDomain").trim();
+    }
     
     private TextView status;
     private LinearLayout results;
@@ -124,12 +148,23 @@ public final class VivoActivity extends Activity {
             long done = intent.getLongExtra(DownloadService.EXTRA_DONE, -1);
             long total = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
             
-            // 只在终止状态（完成/失败）时更新 downloadStatus
-            if (state != null && ("下载完成".equals(state) || state.startsWith("下载失败") || state.startsWith("下载地址无效"))) {
+            // 在终止状态（完成/失败/取消）与进行状态（暂停/下载中）时更新 downloadStatus
+            if (state != null && ("下载完成".equals(state) || state.startsWith("下载失败")
+                    || state.startsWith("下载地址无效") || state.startsWith("已暂停")
+                    || state.startsWith("下载已取消") || state.startsWith("正在下载"))) {
                 downloadStatus.setText(state);
                 speedWindowBytes = 0;
                 speedWindowTime = 0;
                 smoothedSpeed = 0;
+            }
+            
+            // 通知栏侧「暂停/继续」操作 → 同步 APP 内按钮状态
+            if (state != null && state.startsWith("已暂停")) {
+                downloadPaused = true;
+                if (pauseDownloadButton != null) pauseDownloadButton.setText("继续");
+            } else if (state != null && state.startsWith("正在下载")) {
+                downloadPaused = false;
+                if (pauseDownloadButton != null) pauseDownloadButton.setText("暂停");
             }
             
             if (done >= 0) updateDownloadProgress(done, total);
@@ -143,6 +178,10 @@ public final class VivoActivity extends Activity {
             } else if (state != null && state.startsWith("下载失败")) {
                 if (pauseDownloadButton != null) pauseDownloadButton.setText("重试");
                 clearDownloadState(); // 失败后清除持久化状态
+            } else if (state != null && state.startsWith("下载已取消")) {
+                // 通知栏侧「取消」→ APP 内下载框同步关闭
+                if (downloadCard != null) downloadCard.setVisibility(View.GONE);
+                clearDownloadState();
             }
         }
     };
@@ -188,6 +227,7 @@ public final class VivoActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
         buildUi();
         loadCatalog();
+        loadHistory(); // 查询历史（同步自上游 HistoryCard）
     }
 
     @Override public boolean dispatchTouchEvent(android.view.MotionEvent event) {
@@ -304,6 +344,25 @@ public final class VivoActivity extends Activity {
         for (LinearLayout panel : panels) {
             content.addView(panel, new LinearLayout.LayoutParams(-1, -2));
         }
+
+        // 查询历史 + 在线刷新机型库（同步自上游 HistoryCard 与机型库在线更新）
+        LinearLayout historyRow = new LinearLayout(this);
+        historyRow.setOrientation(LinearLayout.HORIZONTAL);
+        historyButton = glassButton("查询历史 (0)", 13);
+        historyButton.setOnClickListener(v -> {
+            Haptics.perform(v);
+            showHistoryDialog();
+        });
+        historyRow.addView(historyButton, new LinearLayout.LayoutParams(0, dp(46), 1));
+        View historySpacer = new View(this);
+        historyRow.addView(historySpacer, new LinearLayout.LayoutParams(dp(12), dp(46)));
+        refreshCatalogButton = glassButton("刷新机型库", 13);
+        refreshCatalogButton.setOnClickListener(v -> {
+            Haptics.perform(v);
+            refreshCatalog();
+        });
+        historyRow.addView(refreshCatalogButton, new LinearLayout.LayoutParams(0, dp(46), 1));
+        content.addView(historyRow, margins(-1, 46, 0, 0, 16));
 
         // 下载卡片（在 panels 之后，查询按钮下方）
         downloadCard = glass();
@@ -467,6 +526,13 @@ public final class VivoActivity extends Activity {
         phoneSerialInput = input("序列号，可留空，默认 A0000000000000A");
         panel.addView(phoneSerialInput, margins(-1, 50, 0, 0, 12));
 
+        // IMEI 输入 + 一键随机（同步自上游：手动填写 > 随机；留空由客户端自动生成）
+        panel.addView(buildImeiRow("phone"), margins(-1, -2, 0, 0, 12));
+
+        // 升级服务器域名（同步自上游 Domain 枚举：国行 sysupgrade.vivo.com.cn / 海外 asia-sysupgrade-api.vivoglobal.com）
+        phoneDomainSpinner = buildDomainSpinner();
+        panel.addView(wrapSpinner(phoneDomainSpinner), margins(-1, 52, 0, 0, 12));
+
         Button queryBtn = glassButton("查询官方更新", 14);
         queryBtn.setOnClickListener(v -> executeQuery());
         panel.addView(queryBtn, margins(-1, 48, 0, 0, 12));
@@ -524,6 +590,10 @@ public final class VivoActivity extends Activity {
         tabletSerialInput = input("序列号，可留空，默认 A0000000000000A");
         panel.addView(tabletSerialInput, margins(-1, 50, 0, 0, 12));
 
+        // 升级服务器域名（平板协议走 snp，不需要 IMEI）
+        tabletDomainSpinner = buildDomainSpinner();
+        panel.addView(wrapSpinner(tabletDomainSpinner), margins(-1, 52, 0, 0, 12));
+
         Button queryBtn = glassButton("查询官方更新", 14);
         queryBtn.setOnClickListener(v -> executeQuery());
         panel.addView(queryBtn, margins(-1, 48, 0, 0, 12));
@@ -568,6 +638,13 @@ public final class VivoActivity extends Activity {
 
         manualSerialInput = input("序列号，可留空，默认 A0000000000000A");
         panel.addView(manualSerialInput, margins(-1, 50, 0, 0, 12));
+
+        // IMEI 输入 + 一键随机（手动模式按手机协议查询，携带 IMEI）
+        panel.addView(buildImeiRow("manual"), margins(-1, -2, 0, 0, 12));
+
+        // 升级服务器域名
+        manualDomainSpinner = buildDomainSpinner();
+        panel.addView(wrapSpinner(manualDomainSpinner), margins(-1, 52, 0, 0, 12));
 
         Button queryBtn = glassButton("查询官方更新", 14);
         queryBtn.setOnClickListener(v -> executeQuery());
@@ -620,11 +697,52 @@ public final class VivoActivity extends Activity {
         wearableSerialInput = input("序列号，可留空，默认 A0000000000000A");
         panel.addView(wearableSerialInput, margins(-1, 50, 0, 0, 12));
 
+        // 升级服务器域名
+        wearableDomainSpinner = buildDomainSpinner();
+        panel.addView(wrapSpinner(wearableDomainSpinner), margins(-1, 52, 0, 0, 12));
+
         Button queryBtn = glassButton("查询官方更新", 14);
         queryBtn.setOnClickListener(v -> executeQuery());
         panel.addView(queryBtn, margins(-1, 48, 0, 0, 12));
 
         return panel;
+    }
+
+    /** IMEI 输入行：输入框（15 位数字，留空自动生成）+ 一键随机按钮（同步自上游 UI）。 */
+    private LinearLayout buildImeiRow(String target) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+
+        EditText imeiInput = input("IMEI，可留空自动生成（15 位数字）");
+        imeiInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        imeiInput.setMaxLines(1);
+        if ("manual".equals(target)) {
+            manualImeiInput = imeiInput;
+        } else {
+            phoneImeiInput = imeiInput;
+        }
+        row.addView(imeiInput, new LinearLayout.LayoutParams(0, dp(50), 1));
+
+        View spacer = new View(this);
+        row.addView(spacer, new LinearLayout.LayoutParams(dp(10), dp(50)));
+
+        Button randomBtn = glassButton("随机", 12);
+        randomBtn.setOnClickListener(v -> {
+            Haptics.perform(v);
+            imeiInput.setText(com.mytiantian.updater.vivo.VivoImei.INSTANCE.random());
+        });
+        row.addView(randomBtn, new LinearLayout.LayoutParams(dp(74), dp(50)));
+        return row;
+    }
+
+    /** 升级服务器域名选择（同步自上游 Domain 枚举）。0=国行 CN，1=海外 GLOBAL。 */
+    private Spinner buildDomainSpinner() {
+        Spinner spinner = optionSpinner("升级服务器");
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"国行服务器", "海外服务器"});
+        adapter.setDropDownViewResource(R.layout.spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        return spinner;
     }
 
     private void switchTab(int index) {
@@ -842,70 +960,24 @@ public final class VivoActivity extends Activity {
 
     private void loadCatalog() {
         executor.execute(() -> {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    getAssets().open("vivo_devices.txt"), StandardCharsets.UTF_8))) {
+            try {
+                // 机型库：内置 vivo_devices.json + 在线缓存合并（同步自上游 VivoDeviceDatabase）
+                com.mytiantian.updater.vivo.VivoDeviceDatabase.INSTANCE.load(this);
                 JSONObject loaded = new JSONObject();
-                String currentCategory = null;
-                String currentTab = null;
-                String line;
-                
-                while ((line = reader.readLine()) != null) {
-                    java.util.regex.Matcher title = java.util.regex.Pattern.compile("<title>([^<]+)</title>").matcher(line);
-                    if (title.find() && !title.group(1).trim().isEmpty()) {
-                        String rawTitle = title.group(1).trim();
-                        if (rawTitle.equals("手动输入 PD / V 代号")) {
-                            currentTab = null;
-                            continue;
-                        }
-                        if (rawTitle.equals("平板电脑")) {
-                            currentTab = TAB_TABLET;
-                            currentCategory = null;
-                            continue;
-                        }
-                        if (rawTitle.equals("穿戴设备")) {
-                            currentTab = TAB_WEARABLE;
-                            currentCategory = null;
-                            continue;
-                        }
-                        if (currentTab == null) {
-                            currentTab = TAB_PHONE;
-                        }
-                        currentCategory = rawTitle.replaceFirst("^[Vv][Ii][Vv][Oo] ", "");
-                        String key = currentTab + ":" + currentCategory;
-                        if (!loaded.has(key)) {
-                            loaded.put(key, new JSONArray());
-                        }
+                for (String series : com.mytiantian.updater.vivo.VivoDeviceDatabase.INSTANCE.getSeries()) {
+                    // 平板电脑 / 穿戴设备独立成系列，其余归入手机页签
+                    String tab = "平板电脑".equals(series) ? TAB_TABLET
+                            : ("穿戴设备".equals(series) ? TAB_WEARABLE : TAB_PHONE);
+                    JSONArray arr = new JSONArray();
+                    for (com.mytiantian.updater.vivo.VivoDevice d
+                            : com.mytiantian.updater.vivo.VivoDeviceDatabase.INSTANCE.devicesOf(series)) {
+                        arr.put(new JSONObject()
+                                .put("model", d.getModel())
+                                .put("codename", d.getCodename())
+                                .put("model_sw_ver", d.getModel_sw_ver()));
                     }
-                    
-                    java.util.regex.Matcher option = java.util.regex.Pattern.compile(
-                            "<option value=\\\"model_([^\\\"]+)\\\">([^<]+)</option>").matcher(line);
-                    if (option.find() && currentTab != null) {
-                        String value = option.group(1).trim();
-                        String[] parts = value.split("_", 2);
-                        if (parts.length == 2) {
-                            // 平板电脑和穿戴设备没有分类，直接用设备类型作为分类
-                            String category = currentCategory;
-                            if (category == null) {
-                                if (currentTab.equals(TAB_TABLET)) {
-                                    category = "平板电脑";
-                                } else if (currentTab.equals(TAB_WEARABLE)) {
-                                    category = "穿戴设备";
-                                }
-                            }
-                            if (category != null) {
-                                String key = currentTab + ":" + category;
-                                if (!loaded.has(key)) {
-                                    loaded.put(key, new JSONArray());
-                                }
-                                loaded.getJSONArray(key).put(new JSONObject()
-                                        .put("model", option.group(2).trim())
-                                        .put("codename", parts[0])
-                                        .put("model_sw_ver", parts[1]));
-                            }
-                        }
-                    }
+                    loaded.put(tab + ":" + series, arr);
                 }
-                
                 runOnUiThread(() -> {
                     catalog = loaded;
                     initializeTabData(TAB_PHONE, phoneCategorySpinner);
@@ -993,7 +1065,8 @@ public final class VivoActivity extends Activity {
         }
         Device device = devices.get(selectedDevice);
         queryDevice(device.model, device.codename, device.swVer, version, 
-                    phoneAndroidVersion, phonePackageType, phoneFullOrIncremental, phoneSerialInput);
+                    phoneAndroidVersion, phonePackageType, phoneFullOrIncremental,
+                    phoneSerialInput, phoneImeiInput, phoneDomainSpinner);
     }
 
     private void queryTabletTab() {
@@ -1011,7 +1084,8 @@ public final class VivoActivity extends Activity {
         }
         Device device = devices.get(selectedDevice);
         queryDevice(device.model, device.codename, device.swVer, version,
-                    tabletAndroidVersion, tabletPackageType, tabletFullOrIncremental, tabletSerialInput);
+                    tabletAndroidVersion, tabletPackageType, tabletFullOrIncremental,
+                    tabletSerialInput, null, tabletDomainSpinner);
     }
 
     private void queryManualTab() {
@@ -1035,7 +1109,8 @@ public final class VivoActivity extends Activity {
         manualVInput.setText(v);
         
         queryDevice("手动输入设备", pd, v, version,
-                    manualAndroidVersion, manualPackageType, manualFullOrIncremental, manualSerialInput);
+                    manualAndroidVersion, manualPackageType, manualFullOrIncremental,
+                    manualSerialInput, manualImeiInput, manualDomainSpinner);
     }
 
     private void queryWearableTab() {
@@ -1053,11 +1128,13 @@ public final class VivoActivity extends Activity {
         }
         Device device = devices.get(selectedDevice);
         queryDevice(device.model, device.codename, device.swVer, version,
-                    wearableAndroidVersion, wearablePackageType, wearableFullOrIncremental, wearableSerialInput);
+                    wearableAndroidVersion, wearablePackageType, wearableFullOrIncremental,
+                    wearableSerialInput, null, wearableDomainSpinner);
     }
 
     private void queryDevice(String modelName, String pd, String v, String version,
-                            Spinner androidSpinner, Spinner packageSpinner, Spinner fullOrIncrementalSpinner, EditText serialEdit) {
+                            Spinner androidSpinner, Spinner packageSpinner, Spinner fullOrIncrementalSpinner,
+                            EditText serialEdit, EditText imeiEdit, Spinner domainSpinner) {
         status.setText("正在查询 " + modelName + " 的官方更新...");
         results.removeAllViews();
         executor.execute(() -> {
@@ -1073,9 +1150,19 @@ public final class VivoActivity extends Activity {
                     // 手动输入默认按手机处理
                     isPhone = true;
                 }
+                // IMEI：手动填写优先，留空由客户端自动生成（同步自上游 ImeiSource 逻辑）
+                String imei = imeiEdit == null ? "" : imeiEdit.getText().toString().trim();
+                // 升级服务器域名：0=国行 CN（默认），1=海外 GLOBAL（同步自上游 Domain 枚举）
+                VivoOtaClient.Domain domain = (domainSpinner != null && domainSpinner.getSelectedItemPosition() == 1)
+                        ? VivoOtaClient.Domain.GLOBAL : VivoOtaClient.Domain.CN;
                 VivoOtaClient.VivoResult result = new VivoOtaClient(this).query(
-                        pd, v, version, android, isPhone, isFull, serial, channel);
-                runOnUiThread(() -> renderResult(modelName, pd, v, result, android, channel, version, isFull));
+                        pd, v, version, android, isPhone, isFull, serial, imei, channel, domain);
+                final boolean manualMode = (currentTab == 2);
+                final String domainName = domain.name();
+                runOnUiThread(() -> {
+                    renderResult(modelName, pd, v, result, android, channel, version, isFull, domainName);
+                    saveHistory(modelName, pd, v, version, android, isFull, channel.name(), domainName, manualMode, result);
+                });
             } catch (Exception error) {
                 runOnUiThread(() -> status.setText("查询失败: " + error.getMessage()));
             }
@@ -1093,7 +1180,8 @@ public final class VivoActivity extends Activity {
     }
 
     private void renderResult(String modelName, String pd, String v, VivoOtaClient.VivoResult result,
-                             int androidVer, VivoOtaClient.QueryChannel channel, String currentVersion, boolean isFull) {
+                             int androidVer, VivoOtaClient.QueryChannel channel, String currentVersion,
+                             boolean isFull, String domainName) {
         results.removeAllViews();
         
         // 如果没有完整下载链接但有文件名，则拼接下载链接
@@ -1152,6 +1240,17 @@ public final class VivoActivity extends Activity {
         }
         if (!result.updateTime.isEmpty()) {
             addPair(card, "更新时间", result.updateTime);
+        }
+        addPair(card, "升级服务器", "GLOBAL".equals(domainName) ? "海外服务器" : "国行服务器");
+
+        // 更新日志（同步自上游 ResultCard：changelogUrl 有效时提供 H5 日志正文查看）
+        if (!result.changelogUrl.isEmpty() && !"(Not found)".equals(result.changelogUrl)) {
+            Button changelogBtn = glassButton("查看更新日志", 13);
+            changelogBtn.setOnClickListener(v1 -> {
+                Haptics.perform(v1);
+                showChangelog(modelName, result.changelogUrl);
+            });
+            card.addView(changelogBtn, margins(-1, 44, 12, 0, 0));
         }
         
         if (available) {
@@ -1266,6 +1365,245 @@ public final class VivoActivity extends Activity {
         } else {
             startService(intent);
         }
+    }
+
+    // ===== 同步自 VIVO-OTA-Tracker：更新日志 / 查询历史 / 在线刷新机型库 =====
+
+    /** 更新日志弹窗（同步自上游 ResultCard / ChangelogScreen）：后台抓取 H5 日志并解析正文。 */
+    private void showChangelog(String modelName, String changelogUrl) {
+        TextView body = label("正在加载更新日志...", 13, 0xff334b66);
+        body.setLineSpacing(dp(3), 1f);
+        body.setTextIsSelectable(true);
+        body.setPadding(dp(20), dp(16), dp(20), dp(16));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(body);
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle(modelName + " · 更新日志")
+                .setView(scroll)
+                .setPositiveButton("关闭", null)
+                .setNeutralButton("浏览器打开", (d, w) -> {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(changelogUrl)));
+                    } catch (Exception ignored) { }
+                })
+                .show();
+        executor.execute(() -> {
+            String content = null;
+            try {
+                // 直接调用 Kotlin 客户端：更新日志抓取无需初始化加密
+                content = new com.mytiantian.updater.vivo.VivoOtaClient(getApplicationContext())
+                        .fetchChangelog(changelogUrl);
+            } catch (Exception ignored) { }
+            final String text = (content == null || content.isEmpty())
+                    ? "更新日志加载失败，可点击「浏览器打开」查看原页面" : content;
+            runOnUiThread(() -> body.setText(text));
+        });
+    }
+
+    /** 查询成功后保存历史（同步自上游 QueryHistoryEntry 字段，同签名去重、上限 20 条）。 */
+    private void saveHistory(String modelName, String pd, String v, String version, int android,
+                             boolean isFull, String channelName, String domainName, boolean manualMode,
+                             VivoOtaClient.VivoResult result) {
+        try {
+            org.json.JSONObject entry = new org.json.JSONObject()
+                    .put("timestamp", System.currentTimeMillis())
+                    .put("model", modelName)
+                    .put("codename", pd)
+                    .put("swVersion", version)
+                    .put("model_sw_ver", v)
+                    .put("resultVersion", result.version)
+                    .put("fileSize", result.size)
+                    .put("downloadUrl", result.downloadUrl)
+                    .put("channel", channelName)
+                    .put("querySoftwareVersion", version)
+                    .put("manualMode", manualMode)
+                    .put("manualCodename", manualMode ? pd : "")
+                    .put("manualModelSwVer", manualMode ? v : "")
+                    .put("manualModelName", manualMode ? modelName : "")
+                    .put("androidVersion", android)
+                    .put("deviceType", currentTab == 1 ? "tablet" : (currentTab == 3 ? "wearable" : "phone"))
+                    .put("isFullPackage", isFull)
+                    .put("queryChannel", channelName)
+                    .put("queryDomain", domainName)
+                    .put("changelogUrl", result.changelogUrl);
+            // 同签名去重：同条件查询只保留最新一条（与上游一致）
+            String sig = historySignature(entry);
+            for (int i = historyEntries.size() - 1; i >= 0; i--) {
+                if (sig.equals(historySignature(historyEntries.get(i)))) historyEntries.remove(i);
+            }
+            historyEntries.add(0, entry);
+            while (historyEntries.size() > HISTORY_MAX) historyEntries.remove(historyEntries.size() - 1);
+            persistHistory();
+            historyButton.setText("查询历史 (" + historyEntries.size() + ")");
+        } catch (Exception ignored) { }
+    }
+
+    private void persistHistory() {
+        try {
+            JSONArray arr = new JSONArray();
+            for (org.json.JSONObject e : historyEntries) arr.put(e);
+            getSharedPreferences(HISTORY_PREFS, MODE_PRIVATE).edit()
+                    .putString("entries", arr.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    private void loadHistory() {
+        try {
+            String raw = getSharedPreferences(HISTORY_PREFS, MODE_PRIVATE).getString("entries", "");
+            if (raw == null || raw.isEmpty()) return;
+            JSONArray arr = new JSONArray(raw);
+            for (int i = 0; i < arr.length() && historyEntries.size() < HISTORY_MAX; i++) {
+                historyEntries.add(arr.getJSONObject(i));
+            }
+            historyButton.setText("查询历史 (" + historyEntries.size() + ")");
+        } catch (Exception ignored) { }
+    }
+
+    /** 查询历史弹窗（同步自上游 HistoryCard）：点击条目一键回填表单，长按删除单条。 */
+    private void showHistoryDialog() {
+        if (historyEntries.isEmpty()) {
+            android.widget.Toast.makeText(this, "暂无查询历史", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(list);
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle("查询历史（点击回填 · 长按删除）")
+                .setView(scroll)
+                .setNegativeButton("清空全部", (d, w) -> {
+                    historyEntries.clear();
+                    persistHistory();
+                    historyButton.setText("查询历史 (0)");
+                })
+                .setPositiveButton("关闭", null)
+                .show();
+        java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.CHINA);
+        for (int i = 0; i < historyEntries.size(); i++) {
+            final org.json.JSONObject entry = historyEntries.get(i);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(16), dp(10), dp(16), dp(10));
+            row.setBackgroundResource(R.drawable.liquid_glass_panel);
+            TextView title = label(entry.optString("model") + " · " + entry.optString("resultVersion"), 14, 0xff20375b);
+            title.setTypeface(null, 1);
+            row.addView(title);
+            String pkg = entry.optBoolean("isFullPackage", true) ? "完整包" : "增量包";
+            String server = "GLOBAL".equals(entry.optString("queryDomain")) ? "海外" : "国行";
+            TextView meta = label(fmt.format(new java.util.Date(entry.optLong("timestamp")))
+                    + " · " + entry.optString("swVersion")
+                    + " · " + pkg + " · " + server, 11, 0xff596579);
+            LinearLayout.LayoutParams metaLp = new LinearLayout.LayoutParams(-1, -2);
+            metaLp.topMargin = dp(3);
+            row.addView(meta, metaLp);
+            row.setOnClickListener(v -> {
+                Haptics.perform(v);
+                dialog.dismiss();
+                backfillFromHistory(entry);
+            });
+            row.setOnLongClickListener(v -> {
+                Haptics.perform(v);
+                historyEntries.remove(entry);
+                persistHistory();
+                historyButton.setText("查询历史 (" + historyEntries.size() + ")");
+                dialog.dismiss();
+                showHistoryDialog();
+                return true;
+            });
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+            rowLp.topMargin = i == 0 ? 0 : dp(8);
+            list.addView(row, rowLp);
+        }
+    }
+
+    /** 历史条目一键回填（同步自上游）：切到对应页签并恢复全部查询条件。 */
+    private void backfillFromHistory(org.json.JSONObject e) {
+        boolean manual = e.optBoolean("manualMode");
+        String deviceType = e.optString("deviceType", "phone");
+        int tab = manual ? 2 : ("tablet".equals(deviceType) ? 1 : ("wearable".equals(deviceType) ? 3 : 0));
+        switchTab(tab);
+        String version = e.optString("querySoftwareVersion");
+        int android = e.optInt("androidVersion", 15);
+        int androidPos = Math.max(0, Math.min(5, 17 - android));
+        int channelPos = 0;
+        try {
+            channelPos = VivoOtaClient.QueryChannel.valueOf(
+                    e.optString("queryChannel", VivoOtaClient.QueryChannel.NORMAL.name())).ordinal();
+        } catch (IllegalArgumentException ignored) { }
+        boolean full = e.optBoolean("isFullPackage", true);
+        int domainPos = "GLOBAL".equals(e.optString("queryDomain")) ? 1 : 0;
+        if (tab == 2) {
+            manualPdInput.setText(e.optString("manualCodename"));
+            manualVInput.setText(e.optString("manualModelSwVer"));
+            manualVersionInput.setText(version);
+            manualAndroidVersion.setSelection(androidPos);
+            manualPackageType.setSelection(channelPos);
+            manualFullOrIncremental.setSelection(full ? 0 : 1);
+            manualDomainSpinner.setSelection(domainPos);
+            status.setText("已回填历史查询条件，可直接重新查询");
+            return;
+        }
+        Spinner category = tab == 1 ? tabletCategorySpinner : (tab == 3 ? wearableCategorySpinner : phoneCategorySpinner);
+        Spinner device = tab == 1 ? tabletDeviceSpinner : (tab == 3 ? wearableDeviceSpinner : phoneDeviceSpinner);
+        EditText verInput = tab == 1 ? tabletVersionInput : (tab == 3 ? wearableVersionInput : phoneVersionInput);
+        Spinner androidSp = tab == 1 ? tabletAndroidVersion : (tab == 3 ? wearableAndroidVersion : phoneAndroidVersion);
+        Spinner pkgSp = tab == 1 ? tabletPackageType : (tab == 3 ? wearablePackageType : phonePackageType);
+        Spinner fullSp = tab == 1 ? tabletFullOrIncremental : (tab == 3 ? wearableFullOrIncremental : phoneFullOrIncremental);
+        Spinner domainSp = tab == 1 ? tabletDomainSpinner : (tab == 3 ? wearableDomainSpinner : phoneDomainSpinner);
+        verInput.setText(version);
+        androidSp.setSelection(androidPos);
+        pkgSp.setSelection(channelPos);
+        fullSp.setSelection(full ? 0 : 1);
+        domainSp.setSelection(domainPos);
+        // 机型回填：在当前页签的分类里找 codename + model_sw_ver 匹配的条目
+        String tabKey = tab == 1 ? TAB_TABLET : (tab == 3 ? TAB_WEARABLE : TAB_PHONE);
+        String pd = e.optString("codename");
+        String swVer = e.optString("model_sw_ver");
+        List<String> categories = categoriesByTab.get(tabKey);
+        if (categories != null && catalog != null) {
+            outer:
+            for (int c = 0; c < categories.size(); c++) {
+                JSONArray arr = catalog.optJSONArray(tabKey + ":" + categories.get(c));
+                if (arr == null) continue;
+                for (int d = 0; d < arr.length(); d++) {
+                    org.json.JSONObject item = arr.optJSONObject(d);
+                    if (item != null && pd.equals(item.optString("codename"))
+                            && swVer.equals(item.optString("model_sw_ver"))) {
+                        final int devPos = d;
+                        final Spinner deviceSp = device;
+                        category.setSelection(c, true);
+                        // 等待分类联动刷新机型列表后再选中机型
+                        deviceSp.postDelayed(() -> {
+                            if (devPos < deviceSp.getCount()) deviceSp.setSelection(devPos, true);
+                        }, 150);
+                        break outer;
+                    }
+                }
+            }
+        }
+        status.setText("已回填历史查询条件，可直接重新查询");
+    }
+
+    /** 在线刷新机型库（同步自上游 VivoDeviceDatabase.refresh）：拉取最新 vivo 国行机型并合并缓存。 */
+    private void refreshCatalog() {
+        if (refreshCatalogButton != null) refreshCatalogButton.setEnabled(false);
+        status.setText("正在在线刷新机型库...");
+        executor.execute(() -> {
+            com.mytiantian.updater.vivo.VivoDeviceDatabase.RefreshResult r =
+                    com.mytiantian.updater.vivo.VivoDeviceDatabase.INSTANCE.refresh(this);
+            runOnUiThread(() -> {
+                if (refreshCatalogButton != null) refreshCatalogButton.setEnabled(true);
+                if (r == com.mytiantian.updater.vivo.VivoDeviceDatabase.RefreshResult.UPDATED) {
+                    android.widget.Toast.makeText(VivoActivity.this, "机型库已更新", android.widget.Toast.LENGTH_SHORT).show();
+                    loadCatalog();
+                } else if (r == com.mytiantian.updater.vivo.VivoDeviceDatabase.RefreshResult.UNCHANGED) {
+                    status.setText("机型库已是最新，无需更新");
+                } else {
+                    status.setText("机型库在线刷新失败，已保留本地数据");
+                }
+            });
+        });
     }
 
     private Button createTabButton(String text) {

@@ -127,14 +127,31 @@ public final class MiuiOtaActivity extends Activity {
             long total = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
             if (state != null && ("下载完成".equals(state)
                     || state.startsWith("下载失败")
-                    || state.startsWith("已暂停"))) {
+                    || state.startsWith("已暂停")
+                    || state.startsWith("下载已取消")
+                    || state.startsWith("正在下载"))) {
                 downloadStatus.setText(state);
+            }
+            // 通知栏侧「暂停/继续」操作 → 同步 APP 内按钮状态
+            if (state != null && state.startsWith("已暂停")) {
+                pauseDownload = true;
+                if (pauseDownloadButton != null) pauseDownloadButton.setText("继续");
+            } else if (state != null && state.startsWith("正在下载")) {
+                pauseDownload = false;
+                downloadFailed = false;
+                if (pauseDownloadButton != null) pauseDownloadButton.setText("暂停");
             }
             if (done >= 0 && total > 0) updateDownloadProgress(done, total);
             if ("下载完成".equals(state)) {
                 downloadProgress.setProgress(100);
                 downloadPercent.setText("100%");
                 downloadActionsRow.setVisibility(View.GONE);
+                clearDownloadState();
+            } else if (state != null && state.startsWith("下载已取消")) {
+                // 通知栏侧「取消」→ APP 内下载框同步关闭
+                cancelDownload = true;
+                downloadActionsRow.setVisibility(View.GONE);
+                downloadCard.setVisibility(View.GONE);
                 clearDownloadState();
             }
         }

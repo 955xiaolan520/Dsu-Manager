@@ -30,6 +30,7 @@ import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.view.ViewGroup;
 import android.widget.ProgressBar;
@@ -69,11 +70,26 @@ public final class RomActivity extends Activity {
     private static final String XM_HYPEROS_URL = "https://xmfirmwareupdater.com/hyperos/";
     private static final String XM_HYPEROS_ARCHIVE_URL = "https://xmfirmwareupdater.com/archive/hyperos/";
     private static final String XIAOMI_DOWNLOAD_BASE = "https://bigota.d.miui.com/";
+    // 设备清单在线数据源：HyperOS.fans 主源 + HyperData 官方仓库双镜像（全部自动获取，不再内置 TXT）
+    private static final String FANS_DEVICES_LIST_URL = "https://data.hyperos.fans/devices.json";
+    private static final String DEVICES_CDN_LIST_URL = "https://cdn.jsdelivr.net/gh/HegeKen/HyperData@main/devices.json";
+    // 官方系列分类（固定顺序展示，最新机型在各分类内排最后）
+    private static final String[] CATEGORY_ORDER = {
+            "全部设备",
+            "Xiaomi 数字系列",
+            "Xiaomi Civi 系列",
+            "Xiaomi MIX Fold / Flip 系列",
+            "小米平板系列",
+            "Redmi 数字 / A 系列",
+            "Redmi Note 系列",
+            "Redmi K / Turbo 系列",
+            "POCO 系列",
+    };
     private final List<Device> devices = new ArrayList<>();
     private TextView status;
     private LinearLayout results;
     private EditText search;
-    private Spinner category;
+    private Spinner category;   // 设备分类下拉（全部设备 + 各系列，图七/图八）
     private Spinner region;
     private Spinner node;
     private EditText customFilename;
@@ -88,11 +104,10 @@ public final class RomActivity extends Activity {
     private Button cancelDownloadButton;
     private LinearLayout downloadActionsRow;
     private ScrollView pageScroll;
-    private Thread downloadThread;
     private volatile boolean pauseDownload;
     private volatile boolean cancelDownload;
     private volatile boolean downloadFailed;
-    private Object activeDownload;  // JavaDownloader or Aria2Downloader
+    private volatile long lastAriaEta = -1;   // aria2c 实测剩余时间（秒）
     private boolean awaitingPermission;
     private String pendingAddress;
     private File pendingOutput;
@@ -114,16 +129,37 @@ public final class RomActivity extends Activity {
             String state = intent.getStringExtra(DownloadService.EXTRA_STATE);
             long done = intent.getLongExtra(DownloadService.EXTRA_DONE, -1);
             long total = intent.getLongExtra(DownloadService.EXTRA_TOTAL, -1);
+            long speed = intent.getLongExtra(DownloadService.EXTRA_SPEED, -1);
+            long eta = intent.getLongExtra(DownloadService.EXTRA_ETA, -1);
+            if (speed > 0) smoothedSpeed = speed;   // aria2c 实测速度直供 UI
+            if (eta >= 0) lastAriaEta = eta;
             if (state != null && ("下载完成".equals(state)
                     || state.startsWith("下载失败")
-                    || state.startsWith("已暂停"))) {
+                    || state.startsWith("已暂停")
+                    || state.startsWith("下载已取消")
+                    || state.startsWith("正在下载"))) {
                 downloadStatus.setText(state);
+            }
+            // 通知栏侧「暂停/继续」操作 → 同步 APP 内按钮状态
+            if (state != null && state.startsWith("已暂停")) {
+                pauseDownload = true;
+                if (pauseDownloadButton != null) pauseDownloadButton.setText("继续");
+            } else if (state != null && state.startsWith("正在下载")) {
+                pauseDownload = false;
+                downloadFailed = false;
+                if (pauseDownloadButton != null) pauseDownloadButton.setText("暂停");
             }
             if (done >= 0 && total > 0) updateDownloadProgress(done, total);
             if ("下载完成".equals(state)) {
                 downloadProgress.setProgress(100);
                 downloadPercent.setText("100%");
                 downloadActionsRow.setVisibility(View.GONE);
+                clearDownloadState();
+            } else if (state != null && state.startsWith("下载已取消")) {
+                // 通知栏侧「取消」→ APP 内下载框同步关闭
+                cancelDownload = true;
+                downloadActionsRow.setVisibility(View.GONE);
+                downloadCard.setVisibility(View.GONE);
                 clearDownloadState();
             }
         }
@@ -132,8 +168,13 @@ public final class RomActivity extends Activity {
     private Button versionToggle;
     private Device queriedDevice;
     private int queryGeneration;
-    private final List<String> categoryNames = new ArrayList<>();
-    private final List<String> deviceCategories = new ArrayList<>();
+    private final List<String> categoryNames = new ArrayList<>();   // 当前可用的系列分类（按官方顺序）
+    // 分类下拉 + 列表/宫格视图切换（图七/图八）
+    private boolean gridMode = false;              // false=列表视图，true=宫格视图
+    private Button listButton;                     // 列表切换按钮（供 styleViewToggle 刷新）
+    private Button gridButton;                     // 宫格切换按钮（供 styleViewToggle 刷新）
+    private String selectedCategoryName = "Xiaomi 数字系列";   // 首次进入默认显示 Xiaomi 数字系列
+    private boolean defaultSeriesApplied = false;  // 数字系列默认值只在首次加载清单时应用
 
     private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density + .5f); }
     
@@ -172,8 +213,9 @@ public final class RomActivity extends Activity {
         getWindow().setStatusBarColor(0x00000000);
         getWindow().setNavigationBarColor(0x220b131f);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        buildUi();
         downloadPrefs = getSharedPreferences("rom_download", MODE_PRIVATE);
+        gridMode = downloadPrefs.getBoolean("device_view_grid", false);
+        buildUi();
         loadDevices();
         restoreDownloadState();
     }
@@ -232,33 +274,39 @@ public final class RomActivity extends Activity {
         titleLp.setMargins(0, 0, 0, dp(16));
         content.addView(title, titleLp);
 
-        TextView source = label("HyperOS.fans 为主来源；HyperData、MiFirmware 和 XM 补充数据", 12, 0xff596579);
+        TextView source = label("设备清单自动获取：HyperOS.fans 主源 · HyperData 镜像 · 最新机型在前", 12, 0xff596579);
         source.setPadding(dp(12), dp(10), dp(12), dp(10));
         source.setBackgroundResource(R.drawable.liquid_glass_panel);
         LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(-1, -2);
         sourceLp.setMargins(0, 0, 0, dp(10));
         content.addView(source, sourceLp);
 
-        category = new Spinner(this);
-        category.setPrompt("设备分类");
+        // 设备分类 + 下载节点并排（全部设备与各系列合并进下拉框，像选择版本一样，图七/图八）
+        LinearLayout rowA = new LinearLayout(this);
+        rowA.setOrientation(LinearLayout.HORIZONTAL);
+        category = createSpinnerInRow("设备分类", new String[]{"全部设备"});
         category.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { filterDevices(); }
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                String name = position >= 0 && position < categoryNames.size()
+                        ? categoryNames.get(position) : "全部设备";
+                if (!name.equals(selectedCategoryName)) {
+                    selectedCategoryName = name;
+                    filterDevices();
+                }
+            }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         });
-        category.setBackgroundColor(android.graphics.Color.TRANSPARENT);
-        LiquidGlassPanel categoryShell = glass();
-        categoryShell.setPadding(dp(10), 0, dp(10), 0);
-        categoryShell.setOrientation(LinearLayout.HORIZONTAL);
-        categoryShell.addView(category, new LinearLayout.LayoutParams(0, dp(48), 1));
-        categoryShell.addView(dropdownArrow(), new LinearLayout.LayoutParams(dp(22), dp(48)));
-        LinearLayout.LayoutParams categoryLp = new LinearLayout.LayoutParams(-1, dp(52));
-        categoryLp.setMargins(0, dp(6), 0, 0);
-        content.addView(categoryShell, categoryLp);
+        rowA.addView((View) category.getParent(), new LinearLayout.LayoutParams(0, dp(52), 1));
+        rowA.addView(spacer(dp(12)), new LinearLayout.LayoutParams(dp(12), dp(52)));
+        node = createSpinnerInRow("下载节点", new String[]{"阿里云", "CDN.ORG", "HugeOTA", "BigOTA", "BN"});
+        rowA.addView((View) node.getParent(), new LinearLayout.LayoutParams(0, dp(52), 1));
+        LinearLayout.LayoutParams rowALp = new LinearLayout.LayoutParams(-1, dp(52));
+        rowALp.setMargins(0, dp(6), 0, 0);
+        content.addView(rowA, rowALp);
 
-        // 版本类型和下载节点放在同一行，使用独立方法避免自动添加到 root
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        
+        // 版本类型（正式版）+ 自定义下载文件名并排一行
+        LinearLayout rowB = new LinearLayout(this);
+        rowB.setOrientation(LinearLayout.HORIZONTAL);
         region = createSpinnerInRow("版本类型", new String[]{"正式版", "Beta", "演示机", "国际版", "EEA", "俄罗斯", "台湾", "印度", "印尼", "土耳其", "开发预览"});
         region.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
@@ -266,26 +314,18 @@ public final class RomActivity extends Activity {
             }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         });
-        row.addView((View)region.getParent(), new LinearLayout.LayoutParams(0, dp(52), 1));
-        
-        View spacer = new View(this);
-        row.addView(spacer, new LinearLayout.LayoutParams(dp(12), dp(52)));
-        
-        node = createSpinnerInRow("下载节点", new String[]{"阿里云", "CDN.ORG", "HugeOTA", "BigOTA", "BN"});
-        row.addView((View)node.getParent(), new LinearLayout.LayoutParams(0, dp(52), 1));
-        
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, dp(52));
-        rowLp.setMargins(0, dp(14), 0, 0);
-        content.addView(row, rowLp);
-        
+        rowB.addView((View) region.getParent(), new LinearLayout.LayoutParams(0, dp(52), 1));
+        rowB.addView(spacer(dp(12)), new LinearLayout.LayoutParams(dp(12), dp(52)));
         customFilename = new EditText(this);
         customFilename.setSingleLine(true);
         customFilename.setHint("自定义下载文件名（可选）");
+        customFilename.setTextSize(14);
         customFilename.setPadding(dp(14), 0, dp(14), 0);
         customFilename.setBackgroundResource(R.drawable.liquid_glass_panel);
-        LinearLayout.LayoutParams filenameLp = new LinearLayout.LayoutParams(-1, dp(50));
-        filenameLp.setMargins(0, dp(14), 0, 0);
-        content.addView(customFilename, filenameLp);
+        rowB.addView(customFilename, new LinearLayout.LayoutParams(0, dp(52), 1.25f));
+        LinearLayout.LayoutParams rowBLp = new LinearLayout.LayoutParams(-1, dp(52));
+        rowBLp.setMargins(0, dp(10), 0, 0);
+        content.addView(rowB, rowBLp);
 
         search = new EditText(this);
         search.setSingleLine(true);
@@ -298,12 +338,51 @@ public final class RomActivity extends Activity {
             @Override public void afterTextChanged(android.text.Editable s) { }
         });
         LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, dp(50));
-        searchLp.setMargins(0, dp(14), 0, dp(14));
+        searchLp.setMargins(0, dp(10), 0, dp(8));
         content.addView(search, searchLp);
 
+        // 统计信息（左）+ 列表/宫格视图切换（右下角，图七）
+        LinearLayout rowC = new LinearLayout(this);
+        rowC.setOrientation(LinearLayout.HORIZONTAL);
+        rowC.setGravity(Gravity.CENTER_VERTICAL);
         status = label("正在加载设备数据...", 13, 0xff596579);
-        status.setPadding(dp(12), dp(8), dp(12), dp(8));
-        content.addView(status, new LinearLayout.LayoutParams(-1, -2));
+        status.setMaxLines(2);
+        status.setLineSpacing(0, 1.05f);
+        rowC.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
+
+        LiquidGlassPanel viewToggle = glass();
+        viewToggle.setOrientation(LinearLayout.HORIZONTAL);
+        viewToggle.setPadding(dp(2), dp(3), dp(2), dp(3));
+        listButton = new Button(this);
+        listButton.setText("☰ 列表");
+        styleViewToggle(listButton, !gridMode);
+        listButton.setOnClickListener(v -> {
+            Haptics.perform(v);
+            if (!gridMode) return;
+            gridMode = false;
+            downloadPrefs.edit().putBoolean("device_view_grid", false).apply();
+            styleViewToggle(listButton, true);
+            styleViewToggle(gridButton, false);
+            filterDevices();
+        });
+        viewToggle.addView(listButton, new LinearLayout.LayoutParams(0, dp(36), 1));
+        gridButton = new Button(this);
+        gridButton.setText("▦ 宫格");
+        styleViewToggle(gridButton, gridMode);
+        gridButton.setOnClickListener(v -> {
+            Haptics.perform(v);
+            if (gridMode) return;
+            gridMode = true;
+            downloadPrefs.edit().putBoolean("device_view_grid", true).apply();
+            styleViewToggle(listButton, false);
+            styleViewToggle(gridButton, true);
+            filterDevices();
+        });
+        viewToggle.addView(gridButton, new LinearLayout.LayoutParams(0, dp(36), 1));
+        LinearLayout.LayoutParams toggleLp = new LinearLayout.LayoutParams(dp(118), dp(40));
+        toggleLp.leftMargin = dp(10);
+        rowC.addView(viewToggle, toggleLp);
+        content.addView(rowC, new LinearLayout.LayoutParams(-1, -2));
 
         downloadCard = glass();
         downloadCard.setOrientation(LinearLayout.VERTICAL);
@@ -473,6 +552,13 @@ public final class RomActivity extends Activity {
         return arrow;
     }
 
+    /** 行内占位空隙 */
+    private View spacer(int widthDp) {
+        View view = new View(this);
+        view.setLayoutParams(new LinearLayout.LayoutParams(dp(widthDp), 1));
+        return view;
+    }
+
     private Button downloadButton(String text) {
         Button button = new Button(this);
         button.setText(text);
@@ -506,76 +592,230 @@ public final class RomActivity extends Activity {
         }
     }
 
+    /**
+     * 加载设备清单：完全在线自动获取（不再内置 TXT）。
+     * 数据源依次尝试：HyperOS.fans 主源 → HyperData GitHub → jsDelivr CDN 镜像；
+     * 成功后写入本地缓存，下次启动秒开；全部失败时回退缓存数据。
+     */
     private void loadDevices() {
-        new Thread(() -> {
+        String cached = downloadPrefs.getString("device_catalog_v2", "");
+        if (!cached.isEmpty()) {
             try {
-                // 从 raw 资源读取小米设备清单
-                java.io.InputStream inputStream = getResources().openRawResource(R.raw.xiaomi_devices);
-                BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
-                Pattern action = Pattern.compile("<title>([^<]+)</title>");
-                Pattern option = Pattern.compile("<option value=\"([^\"]+)\">([^<]+)</option>");
-                String currentCategory = "";
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    Matcher actionMatch = action.matcher(line);
-                    if (actionMatch.find() && actionMatch.group(1).contains("OTA")) {
-                        currentCategory = actionMatch.group(1).trim();
-                        categoryNames.add(currentCategory);
-                    }
-                    Matcher optionMatch = option.matcher(line);
-                    if (optionMatch.find() && !currentCategory.isEmpty() && !optionMatch.group(1).equals("正式版")
-                            && !optionMatch.group(1).equals("Beta") && !optionMatch.group(1).equals("Recovery")
-                            && !optionMatch.group(1).equals("Fastboot") && !optionMatch.group(1).equals("全部")
-                            && !optionMatch.group(1).equals("query") && !optionMatch.group(1).equals("download")
-                            && !optionMatch.group(1).equals("bigota") && !optionMatch.group(1).equals("cdnorg")
-                            && !optionMatch.group(1).equals("bn") && !optionMatch.group(1).equals("hugeota")
-                            && !optionMatch.group(1).equals("aliyun") && !optionMatch.group(1).equals("all")) {
-                        devices.add(new Device(optionMatch.group(1).trim(), new JSONObject().put("zh", optionMatch.group(2).trim())));
-                        deviceCategories.add(currentCategory);
-                    }
+                JSONObject cachedRoot = new JSONObject(cached);
+                if (applyDeviceCatalog(cachedRoot)) {
+                    status.setText("已加载缓存清单，正在在线刷新...");
                 }
-                reader.close();
-                runOnUiThread(() -> {
-                    category.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, categoryNames));
-                    status.setText("已加载 " + categoryNames.size() + " 个分类、" + devices.size() + " 个设备");
-                    filterDevices();
-                });
-            } catch (Exception error) {
-                runOnUiThread(() -> status.setText("设备数据加载失败，请检查网络: " + error.getMessage()));
+            } catch (Exception ignored) { }
+        }
+        new Thread(() -> {
+            String[] sources = {FANS_DEVICES_LIST_URL, DEVICES_URL, DEVICES_CDN_LIST_URL};
+            for (String source : sources) {
+                try {
+                    String body = request(source);
+                    JSONObject root = new JSONObject(body);
+                    if (!root.keys().hasNext()) continue;
+                    downloadPrefs.edit().putString("device_catalog_v2", body).apply();
+                    runOnUiThread(() -> applyDeviceCatalog(root));
+                    return;
+                } catch (Exception ignored) { }
             }
-        }).start();
+            runOnUiThread(() -> {
+                if (devices.isEmpty()) status.setText("设备清单获取失败，请检查网络后重试");
+                else status.setText("在线刷新失败，当前显示缓存清单");
+            });
+        }, "device-catalog").start();
+    }
+
+    /**
+     * 解析 HyperData / HyperOS.fans 设备清单 JSON，按系列归类并排序（最新机型最后）。
+     */
+    private boolean applyDeviceCatalog(JSONObject root) {
+        if (root == null) return false;
+        List<Device> parsed = new ArrayList<>();
+        java.util.Iterator<String> groupKeys = root.keys();
+        int index = 0;
+        while (groupKeys.hasNext()) {
+            String groupKey = groupKeys.next();
+            JSONObject group = root.optJSONObject(groupKey);
+            if (group == null) continue;
+            String brand = group.optString("brand", groupKey);
+            JSONArray groupDevices = group.optJSONArray("devices");
+            if (groupDevices == null) continue;
+            for (int i = 0; i < groupDevices.length(); i++) {
+                JSONObject item = groupDevices.optJSONObject(i);
+                if (item == null) continue;
+                String code = item.optString("code", "").trim().toLowerCase(Locale.ROOT);
+                if (code.isEmpty()) continue;
+                JSONObject nameObj = item.optJSONObject("name");
+                JSONObject seriesObj = item.optJSONObject("series");
+                Device device = new Device(code, nameObj == null ? new JSONObject() : nameObj);
+                device.nameZh = nameObj == null ? code : nameObj.optString("zh", code);
+                device.nameEn = nameObj == null ? code : nameObj.optString("en", code);
+                device.series = seriesObj == null ? "" : seriesObj.optString("zh", "");
+                device.group = groupKey;
+                device.brand = brand;
+                device.category = classifyDevice(groupKey, brand, device.series, device.nameZh);
+                device.osScore = maxOsScore(item.optJSONArray("supports"));
+                device.androidScore = maxAndroidScore(item.optJSONArray("android"));
+                device.fileIndex = index++;
+                parsed.add(device);
+            }
+        }
+        if (parsed.isEmpty()) return false;
+        devices.clear();
+        devices.addAll(parsed);
+        // 最新机型排在最前（图三）：最新支持的 OS 大版本 > Android 版本 > 清单顺序（越大越新的靠前）
+        devices.sort((left, right) -> {
+            int byOs = Float.compare(right.osScore, left.osScore);
+            if (byOs != 0) return byOs;
+            int byAndroid = Float.compare(right.androidScore, left.androidScore);
+            if (byAndroid != 0) return byAndroid;
+            return Integer.compare(right.fileIndex, left.fileIndex);
+        });
+        buildCategoryChips();
+        filterDevices();
+        return true;
+    }
+
+    /** 系列 → 官方九大分类 */
+    private String classifyDevice(String groupKey, String brand, String series, String name) {
+        String value = series == null ? "" : series;
+        String lower = value.toLowerCase(Locale.ROOT);
+        if (value.contains("平板") || lower.contains("pad")) return "小米平板系列";
+        if (value.contains("Civi") || lower.contains("civi")) return "Xiaomi Civi 系列";
+        if (value.contains("MIX") || lower.contains("mix") || lower.contains("fold") || lower.contains("flip"))
+            return "Xiaomi MIX Fold / Flip 系列";
+        if ("poco".equalsIgnoreCase(groupKey) || value.contains("POCO") || lower.contains("poco")) return "POCO 系列";
+        if (value.contains("Note")) return "Redmi Note 系列";
+        if (value.contains("Turbo") || value.contains("K系列") || value.contains("K 系列"))
+            return "Redmi K / Turbo 系列";
+        if ("redmi".equalsIgnoreCase(groupKey) || "REDMI".equalsIgnoreCase(brand)
+                || lower.startsWith("redmi")) return "Redmi 数字 / A 系列";
+        return "Xiaomi 数字系列";
+    }
+
+    /** supports 数组里的最大 OS 版本，如 OS3.0 → 3.0 */
+    private float maxOsScore(JSONArray supports) {
+        float best = 0f;
+        if (supports == null) return best;
+        Pattern pattern = Pattern.compile("OS\\s*(\\d+(?:\\.\\d+)?)");
+        for (int i = 0; i < supports.length(); i++) {
+            Matcher matcher = pattern.matcher(supports.optString(i, "").toUpperCase(Locale.ROOT));
+            if (matcher.find()) {
+                try { best = Math.max(best, Float.parseFloat(matcher.group(1))); } catch (Exception ignored) { }
+            }
+        }
+        return best;
+    }
+
+    /** android 数组里的最大 Android 版本，如 15.0 → 15 */
+    private float maxAndroidScore(JSONArray androidVersions) {
+        float best = 0f;
+        if (androidVersions == null) return best;
+        for (int i = 0; i < androidVersions.length(); i++) {
+            try { best = Math.max(best, Float.parseFloat(androidVersions.optString(i, "0"))); }
+            catch (Exception ignored) { }
+        }
+        return best;
+    }
+
+    /** 刷新设备分类下拉框（全部设备 + 实际存在的系列，像选择版本一样的下拉） */
+    private void buildCategoryChips() {
+        if (category == null) return;
+        java.util.Set<String> present = new HashSet<>();
+        for (Device device : devices) present.add(device.category);
+        categoryNames.clear();
+        for (String name : CATEGORY_ORDER) {
+            if ("全部设备".equals(name) || present.contains(name)) categoryNames.add(name);
+        }
+        if (!categoryNames.contains(selectedCategoryName)) {
+            // 首次进入默认显示 Xiaomi 数字系列；之后用户选择失效时回退到全部设备
+            if (!defaultSeriesApplied && categoryNames.contains("Xiaomi 数字系列")) {
+                selectedCategoryName = "Xiaomi 数字系列";
+            } else {
+                selectedCategoryName = "全部设备";
+            }
+        }
+        defaultSeriesApplied = true;
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, categoryNames);
+        category.setAdapter(adapter);
+        int position = categoryNames.indexOf(selectedCategoryName);
+        if (position >= 0) category.setSelection(position, false);
     }
 
     private void filterDevices() {
         if (results == null) return;
         queryGeneration++;
         queriedDevice = null;
-        String query = search == null ? "" : search.getText().toString().trim().toLowerCase(Locale.ROOT);
-        int selectedCategory = category == null ? -1 : category.getSelectedItemPosition();
         results.removeAllViews();
+        if (devices.isEmpty()) {
+            status.setText("设备清单加载中，请稍候...");
+            return;
+        }
+        String query = search == null ? "" : search.getText().toString().trim().toLowerCase(Locale.ROOT);
+        String currentCode = android.os.Build.DEVICE.toLowerCase(Locale.ROOT);
+        List<Device> matched = new ArrayList<>();
+        for (Device device : devices) {
+            if (!"全部设备".equals(selectedCategoryName) && !selectedCategoryName.equals(device.category)) continue;
+            if (!query.isEmpty()
+                    && !device.nameZh.toLowerCase(Locale.ROOT).contains(query)
+                    && !device.nameEn.toLowerCase(Locale.ROOT).contains(query)
+                    && !device.code.contains(query)) continue;
+            matched.add(device);
+        }
         int shown = 0;
         boolean exactCodeShown = false;
-        String currentCode = android.os.Build.DEVICE.toLowerCase(Locale.ROOT);
-        for (int index = 0; index < devices.size(); index++) {
-            Device device = devices.get(index);
-            if (selectedCategory >= 0 && (index >= deviceCategories.size() || !categoryNames.get(selectedCategory).equals(deviceCategories.get(index)))) continue;
-            String name = device.name.optString("zh", device.code);
-            if (!query.isEmpty() && !name.toLowerCase(Locale.ROOT).contains(query) && !device.code.contains(query)) continue;
-            addDeviceCard(device, device.code.equals(currentCode));
+        LinearLayout gridRow = null;
+        // 列表模式：顶部系列标题卡片（图八：分类名 + 机型数 · 最新在后）
+        if (!gridMode && !matched.isEmpty()) {
+            LiquidGlassPanel header = glass();
+            header.setOrientation(LinearLayout.VERTICAL);
+            header.setPadding(dp(16), dp(12), dp(16), dp(10));
+            header.setBackgroundResource(R.drawable.liquid_glass_panel);
+            TextView catTitle = label(selectedCategoryName, 18, 0xff1f3155);
+            catTitle.setTypeface(null, 1);
+            header.addView(catTitle, new LinearLayout.LayoutParams(-1, -2));
+            TextView catCount = label(matched.size() + " 款机型 · 最新在前", 12, 0xff65738b);
+            LinearLayout.LayoutParams ccLp = new LinearLayout.LayoutParams(-1, -2);
+            ccLp.topMargin = dp(2);
+            header.addView(catCount, ccLp);
+            LinearLayout.LayoutParams headerLp = new LinearLayout.LayoutParams(-1, -2);
+            headerLp.bottomMargin = dp(10);
+            results.addView(header, headerLp);
+        }
+        for (Device device : matched) {
+            boolean current = device.code.equals(currentCode);
+            if (gridMode) {
+                if (shown % 2 == 0) {
+                    gridRow = new LinearLayout(this);
+                    gridRow.setOrientation(LinearLayout.HORIZONTAL);
+                    LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+                    rowLp.bottomMargin = dp(10);
+                    results.addView(gridRow, rowLp);
+                }
+                addDeviceTile(gridRow, device, current, shown % 2 == 1);
+            } else {
+                addDeviceCard(device, current);
+            }
             if (!query.isEmpty() && device.code.equalsIgnoreCase(query)) exactCodeShown = true;
-            if (++shown >= 30) break;
+            shown++;
         }
         String manualCode = normalizeDeviceCode(query);
         if (!manualCode.isEmpty() && !exactCodeShown) {
             JSONObject manualName = new JSONObject();
             try { manualName.put("zh", "直接查询设备代号 " + manualCode); } catch (Exception ignored) { }
             Device manualDevice = new Device(manualCode, manualName);
+            manualDevice.nameZh = "直接查询设备代号 " + manualCode;
+            manualDevice.nameEn = manualCode;
+            manualDevice.category = "全部设备";
             addDeviceCard(manualDevice, manualCode.equals(currentCode));
-            status.setText("可直接查询网站中的设备代号 " + manualCode);
             shown++;
-        } else if (shown == 0) {
-            status.setText("没有匹配的设备");
         }
+        String scope = "全部设备".equals(selectedCategoryName) ? "全部系列" : selectedCategoryName;
+        status.setText(query.isEmpty()
+                ? scope + " · 共 " + matched.size() + " 台 · 最新机型在前"
+                : "“" + query + "” 匹配 " + matched.size() + " 台设备");
     }
 
     private String normalizeDeviceCode(String value) {
@@ -583,47 +823,136 @@ public final class RomActivity extends Activity {
         return code.matches("[a-z0-9][a-z0-9._-]{1,63}") ? code : "";
     }
 
+    /** 视图切换按钮样式：选中项蓝色填充，未选中半透玻璃 */
+    private void styleViewToggle(Button button, boolean active) {
+        button.setAllCaps(false);
+        button.setTextSize(12.5f);
+        button.setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setPadding(0, 0, 0, 0);
+        button.setStateListAnimator(null);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(14));
+        if (active) {
+            bg.setColor(0xff2f6fd8);
+            button.setTextColor(0xffffffff);
+        } else {
+            bg.setColor(0x00000000);
+            button.setTextColor(0xff41628f);
+        }
+        button.setBackground(bg);
+    }
+
+    /** 列表视图卡片（图三）：左侧系列标签徽章 + 机型名/代号 + 右侧「查看」按钮 */
     private void addDeviceCard(Device device, boolean current) {
         LiquidGlassPanel card = glass();
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(10), dp(14), dp(10));
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(12), dp(9), dp(9), dp(9));
         card.setBackgroundResource(R.drawable.liquid_glass_panel);
-        TextView name = label(device.name.optString("zh", device.code) + (current ? "  · 当前设备" : ""), 16, 0xff1f3155);
+
+        // 左侧系列标签徽章（图三）：分类名小圆角标签
+        String badgeText = device.category == null || device.category.isEmpty()
+                ? device.series : device.category;
+        if (badgeText != null && !badgeText.isEmpty()) {
+            TextView badge = new TextView(this);
+            badge.setText(badgeText);
+            badge.setTextSize(10.5f);
+            badge.setTextColor(0xff3d6fe0);
+            badge.setTypeface(null, 1);
+            badge.setMaxLines(1);
+            badge.setPadding(dp(8), dp(4), dp(8), dp(4));
+            GradientDrawable badgeBg = new GradientDrawable();
+            badgeBg.setColor(0x1a2f6fd8);
+            badgeBg.setCornerRadius(dp(9));
+            badgeBg.setStroke(Math.max(1, dp(1)), 0x2e2f6fd8);
+            badge.setBackground(badgeBg);
+            LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(-2, -2);
+            badgeLp.rightMargin = dp(10);
+            card.addView(badge, badgeLp);
+        }
+
+        // 中间信息：机型名 + 代号
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        TextView name = label(device.nameZh + (current ? " · 本机" : ""), 15, 0xff1f3155);
+        name.setTypeface(null, 1);
+        name.setMaxLines(1);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        info.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        String subtitle = device.code + (device.series.isEmpty() ? "" : " · " + device.series);
+        TextView code = label(subtitle, 12, 0xff65738b);
+        code.setTextSize(11.5f);
+        code.setMaxLines(1);
+        code.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams codeLp = new LinearLayout.LayoutParams(-1, -2);
+        codeLp.topMargin = dp(2);
+        info.addView(code, codeLp);
+        LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(0, -2, 1);
+        card.addView(info, infoLp);
+
+        // 右侧「查看」按钮（图三）
+        Button query = new Button(this);
+        query.setText("查看");
+        query.setAllCaps(false);
+        query.setTextSize(13.5f);
+        query.setTypeface(null, 1);
+        query.setTextColor(0xff1a4a8a);
+        query.setMinWidth(0);
+        query.setMinHeight(0);
+        query.setPadding(dp(16), 0, dp(16), 0);
+        query.setStateListAnimator(null);
+        query.setBackgroundResource(R.drawable.liquid_glass_panel);
+        query.setOnClickListener(v -> {
+            Haptics.perform(v);
+            v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(90).withEndAction(() ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(110).start()).start();
+            loadRecent(device);
+        });
+        card.addView(query, new LinearLayout.LayoutParams(-2, dp(40)));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, 0, 0, dp(8));
+        results.addView(card, lp);
+    }
+
+    /** 宫格视图磁贴：双列紧凑卡片，整块点击即查询 */
+    private void addDeviceTile(LinearLayout row, Device device, boolean current, boolean right) {
+        LiquidGlassPanel tile = glass();
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setPadding(dp(12), dp(12), dp(12), dp(12));
+        tile.setBackgroundResource(R.drawable.liquid_glass_panel);
+        tile.setOnClickListener(v -> {
+            Haptics.perform(v);
+            v.animate().scaleX(0.93f).scaleY(0.93f).setDuration(90).withEndAction(() ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(110).start()).start();
+            loadRecent(device);
+        });
+        TextView name = label(device.nameZh + (current ? " ·本机" : ""), 14, 0xff1f3155);
+        name.setTextSize(13.5f);
         name.setTypeface(null, 1);
         name.setMaxLines(2);
         name.setLineSpacing(0, 1.05f);
-        card.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        TextView code = label("设备代号: " + device.code, 12, 0xff65738b);
-        code.setMaxLines(2);
-        code.setLineSpacing(0, 1.05f);
+        name.setMinLines(2);
+        tile.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        TextView code = label(device.code, 11, 0xff65738b);
+        code.setMaxLines(1);
+        code.setEllipsize(android.text.TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams codeLp = new LinearLayout.LayoutParams(-1, -2);
         codeLp.topMargin = dp(4);
-        card.addView(code, codeLp);
-        Button updates = new Button(this);
-        updates.setText("查询最新版本");
-        updates.setAllCaps(false);
-        updates.setTextColor(0xff1a237e); // 深蓝色文字，对比度高
-        updates.setTextSize(16);
-        updates.setTypeface(null, 1);
-        updates.setOnClickListener(v -> { 
-            Haptics.perform(v); 
-            // 点击时添加缩放动画
-            v.animate().scaleX(0.95f).scaleY(0.95f).setDuration(100).withEndAction(() -> {
-                v.animate().scaleX(1.05f).scaleY(1.05f).setDuration(100).withEndAction(() -> {
-                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start();
-                }).start();
-            }).start();
-            loadRecent(device); 
-        });
-        // 使用液态玻璃背景
-        updates.setBackgroundResource(R.drawable.liquid_glass_panel);
-        updates.setElevation(dp(6));
-        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-1, dp(48));
-        updateLp.setMargins(0, dp(10), 0, 0);
-        card.addView(updates, updateLp);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, dp(6), 0, dp(18));
-        results.addView(card, lp);
+        tile.addView(code, codeLp);
+        if (!device.series.isEmpty()) {
+            TextView series = label(device.series, 10, 0xff3f79c8);
+            series.setMaxLines(1);
+            series.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams seriesLp = new LinearLayout.LayoutParams(-1, -2);
+            seriesLp.topMargin = dp(2);
+            tile.addView(series, seriesLp);
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
+        if (right) lp.leftMargin = dp(8); else lp.rightMargin = dp(8);
+        row.addView(tile, lp);
     }
 
     private void loadRecent(Device device) {
@@ -1559,10 +1888,6 @@ public final class RomActivity extends Activity {
                 ? sourceName
                 : (filename.toLowerCase(Locale.ROOT).endsWith(extension) ? filename : filename + extension);
         File output = new File(downloadDir, downloadFile);
-        if (downloadThread != null && downloadThread.isAlive()) {
-            status.setText("已有下载任务正在运行");
-            return;
-        }
         downloadFileTitle.setText("正在下载: " + output.getName());
         downloadStatus.setText("下载");
         downloadPath.setText("保存到: " + output.getAbsolutePath());
@@ -1642,6 +1967,7 @@ public final class RomActivity extends Activity {
         File output = pendingOutput;
         String packageType = pendingPackageType;
         if (address == null || output == null) return;
+        // 通知权限统一在引导页（APP 首页引导）授权，此处不再弹出任何授权弹窗
         boolean retrying = downloadFailed;
         pauseDownload = false;
         cancelDownload = false;
@@ -1692,7 +2018,7 @@ public final class RomActivity extends Activity {
         if (address.isEmpty() || outputPath.isEmpty()) return;
         File output = new File(outputPath);
         File partial = new File(output.getParentFile(), output.getName() + ".download");
-        File control = new File(output.getParentFile(), output.getName() + ".ctrl");
+        File control = new File(output.getParentFile(), output.getName() + ".aria2");
         if (!output.isFile() && !partial.isFile() && !control.isFile()) {
             clearDownloadState();
             return;
@@ -1705,7 +2031,7 @@ public final class RomActivity extends Activity {
         downloadActionsRow.setVisibility(View.VISIBLE);
         preservedDownloadScrollY = pageScroll == null ? 0 : pageScroll.getScrollY();
         if (output.isFile()) {
-            JavaDownloader.deleteCheckpointFiles(output);
+            Aria2Downloader.deleteCheckpointFiles(output);
             downloadStatus.setText("下载完成");
             downloadPercent.setText("100%");
             downloadProgress.setProgress(100);
@@ -1715,7 +2041,7 @@ public final class RomActivity extends Activity {
         }
         boolean paused = downloadPrefs.getBoolean("paused", true);
         String message = downloadPrefs.getString("message", "等待恢复下载");
-        long[] savedProgress = JavaDownloader.readSavedProgress(output);
+        long[] savedProgress = Aria2Downloader.readSavedProgress(output);
         long savedDone = savedProgress[0] >= 0 ? savedProgress[0] : downloadPrefs.getLong("done", 0);
         long savedTotal = savedProgress[1] > 0 ? savedProgress[1] : downloadPrefs.getLong("total", -1);
         persistedDone = savedDone;
@@ -1741,78 +2067,8 @@ public final class RomActivity extends Activity {
         else startService(intent);
     }
 
-    private void runDownloadSession(String address, File output) {
-        JavaDownloader.Listener listener = new JavaDownloader.Listener() {
-            @Override public void onState(String text) {
-                if (!cancelDownload) runOnUiThread(() -> {
-                    downloadStatus.setText(text);
-                    saveDownloadState(pauseDownload, text);
-                });
-            }
-            @Override public void onProgress(long done, long total) {
-                if (!cancelDownload) runOnUiThread(() -> updateDownloadProgress(done, total));
-            }
-            @Override public void onError(String message) {
-                runOnUiThread(() -> {
-                    if (cancelDownload) return;
-                    downloadFailed = true;
-                    downloadPercent.setText("失败");
-                    downloadActionsRow.setVisibility(View.VISIBLE);
-                    pauseDownloadButton.setText("重试");
-                    pauseDownloadButton.setEnabled(true);
-                    cancelDownloadButton.setText("取消");
-                    downloadStatus.setText("下载失败: " + message);
-                    downloadCard.setVisibility(View.VISIBLE);
-                    saveDownloadState(false, "下载失败: " + message);
-                });
-            }
-            @Override public void onComplete(File completed) {
-                runOnUiThread(() -> {
-                    if (cancelDownload) return;
-                    downloadProgress.setProgress(100);
-                    downloadPercent.setText("100%");
-                    downloadStatus.setText("下载完成");
-                    downloadBytes.setText("已下载完成，文件保存在 " + completed.getAbsolutePath());
-                    downloadActionsRow.setVisibility(View.GONE);
-                    downloadFailed = false;
-                    clearDownloadState();
-                });
-            }
-        };
-        while (true) {
-            if (cancelDownload) break;
-            synchronized (downloadLock) {
-                while (pauseDownload && !cancelDownload) {
-                    try { downloadLock.wait(); } catch (InterruptedException ignored) { }
-                }
-            }
-            if (cancelDownload) break;
-            OkHttpDownloader downloader = new OkHttpDownloader(address, output, listener);
-            synchronized (downloadLock) { activeDownload = downloader; }
-            try {
-                downloader.run();
-            } finally {
-                synchronized (downloadLock) { activeDownload = null; }
-            }
-            if (pauseDownload && !cancelDownload) {
-                runOnUiThread(() -> {
-                    pauseDownloadButton.setText("继续");
-                    downloadStatus.setText("已暂停，点击继续可断点续传");
-                    saveDownloadState(true, "已暂停，点击继续可断点续传");
-                });
-                continue;
-            }
-            break;
-        }
-        if (cancelDownload) {
-            JavaDownloader.deletePartialFiles(output);
-            runOnUiThread(() -> {
-                downloadActionsRow.setVisibility(View.GONE);
-                downloadCard.setVisibility(View.GONE);
-                status.setText("下载已取消，缓存已清除");
-            });
-        }
-    }
+    // 下载执行已全部收敛到 DownloadService + Aria2Downloader（aria2c 多线程引擎），
+    // Activity 仅负责 UI 展示与指令下发。
 
     private void updateDownloadProgress(long downloaded, long total) {
         int percent = total > 0 ? (int) (downloaded * 100 / total) : 0;
@@ -1828,14 +2084,16 @@ public final class RomActivity extends Activity {
         }
         long elapsed = now - speedWindowTime;
         long delta = downloaded - speedWindowBytes;
+        // aria2c 速度广播（每秒）优先；无广播时回退到字节增量测速
         if (elapsed >= 2000 && delta >= 0) {
             long measured = delta * 1000L / elapsed;
-            smoothedSpeed = smoothedSpeed == 0 ? measured : (smoothedSpeed * 3 + measured) / 4;
+            if (measured > 0) smoothedSpeed = smoothedSpeed == 0 ? measured : (smoothedSpeed * 3 + measured) / 4;
             speedWindowBytes = downloaded;
             speedWindowTime = now;
         }
         if (!pauseDownload && total > downloaded) {
-            long remainingSeconds = smoothedSpeed > 0 ? (total - downloaded) / smoothedSpeed : -1;
+            long remainingSeconds = lastAriaEta >= 0 ? lastAriaEta
+                    : (smoothedSpeed > 0 ? (total - downloaded) / smoothedSpeed : -1);
             downloadStatus.setText("预计剩余 " + formatRemainingTime(remainingSeconds));
         }
         String speed = smoothedSpeed > 0 ? " · " + formatBytes(smoothedSpeed) + "/s" : "";
@@ -1847,15 +2105,6 @@ public final class RomActivity extends Activity {
 
     private void continueDownload() {
         if (pageScroll != null) preservedDownloadScrollY = pageScroll.getScrollY();
-        if (downloadThread == null || !downloadThread.isAlive()) {
-            preserveDownloadScroll = true;
-            startDownload();
-            return;
-        }
-        synchronized (downloadLock) {
-            pauseDownload = false;
-            downloadLock.notifyAll();
-        }
         sendDownloadCommand(DownloadService.ACTION_RESUME);
         runOnUiThread(() -> {
             pauseDownloadButton.setText("暂停");
@@ -1865,10 +2114,6 @@ public final class RomActivity extends Activity {
     }
 
     private void restartDownload() {
-        if (downloadThread != null && downloadThread.isAlive()) {
-            downloadStatus.setText("正在结束上一个下载任务...");
-            return;
-        }
         if (pendingAddress == null || pendingOutput == null) return;
         startDownload();
     }
@@ -1943,6 +2188,15 @@ public final class RomActivity extends Activity {
     private static final class Device {
         final String code;
         final JSONObject name;
+        String nameZh = "";
+        String nameEn = "";
+        String series = "";
+        String group = "";
+        String brand = "";
+        String category = "";
+        float osScore = 0f;       // 最新支持的 HyperOS 大版本
+        float androidScore = 0f;  // 最新 Android 版本
+        int fileIndex = 0;        // 清单顺序（越大越新）
         Device(String code, JSONObject name) { this.code = code; this.name = name == null ? new JSONObject() : name; }
     }
     

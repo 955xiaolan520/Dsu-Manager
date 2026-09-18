@@ -5,6 +5,8 @@ import com.mytiantian.updater.vivo.VivoOtaResult;
 
 final class VivoOtaClient {
     enum QueryChannel { NORMAL, TRIAL, BETA, ALPHA }
+    /** 可选择的升级服务器域名（与 Kotlin 端 Domain 枚举一一对应）。 */
+    enum Domain { CN, GLOBAL }
     private final Context context;
     private final com.mytiantian.updater.vivo.VivoOtaClient kotlinClient;
 
@@ -18,8 +20,8 @@ final class VivoOtaClient {
     }
 
     VivoResult query(String codename, String modelSwVer, String swVersion, int androidVersion,
-                     boolean isPhone, boolean isFull, String serial,
-                     QueryChannel channel) throws Exception {
+                     boolean isPhone, boolean isFull, String serial, String imei,
+                     QueryChannel channel, Domain domain) throws Exception {
         // 将 Java QueryChannel 转换为 Kotlin QueryChannel
         com.mytiantian.updater.vivo.VivoOtaClient.QueryChannel kotlinChannel;
         switch (channel) {
@@ -38,8 +40,11 @@ final class VivoOtaClient {
             default:
                 throw new IllegalArgumentException("Unknown channel: " + channel);
         }
+        com.mytiantian.updater.vivo.VivoOtaClient.Domain kotlinDomain = domain == Domain.GLOBAL
+                ? com.mytiantian.updater.vivo.VivoOtaClient.Domain.GLOBAL
+                : com.mytiantian.updater.vivo.VivoOtaClient.Domain.CN;
 
-        // 调用 Kotlin 实现
+        // 调用 Kotlin 实现（imei 由调用方给出：手动/随机；为空时 Kotlin 端自行兜底）
         VivoOtaResult kotlinResult = kotlinClient.query(
             codename,
             modelSwVer,
@@ -48,7 +53,9 @@ final class VivoOtaClient {
             isPhone,
             isFull,
             serial,
-            kotlinChannel
+            imei == null ? "" : imei,
+            kotlinChannel,
+            kotlinDomain
         );
 
         // 将 Kotlin 结果转换为 Java VivoResult
@@ -59,13 +66,20 @@ final class VivoOtaClient {
             kotlinResult.getMd5(),
             kotlinResult.getDownloadUrl(),
             kotlinResult.getSecurityPatch(),
-            kotlinResult.getUpdateDate()
+            kotlinResult.getUpdateDate(),
+            kotlinResult.getChangelogUrl()
         );
     }
 
+    /** 更新日志抓取与解析（H5 data/CN.js → 正文），失败返回 null。 */
+    String fetchChangelog(String changelogUrl) {
+        return kotlinClient.fetchChangelog(changelogUrl);
+    }
+
     static final class VivoResult {
-        final String version, filename, size, md5, downloadUrl, securityPatch, updateTime;
-        VivoResult(String version, String filename, String size, String md5, String downloadUrl, String securityPatch, String updateTime) {
+        final String version, filename, size, md5, downloadUrl, securityPatch, updateTime, changelogUrl;
+        VivoResult(String version, String filename, String size, String md5, String downloadUrl,
+                   String securityPatch, String updateTime, String changelogUrl) {
             this.version = version;
             this.filename = filename;
             this.size = size;
@@ -73,6 +87,7 @@ final class VivoOtaClient {
             this.downloadUrl = downloadUrl;
             this.securityPatch = securityPatch;
             this.updateTime = updateTime;
+            this.changelogUrl = changelogUrl;
         }
     }
 }

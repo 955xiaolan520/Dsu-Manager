@@ -61,7 +61,7 @@ public class MainActivity extends Activity {
     private int languageMode;
     private boolean rootAuthorized;
     private boolean rootCheckInProgress;
-    private Button[] actionButtons;
+    private View[] actionButtons;
     private static final String DSU_SLOT = "dsu";
     private LinearLayout installPanel, installOptionsPanel;
     private FrameLayout pageHost;
@@ -82,6 +82,7 @@ public class MainActivity extends Activity {
     private Button embeddedDownloadButton;
     private int currentTab;
     private LinearLayout imageManagementPanel;
+    private FrameLayout contentRoot;   // 根布局（引导页淡入转场用）
     private ProgressBar installProgress;
     private TextView installStage, installZipLabel;
     private Button confirmInstallButton;
@@ -119,6 +120,18 @@ public class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
         buildUi();
+        // 从引导页淡入进入：只淡入内容层（页面 + 底部导航），渐变背景常驻 → 任何 ROM 都不闪黑屏
+        if (getIntent().getBooleanExtra("crossfade_entry", false)) {
+            View[] fadeLayers = {pageHost, bottomNavigation};
+            for (View layer : fadeLayers) {
+                if (layer == null) continue;
+                layer.setAlpha(0f);
+                layer.post(() -> layer.animate().alpha(1f)
+                        .setDuration(420L)
+                        .setInterpolator(new android.view.animation.DecelerateInterpolator(1.2f))
+                        .start());
+            }
+        }
         bindRootService();
         refreshRootStatus();
     }
@@ -190,7 +203,7 @@ public class MainActivity extends Activity {
 
     private void updateActionButtons() {
         if (actionButtons == null) return;
-        for (Button button : actionButtons) {
+        for (View button : actionButtons) {
             button.setEnabled(rootAuthorized);
             button.setAlpha(rootAuthorized ? 1f : 0.45f);
         }
@@ -304,27 +317,41 @@ public class MainActivity extends Activity {
           String[] labels = english
                   ? new String[]{"Check GSI status", "Install GSI", "Reboot to DSU", "Remove installed GSI", "Manage installed images"}
                   : new String[]{"检测 GSI 状态", "安装 GSI", "重启到 DSU", "撤销已安装 GSI", "管理已安装镜像"};
-           int[] backgrounds = {R.drawable.button_blue, R.drawable.button_green, R.drawable.button_orange, R.drawable.button_purple, R.drawable.button_blue};
-         actionButtons = new Button[labels.length];
-        for (int i = 0; i < labels.length; i++) {
-            Button button = new Button(this);
-            button.setText(labels[i]);
-            button.setTextColor(Color.WHITE);
-            button.setTextSize(14);
-            button.setAllCaps(false);
-            button.setMinHeight(0);
-            button.setMinWidth(0);
-            button.setPadding(dp(6), 0, dp(6), 0);
-            button.setBackgroundResource(backgrounds[i]);
-             final int actionIndex = i;
-             button.setOnClickListener(v -> {
-                 Haptics.perform(v);
-                 action(actionIndex);
-             });
-             actionButtons[i] = button;
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(58));
-            lp.setMargins(0, dp(3), 0, dp(3));
-             list.addView(button, lp);
+          String[] icons = {"🔍", "📥", "🔄", "🗑️", "🗂️"};
+          String[] descs = english
+                  ? new String[]{"Read DSU status", "Pick image & install", "Reboot into DSU", "Remove installed DSU", "Replace or export installed images"}
+                  : new String[]{"读取 DSU 运行状态", "选择镜像安装 DSU", "重启进入动态系统", "清理已安装动态系统", "替换 / 导出已安装分区镜像"};
+         // 液态玻璃功能卡片（图三效果）：五色语义化对角渐变 + 白色高光描边 + 大圆角 + 涟漪 + 振动反馈
+         int[][] glassColors = {
+                 {0xFF7FAAF5, 0xFF4C74DE, 0xFF3E63C9},   // 检测 GSI：蓝紫
+                 {0xFF6FD9AE, 0xFF2FB47C, 0xFF1E8A60},   // 安装 GSI：青绿
+                 {0xFFF3C777, 0xFFDB9A45, 0xFFB57623},   // 重启到 DSU：金棕
+                 {0xFFDBA8F2, 0xFFB275E0, 0xFF8E52C6},   // 撤销 GSI：粉紫
+                 {0xFF9FB0D4, 0xFF7284AB, 0xFF55678D}    // 管理镜像：蓝灰
+         };
+         actionButtons = new View[labels.length];
+         // 排列方式：前 4 张两列网格（检测/安装 + 重启/撤销），第 5 张通栏横卡（管理镜像）
+         LinearLayout[] gridRows = new LinearLayout[2];
+         for (int i = 0; i < labels.length; i++) {
+             View card = gsiGlassCard(icons[i], labels[i], descs[i], glassColors[i], i, i == labels.length - 1);
+             actionButtons[i] = card;
+             if (i < 4) {
+                 int rowIndex = i / 2;
+                 if (i % 2 == 0) {
+                     gridRows[rowIndex] = new LinearLayout(this);
+                     gridRows[rowIndex].setOrientation(LinearLayout.HORIZONTAL);
+                     LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+                     rowLp.topMargin = dp(6);
+                     list.addView(gridRows[rowIndex], rowLp);
+                 }
+                 LinearLayout.LayoutParams gridCardLp = new LinearLayout.LayoutParams(0, dp(108), 1f);
+                 gridCardLp.setMargins(i % 2 == 0 ? 0 : dp(6), 0, i % 2 == 0 ? dp(6) : 0, 0);
+                 gridRows[rowIndex].addView(card, gridCardLp);
+             } else {
+                 LinearLayout.LayoutParams wideLp = new LinearLayout.LayoutParams(-1, dp(74));
+                 wideLp.topMargin = dp(6);
+                 list.addView(card, wideLp);
+             }
          }
          updateActionButtons();
           detailText = text(t("点击操作后，结果会显示在这里。", "Results will appear here after an action."), 13, Color.rgb(77, 87, 105));
@@ -486,7 +513,80 @@ public class MainActivity extends Activity {
               setBottomNavigationVisible(!keyboardVisible);
           });
           root.post(() -> applySystemInsets(root, root.getRootWindowInsets()));
+         contentRoot = root;   // 供引导页淡入转场使用
          setContentView(root);
+     }
+
+     /** 液态玻璃功能卡片（图三）：对角三段渐变 + 白色高光描边 + 大圆角 + 白色涟漪 + 悬浮阴影；点击全局振动反馈 */
+     private View gsiGlassCard(String icon, String label, String desc, int[] colors, int index, boolean wide) {
+         LinearLayout card = new LinearLayout(this);
+         card.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+         if (wide) card.setGravity(Gravity.CENTER_VERTICAL);
+         card.setPadding(dp(16), dp(14), dp(16), dp(12));
+         GradientDrawable glass = new GradientDrawable();
+         glass.setOrientation(GradientDrawable.Orientation.TL_BR);
+         glass.setColors(new int[]{colors[0], colors[1], colors[2]});
+         glass.setCornerRadius(dp(22));
+         glass.setStroke(Math.max(1, dp(1)), 0x59FFFFFF);
+         // 白色半透明涟漪叠加在玻璃渐变之上，提供按压反馈
+         android.graphics.drawable.RippleDrawable ripple =
+                 new android.graphics.drawable.RippleDrawable(
+                         new android.content.res.ColorStateList(
+                                 new int[][]{{android.R.attr.state_pressed}}, new int[]{0x40FFFFFF}),
+                         glass, null);
+         card.setBackground(ripple);
+         card.setElevation(dp(8));
+         card.setOnClickListener(v -> {
+             Haptics.perform(v);
+             action(index);
+         });
+
+         TextView iconView = new TextView(this);
+         iconView.setText(icon);
+         iconView.setTextSize(23);
+         TextView title = new TextView(this);
+         title.setText(label);
+         title.setTextSize(14.5f);
+         title.setTypeface(null, 1);
+         title.setTextColor(Color.WHITE);
+         TextView descView = new TextView(this);
+         descView.setText(desc);
+         descView.setTextSize(10.5f);
+         descView.setTextColor(0xE6FFFFFF);
+         descView.setLineSpacing(dp(2), 1f);
+
+         if (wide) {
+             // 通栏横卡（管理镜像）：圆形玻璃徽章图标在左，标题 + 描述在右
+             FrameLayout badge = new FrameLayout(this);
+             GradientDrawable badgeBg = new GradientDrawable();
+             badgeBg.setShape(GradientDrawable.OVAL);
+             badgeBg.setColors(new int[]{0x38FFFFFF, 0x1FFFFFFF});
+             badgeBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+             badgeBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+             badge.setBackground(badgeBg);
+             iconView.setGravity(Gravity.CENTER);
+             badge.addView(iconView, new FrameLayout.LayoutParams(-1, -1));
+             card.addView(badge, new LinearLayout.LayoutParams(dp(46), dp(46)));
+
+             LinearLayout textBox = new LinearLayout(this);
+             textBox.setOrientation(LinearLayout.VERTICAL);
+             textBox.setPadding(dp(14), 0, 0, 0);
+             textBox.addView(title, new LinearLayout.LayoutParams(-1, -2));
+             LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(-1, -2);
+             descLp.topMargin = dp(3);
+             textBox.addView(descView, descLp);
+             card.addView(textBox, new LinearLayout.LayoutParams(0, -2, 1f));
+         } else {
+             // 网格卡：图标在上，标题 + 描述在下
+             card.addView(iconView, new LinearLayout.LayoutParams(-2, -2));
+             LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+             titleLp.topMargin = dp(7);
+             card.addView(title, titleLp);
+             LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(-1, -2);
+             descLp.topMargin = dp(3);
+             card.addView(descView, descLp);
+         }
+         return card;
      }
 
       private FrameLayout.LayoutParams bottomNavigationParams() {
@@ -533,8 +633,14 @@ public class MainActivity extends Activity {
           item.setBackground(null);
           item.setTag(tab);
           item.setStateListAnimator(null);
+          // 拉丁字符标签（如 ROM）字形重心偏上：微调下移 0.75dp，与中文标签视觉居中对齐
+          boolean latinOnly = true;
+          for (int i = 0; i < label.length(); i++) {
+              if (label.charAt(i) >= 0x2E80) { latinOnly = false; break; }
+          }
+          item.setTranslationY(latinOnly ? getResources().getDisplayMetrics().density * 0.75f : 0f);
            item.setOnTouchListener((view, event) -> handleNavigationGesture(view, event, tab));
-         LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(0, dp(64), 1);
+         LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(0, dp(60), 1);
           itemParams.setMargins(dp(2), 0, dp(2), 0);
           navigation.addView(item, itemParams);
       }
@@ -877,7 +983,9 @@ public class MainActivity extends Activity {
            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) liquidIndicator.getLayoutParams();
             params.width = indicatorWidth;
             params.height = indicatorHeight;
-              params.topMargin = dp(8);
+              // 滑块精确垂直居中：导航栏 64dp + 上下 2dp 内边距，滑块 48dp
+              // topMargin = (64 - 2*2 - 48) / 2 = 6dp → 滑块中心(32dp)与文字中心完全重合
+              params.topMargin = dp(6);
            if (liquidIndicatorLeft < 0 || !animated) {
               liquidIndicatorLeft = targetLeft;
                params.leftMargin = targetLeft;
@@ -953,8 +1061,9 @@ public class MainActivity extends Activity {
             page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.button_blue, "xiaomi"));
             page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.button_purple, "vivo"));
             page.addView(romVendorCard("OPPO / 一加 / 真我", "ColorOS · 官方系统更新查询", R.drawable.button_orange, "oppo"));
+            page.addView(romVendorCard("提取镜像", "在线直链 / 本地 ROM 包 · payload.bin 分区镜像提取", R.drawable.button_green, "extract"));
             return page;
-       }
+        }
 
        private View romVendorCard(String heading, String detail, int background, String vendorId) {
            LinearLayout card = new LinearLayout(this);
@@ -974,8 +1083,10 @@ public class MainActivity extends Activity {
                 Haptics.perform(v);
                  Intent intent = new Intent(this,
                          "oppo".equals(vendorId) ? OPlusLookupActivity.class
-                                 : "vivo".equals(vendorId) ? VivoActivity.class : RomActivity.class);
-                intent.putExtra("vendor", vendorId);
+                                 : "vivo".equals(vendorId) ? VivoActivity.class
+                                 : "extract".equals(vendorId) ? PayloadDumperActivity.class
+                                 : RomActivity.class);
+                if (!"extract".equals(vendorId)) intent.putExtra("vendor", vendorId);
                 startActivity(intent);
                 // 不同厂商使用不同的炸裂转场动画
                 if ("oppo".equals(vendorId)) {
@@ -984,6 +1095,9 @@ public class MainActivity extends Activity {
                 } else if ("vivo".equals(vendorId)) {
                     // Vivo: 3D 翻转进入
                     overridePendingTransition(R.anim.flip_in, R.anim.flip_out);
+                } else if ("extract".equals(vendorId)) {
+                    // 提取镜像: 底部滑入
+                    overridePendingTransition(R.anim.slide_up_in, R.anim.slide_up_out);
                 } else {
                     // 小米: 缩放 + 淡入
                     overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);

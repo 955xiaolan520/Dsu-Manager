@@ -24,11 +24,30 @@ class VivoOtaClient(private val context: Context) {
     companion object {
         private const val TAG = "VivoOtaClient"
         private const val TOKEN_NATIVE = "jnisgmain_v2@com.bbk.updater"
-        private const val OTA_URL = "https://sysupgrade.vivo.com.cn/vgc/v2/getVgcAndPatch.do"
-        private const val REDIR_URL = "https://sysupgrade.vivo.com.cn/pk/redirPost.do"
-        private const val TASTE_URL = "https://sysupgrade.vivo.com.cn/upgrade/trial/getTastePk"
-        private const val BETA_URL = "https://sysupgrade.vivo.com.cn/beta/query"
-        private const val ALPHA_URL = "https://sysupgrade.vivo.com.cn/alpha/getAlphaState"
+        /** redirPost 未返回地址时的兜底下载地址前缀（后接 pkName）。 */
+        private const val PK_BASE_URL = "https://sysupdxdl.vivo.com.cn/upgrade/oem/files/"
+
+        /**
+         * h5Url 页面地址 → 日志数据文件地址：H5 页面内容由 JS 从 data/CN.js 加载，
+         * 解析日志正文时直接抓该文件而非渲染后的 HTML。
+         */
+        fun changelogDataUrl(h5Url: String): String =
+            h5Url.replace(Regex("/index\\.html$"), "/data/CN.js")
+
+        /** changelogDataUrl 的逆变换：还原出可在浏览器直接打开的 H5 页面地址。 */
+        fun changelogPageUrl(url: String): String =
+            url.replace(Regex("/data/[^/]+\\.js$"), "/index.html")
+    }
+
+    /** 可选择的升级服务器域名（参照升级检查接口协议分析.md）。 */
+    enum class Domain(val value: String, val host: String) {
+        /** 国行（默认）：sysupgrade.vivo.com.cn */
+        CN("CN", "sysupgrade.vivo.com.cn"),
+        /** 出口版：asia-sysupgrade-api.vivoglobal.com（KZ/RU 等海外区域使用） */
+        GLOBAL("GLOBAL", "asia-sysupgrade-api.vivoglobal.com");
+
+        /** 根据接口路径构造完整 URL：国行路径前缀为 /，出口版前缀为 /api。 */
+        fun url(path: String): String = "https://$host${if (this == GLOBAL) "/api$path" else path}"
     }
 
     enum class QueryChannel(val value: String) {
@@ -51,7 +70,9 @@ class VivoOtaClient(private val context: Context) {
         isPhone: Boolean,
         isFull: Boolean,
         sn: String = "A0000000000000A",
-        channel: QueryChannel = QueryChannel.NORMAL
+        imei: String = "",
+        channel: QueryChannel = QueryChannel.NORMAL,
+        domain: Domain = Domain.CN
     ): VivoOtaResult {
         val hwVer = codename + "MA"
         val fullSwVersion = if (swVersion.contains(".W")) "$swVersion.V000L1" else swVersion
@@ -62,6 +83,8 @@ class VivoOtaClient(private val context: Context) {
         val random = Random()
         val elapsedtime = if (isPhone) 140000 + random.nextInt(80000) else 2000000 + random.nextInt(500000)
         val isFullInt = if (isFull) 1 else 0
+        // imei 由调用方给出（本机/手输/随机）；为空时退化到客户端自身的解析逻辑
+        val effectiveImei = if (imei.isBlank()) genImei() else VivoImei.sanitize(imei).ifEmpty { genImei() }
 
         val p = LinkedHashMap<String, Any>()
         p["vgcNewActiveVer"] = ""
@@ -106,7 +129,7 @@ class VivoOtaClient(private val context: Context) {
             p["s_n"] = "null"
             p["elapsedtime"] = elapsedtime
             p["st1"] = 100000 + random.nextInt(60000)
-            p["imei"] = "000000000000000"
+            p["imei"] = effectiveImei
             p["ms"] = 0
             p["mtype"] = "no"
             p["radiotype"] = "L"
@@ -159,25 +182,25 @@ class VivoOtaClient(private val context: Context) {
                 cu = "N",
                 dType = if (isPhone) "phone" else "tablet",
                 vgcCu = "V000",
-                imei = "000000000000000",
+                imei = effectiveImei,
                 snp = sn,
                 isPhone = isPhone,
                 romVer = fullSwVersion
             ) + if (channel == QueryChannel.BETA) "&manual=1&push=0" else "&manual=1"
             val stateJson = if (channel == QueryChannel.BETA) {
-                sendBetaRequest(betaParams)
+                sendBetaRequest(betaParams, domain)
             } else {
-                sendAlphaRequest(betaParams)
+                sendAlphaRequest(betaParams, domain)
             }
             Log.d(TAG, "${channel.value} state: $stateJson")
         }
 
-        val updateResponse = if (isTaste) sendTasteRequest(rawParams) else sendFreshEncryptedRequest(rawParams)
+        val updateResponse = if (isTaste) sendTasteRequest(rawParams, domain) else sendFreshEncryptedRequest(rawParams, domain)
         if (updateResponse.startsWith("[Error]")) {
             throw RuntimeException(updateResponse)
         }
 
-        return parseResult(updateResponse, isPhone, modelSwVer, codename, swVersion, channel)
+        return parseResult(updateResponse, isPhone, modelSwVer, codename, swVersion, channel, domain)
     }
 
     /** 公测/内测共用参数集，与 PC 版 buildBetaBaseParams 对应。 */
@@ -205,24 +228,20 @@ class VivoOtaClient(private val context: Context) {
         modelSwVer: String,
         codename: String,
         swVersion: String,
-        channel: QueryChannel = QueryChannel.NORMAL
+        channel: QueryChannel = QueryChannel.NORMAL,
+        domain: Domain = Domain.CN
     ): VivoOtaResult {
         Log.d(TAG, "Raw OTA response: $updateResponse")
 
         val updateVersion = extractJsonStr(updateResponse, "version\":\"")
-        
-        // 尝试多个可能的文件名字段
-        var pkName = extractField(updateResponse, listOf(
-            "pkName", "fileName", "filename", "packageName", "file", "name", "pkgName"
-        ))
-        
+        val pkName = extractJsonStr(updateResponse, "pkName\":\"")
         val pkLen = extractJsonStr(updateResponse, "pkLen\":\"")
         val sizeMb = try { (pkLen.toLong() / 1048576).toString() } catch (_: Exception) { "" }
 
         var downloadUrl = ""
 
         val changelogUrl = extractJsonStr(updateResponse, "h5Url\":\"").let {
-            if (it == "(Not found)") "" else it.replace("\\/", "/").replace(Regex("/index\\.html$"), "/data/CN.js")
+            if (it == "(Not found)") "" else it.replace("\\/", "/").let(::changelogDataUrl)
         }
         Log.d(TAG, "Changelog URL: '$changelogUrl'")
 
@@ -241,7 +260,7 @@ class VivoOtaClient(private val context: Context) {
             try {
                 val queryStart = pkUrl.indexOf("?")
                 val redirParams = if (queryStart >= 0) pkUrl.substring(queryStart + 1) else pkUrl
-                val redirRes = requestRedirPost(redirParams)
+                val redirRes = requestRedirPost(redirParams, domain)
                 Log.d(TAG, "Redir response: $redirRes")
                 val dataIdx = redirRes.indexOf("\"data\":\"")
                 if (dataIdx >= 0) {
@@ -255,13 +274,12 @@ class VivoOtaClient(private val context: Context) {
                 Log.w(TAG, "redirPost failed: ${e.message}")
             }
         }
-        
-        // 如果pkName还是空的，尝试从downloadUrl提取文件名
-        if (pkName.isEmpty() && downloadUrl.isNotEmpty()) {
-            val urlPath = downloadUrl.substringAfterLast('/')
-            if (urlPath.isNotEmpty() && !urlPath.contains('?')) {
-                pkName = urlPath
-                Log.d(TAG, "Extracted filename from URL: $pkName")
+
+        // redirPost 未给出地址（无 pk / 请求失败 / data 缺失）时，按包名回退到固定的 CDN 下载地址
+        if (downloadUrl.isEmpty()) {
+            downloadUrl = fallbackDownloadUrl(pkName)
+            if (downloadUrl.isNotEmpty()) {
+                Log.d(TAG, "downloadUrl empty, fallback to: $downloadUrl")
             }
         }
 
@@ -282,6 +300,25 @@ class VivoOtaClient(private val context: Context) {
 
     private fun joinParams(params: Map<String, Any>): String {
         return params.entries.joinToString("&") { "${it.key}=${it.value}" }
+    }
+
+    /** 生成 15 位 IMEI：优先使用系统属性 IMEI，长度不足 15 位则随机生成。 */
+    private fun genImei(): String {
+        val fromProp = System.getProperty("IMEI", "").trim()
+        if (fromProp.length == 15 && fromProp.all { it.isDigit() }) {
+            return fromProp
+        }
+        val sb = StringBuilder(15)
+        val rand = Random()
+        for (i in 0 until 15) sb.append(rand.nextInt(10))
+        return sb.toString()
+    }
+
+    /** 兜底下载地址：`PK_BASE_URL` + 包名。包名缺失/为 "(Not found)" 时返回空串。 */
+    private fun fallbackDownloadUrl(pkName: String): String {
+        val name = pkName.trim().trimStart('/')
+        if (name.isEmpty() || name == "(Not found)") return ""
+        return PK_BASE_URL + name
     }
 
     private fun extractPkUrl(json: String): String? {
@@ -410,9 +447,9 @@ class VivoOtaClient(private val context: Context) {
     // HTTP
     // ================================================================
 
-    private fun sendFreshEncryptedRequest(plaintext: String): String {
+    private fun sendFreshEncryptedRequest(plaintext: String, domain: Domain): String {
         val jvqParam = encryptToJvq(plaintext)
-        val response = httpPost(OTA_URL, "jvq_param=$jvqParam")
+        val response = httpPost(domain.url("/vgc/v2/getVgcAndPatch.do"), "jvq_param=$jvqParam")
         return if (!response.startsWith("ACw") && !response.startsWith("ACo")) {
             "[Error] $response"
         } else {
@@ -420,9 +457,9 @@ class VivoOtaClient(private val context: Context) {
         }
     }
 
-    private fun requestRedirPost(params: String): String {
+    private fun requestRedirPost(params: String, domain: Domain): String {
         val jvqParam = encryptToJvq(params)
-        val response = httpPost(REDIR_URL, "jvq_param=$jvqParam")
+        val response = httpPost(domain.url("/pk/redirPost.do"), "jvq_param=$jvqParam")
         return if (!response.startsWith("ACw") && !response.startsWith("ACo")) {
             "[Error] $response"
         } else {
@@ -431,9 +468,9 @@ class VivoOtaClient(private val context: Context) {
     }
 
     // 尝鲜/公测/内测通道的尝鲜包查询（getTastePk），与 PC 版 sendTasteRequest 对应
-    private fun sendTasteRequest(plaintext: String): String {
+    private fun sendTasteRequest(plaintext: String, domain: Domain): String {
         val jvqParam = encryptToJvq(plaintext)
-        val response = httpPost(TASTE_URL, "jvq_param=$jvqParam")
+        val response = httpPost(domain.url("/upgrade/trial/getTastePk"), "jvq_param=$jvqParam")
         return if (!response.startsWith("ACw") && !response.startsWith("ACo")) {
             "[Error] $response"
         } else {
@@ -442,9 +479,9 @@ class VivoOtaClient(private val context: Context) {
     }
 
     // 公测报名状态查询（beta/query）
-    private fun sendBetaRequest(params: String): String {
+    private fun sendBetaRequest(params: String, domain: Domain): String {
         val jvqParam = encryptToJvq(params)
-        val response = httpPost(BETA_URL, "jvq_param=$jvqParam")
+        val response = httpPost(domain.url("/beta/query"), "jvq_param=$jvqParam")
         return if (!response.startsWith("ACw") && !response.startsWith("ACo")) {
             "[Error] $response"
         } else {
@@ -453,9 +490,9 @@ class VivoOtaClient(private val context: Context) {
     }
 
     // 内测报名状态查询（alpha/getAlphaState）
-    private fun sendAlphaRequest(params: String): String {
+    private fun sendAlphaRequest(params: String, domain: Domain): String {
         val jvqParam = encryptToJvq(params)
-        val response = httpPost(ALPHA_URL, "jvq_param=$jvqParam")
+        val response = httpPost(domain.url("/alpha/getAlphaState"), "jvq_param=$jvqParam")
         return if (!response.startsWith("ACw") && !response.startsWith("ACo")) {
             "[Error] $response"
         } else {
@@ -471,7 +508,7 @@ class VivoOtaClient(private val context: Context) {
         conn.readTimeout = 15000
         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
         conn.setRequestProperty("User-Agent", "okhttp/4.3.23")
-        conn.setRequestProperty("Host", "sysupgrade.vivo.com.cn")
+        conn.setRequestProperty("Host", url.host)
         conn.setRequestProperty("Connection", "Keep-Alive")
         conn.setRequestProperty("Accept-Encoding", "gzip")
         conn.doOutput = true

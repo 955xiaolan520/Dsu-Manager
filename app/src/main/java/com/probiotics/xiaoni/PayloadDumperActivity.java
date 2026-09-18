@@ -91,14 +91,37 @@ public final class PayloadDumperActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(8), dp(16), dp(16));
         
-        // 顶部标题
+        // 顶部标题：返回按钮 + 标题（与其他查询页一致）
+        LiquidGlassPanel titleBar = new LiquidGlassPanel(this, 24f);
+        titleBar.setOrientation(LinearLayout.HORIZONTAL);
+        titleBar.setGravity(Gravity.CENTER_VERTICAL);
+        titleBar.setPadding(dp(8), 0, dp(8), 0);
+        Button back = new Button(this);
+        back.setText("<");
+        back.setTextSize(20);
+        back.setMinWidth(0);
+        back.setMinHeight(0);
+        back.setAllCaps(false);
+        back.setTypeface(null, 1);
+        back.setTextColor(0xff0f1e36);
+        back.setBackgroundResource(R.drawable.liquid_glass_panel);
+        back.setStateListAnimator(null);
+        back.setOnClickListener(v -> {
+            Haptics.perform(v);
+            finish();
+            overridePendingTransition(R.anim.slide_up_in, R.anim.slide_up_out);
+        });
+        titleBar.addView(back, new LinearLayout.LayoutParams(dp(42), dp(48)));
         TextView title = new TextView(this);
         title.setText("Payload Dumper");
         title.setTextSize(22);
         title.setTextColor(0xff0f1e36);
         title.setTypeface(null, 1);
         title.setGravity(Gravity.CENTER);
-        content.addView(title, new LinearLayout.LayoutParams(-1, dp(50)));
+        titleBar.addView(title, new LinearLayout.LayoutParams(0, dp(52), 1));
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, dp(56));
+        titleLp.bottomMargin = dp(8);
+        content.addView(titleBar, titleLp);
         
         // Tab 切换（完全照搬 vivo）
         FrameLayout tabContainerWrapper = new FrameLayout(this);
@@ -207,6 +230,16 @@ public final class PayloadDumperActivity extends Activity {
         tabIndicator.post(() -> {
             moveTabIndicator(0, false);
         });
+    }
+    
+    @Override public void onBackPressed() {
+        finish();
+        overridePendingTransition(R.anim.slide_up_in, R.anim.slide_up_out);
+    }
+    
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        Haptics.onTouch(getWindow().getDecorView(), event);
+        return super.dispatchTouchEvent(event);
     }
     
     // ========== Tab 手势和动画（完全照搬 vivo）==========
