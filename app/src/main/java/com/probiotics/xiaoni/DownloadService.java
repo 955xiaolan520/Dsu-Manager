@@ -79,6 +79,10 @@ public final class DownloadService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_RESUME : intent.getAction();
         if (ACTION_START.equals(action)) {
+            // v3.8.2 修复通知栏不显示：上一任务结束已 stopForeground，但服务进程可能仍存活；
+            // 新任务必须重新进入前台，否则通知栏无下载通知，且 startForegroundService
+            // 会因 5 秒内未调用 startForeground 触发系统强制停止/崩溃。
+            ensureForeground();
             String address = intent.getStringExtra(EXTRA_ADDRESS);
             String output = intent.getStringExtra(EXTRA_OUTPUT);
             if (address != null && output != null) {
@@ -128,16 +132,15 @@ public final class DownloadService extends Service {
                     .notify(NOTIFICATION_ID, buildProgressNotification(true, null));
         } else if (ACTION_RESUME.equals(action)) {
             if (cancelled) return START_NOT_STICKY;
+            // v3.8.2：恢复任务同样确保前台状态（服务进程跨任务存活时 onCreate 不会再触发）
+            ensureForeground();
             paused = false;
             synchronized (lock) { lock.notifyAll(); }
             startSavedWorker();
         } else if (ACTION_CANCEL.equals(action)) {
             cancelled = true;
             paused = false;
-            // 下载历史：用户取消（任务切换不走此分支，不会误记）
-            recordHistory(fileName, activeOutputPath.isEmpty()
-                    ? getSharedPreferences("rom_download", MODE_PRIVATE).getString("output", "")
-                    : activeOutputPath, lastDone, "cancelled");
+            // v3.8.2 按需求调整：取消的任务不再写入下载历史，仅下载成功才记录
             switchAddress = null;   // 用户主动取消：不再接续任何排队任务
             switchOutputPath = null;
             getSharedPreferences("rom_download", MODE_PRIVATE).edit().clear().apply();
@@ -273,7 +276,7 @@ public final class DownloadService extends Service {
                 return;
             }
             if (failed[0]) {
-                recordHistory(fileName, activeOutputPath, lastDone, "failed");
+                // v3.8.2 按需求调整：失败任务同样不写入下载历史，仅下载成功才记录
                 finishWithNotification("下载失败: " + failMessage[0]);
                 return;
             }
@@ -364,6 +367,13 @@ public final class DownloadService extends Service {
     }
 
     // ---------- 通知栏（状态栏下载状态，图九样式：系统原生下载进度模板） ----------
+
+    /** v3.8.2：确保服务处于前台并显示下载通知（可安全重复调用） */
+    private void ensureForeground() {
+        try {
+            startForeground(NOTIFICATION_ID, buildProgressNotification(false, "准备下载"));
+        } catch (Exception ignored) { }
+    }
 
     /** 进度回调：与 APP 内下载框同一数据源，同步刷新通知栏 */
     private void notifyProgress(long done, long total) {

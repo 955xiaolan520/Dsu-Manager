@@ -1077,19 +1077,20 @@ public class MainActivity extends Activity {
            downloadManager.setText(t("⬇ 下载管理", "⬇ Downloads"));
            downloadManager.setAllCaps(false);
            downloadManager.setTextSize(13.5f);
+           downloadManager.setTypeface(null, 1);
            downloadManager.setTextColor(Color.WHITE);
            downloadManager.setGravity(Gravity.CENTER);
-           downloadManager.setPadding(dp(16), 0, dp(16), 0);
+           downloadManager.setPadding(dp(18), 0, dp(18), 0);
            downloadManager.setMinWidth(0);
            downloadManager.setMinHeight(0);
            downloadManager.setIncludeFontPadding(false);
            downloadManager.setStateListAnimator(null);
-           // 白色半透明玻璃胶囊（同引导页次按钮），与品牌玻璃卡视觉统一
+           // v3.8.2 修复：白色半透明玻璃底上白字看不清 → 蓝绿色实底渐变胶囊 + 白色粗体 + 白描边高光
            GradientDrawable dlMgrBg = new GradientDrawable();
            dlMgrBg.setOrientation(GradientDrawable.Orientation.TL_BR);
-           dlMgrBg.setColors(new int[]{0x66FFFFFF, 0x33FFFFFF});
+           dlMgrBg.setColors(new int[]{0xFF35A8C4, 0xFF0E7D95, 0xFF0A5F75});
            dlMgrBg.setCornerRadius(dp(22));
-           dlMgrBg.setStroke(Math.max(1, dp(1)), 0xB3FFFFFF);
+           dlMgrBg.setStroke(Math.max(1, dp(2)), 0xE6FFFFFF);
            downloadManager.setBackground(dlMgrBg);
            downloadManager.setElevation(dp(6));
            downloadManager.setOnClickListener(v -> {

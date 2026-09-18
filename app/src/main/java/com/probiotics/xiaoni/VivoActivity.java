@@ -1608,14 +1608,15 @@ public final class VivoActivity extends Activity {
             historyExpandContainer.addView(empty, margins(-1, -2, 0, 0, 0));
             return;
         }
-        // 操作提示条：加大加宽（高 52dp），文字完整显示不被挤压，「清空全部」按钮加宽
+        // 操作提示条：加大加宽（高 52dp），文字居中完整显示，「清空全部」按钮加宽
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
         head.setPadding(dp(18), 0, dp(12), 0);
         head.setBackgroundResource(R.drawable.liquid_glass_panel);
-        TextView tip = label("点击卡片回填 · 长按删除", 13.5f, 0xff155e70);
+        TextView tip = label("点击卡片回填 · 长按立即删除", 13.5f, 0xff155e70);
         tip.setTypeface(null, 1);
+        tip.setGravity(Gravity.CENTER);   // v3.8.2 修复：提示文字居中
         head.addView(tip, new LinearLayout.LayoutParams(0, dp(52), 1));
         Button clear = glassButton("清空全部", 13);
         clear.setOnClickListener(v -> {
@@ -1632,7 +1633,11 @@ public final class VivoActivity extends Activity {
         java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.CHINA);
         for (int i = 0; i < historyEntries.size(); i++) {
             final org.json.JSONObject entry = historyEntries.get(i);
-            historyExpandContainer.addView(historyResultCard(entry, fmt));
+            // v3.8.2 修复：卡片间距（此前 LayoutParams 未应用，圆角框挤在一起）
+            View cardView = historyResultCard(entry, fmt);
+            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+            cardLp.topMargin = dp(12);
+            historyExpandContainer.addView(cardView, cardLp);
         }
     }
 
@@ -1676,27 +1681,17 @@ public final class VivoActivity extends Activity {
                 sizeLp.topMargin = dp(10);
                 row.addView(sizeLine, sizeLp);
             }
+            // v3.8.2 按需求调整：不再直接显示下载链接长文本，仅保留「复制下载链接」按钮
             if (!downloadUrl.isEmpty()) {
-                TextView urlTitle = label("下载链接:", 12.5f, 0xff334b66);
-                LinearLayout.LayoutParams urlTitleLp = new LinearLayout.LayoutParams(-1, -2);
-                urlTitleLp.topMargin = dp(6);
-                row.addView(urlTitle, urlTitleLp);
-                TextView urlText = label(downloadUrl, 11, 0xff0e7d95);
-                urlText.setTextIsSelectable(true);
-                urlText.setLineSpacing(dp(2), 1f);
-                LinearLayout.LayoutParams urlLp = new LinearLayout.LayoutParams(-1, -2);
-                urlLp.topMargin = dp(2);
-                row.addView(urlText, urlLp);
+                Button copy = glassButton("复制下载链接", 12.5f);
+                copy.setOnClickListener(v -> {
+                    Haptics.perform(v);
+                    copyText("下载链接", downloadUrl);
+                });
+                LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(-1, dp(40));
+                copyLp.topMargin = dp(10);
+                row.addView(copy, copyLp);
             }
-            // 快捷操作：复制链接
-            Button copy = glassButton("复制下载链接", 12.5f);
-            copy.setOnClickListener(v -> {
-                Haptics.perform(v);
-                copyText("下载链接", downloadUrl);
-            });
-            LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(-1, 40);
-            copyLp.topMargin = dp(10);
-            row.addView(copy, copyLp);
         }
 
         row.setOnClickListener(v -> {
@@ -1711,8 +1706,6 @@ public final class VivoActivity extends Activity {
             renderHistoryPanel();
             return true;
         });
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
-        rowLp.topMargin = dp(10);
         return row;
     }
 

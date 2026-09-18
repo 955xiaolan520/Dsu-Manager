@@ -70,35 +70,68 @@ public final class DownloadManagerActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        // v3.8.2 修复：与其他二级页面对齐 —— 透明状态栏 + 内容避开系统栏（此前顶到状态栏）
+        getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(18), dp(18), dp(18), dp(28));
+        content.setPadding(dp(18), dp(14), dp(18), dp(28));
         scroll.addView(content);
-        setContentView(scroll);
-        scroll.setBackgroundResource(R.drawable.liquid_backdrop);
 
-        // ---------- 标题栏（增强玻璃） ----------
-        LiquidGlassPanel title = glass();
-        title.setOrientation(LinearLayout.HORIZONTAL);
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setPadding(dp(8), 0, dp(8), 0);
-        Button back = glassButton("<", 20);
+        android.widget.FrameLayout root = new android.widget.FrameLayout(this);
+        root.setBackgroundResource(R.drawable.liquid_backdrop);
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
+                view.setPadding(0, bars.top, 0, 0);
+            } else {
+                view.setPadding(0, insets.getSystemWindowInsetTop(), 0, 0);
+            }
+            return insets;
+        });
+        root.addView(scroll, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        setContentView(root);
+
+        // ---------- 标题栏（v3.8.2：标题绝对居中，返回箭头去框） ----------
+        android.widget.FrameLayout title = new android.widget.FrameLayout(this);
+        title.setBackgroundResource(R.drawable.liquid_glass_panel);
+        title.setPadding(dp(6), 0, dp(6), 0);
+        Button back = new Button(this, null, 0);
+        back.setText("<");
+        back.setAllCaps(false);
+        back.setTextSize(20);
+        back.setTypeface(null, 1);
+        back.setTextColor(TEAL_TITLE);
+        back.setGravity(Gravity.CENTER);
+        back.setMinWidth(0);
+        back.setMinHeight(0);
+        back.setIncludeFontPadding(false);
+        back.setPadding(0, 0, 0, 0);
+        back.setBackground(null);   // 返回箭头不加框
+        back.setStateListAnimator(null);
         back.setOnClickListener(v -> {
             Haptics.perform(v);
             finish();
             overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
         });
-        title.addView(back, new LinearLayout.LayoutParams(dp(42), dp(48)));
-        TextView heading = label("下载管理", 24, TEAL_TITLE);
+        android.widget.FrameLayout.LayoutParams backLp =
+                new android.widget.FrameLayout.LayoutParams(dp(44), dp(52), Gravity.START | Gravity.CENTER_VERTICAL);
+        title.addView(back, backLp);
+        TextView heading = label("下载管理", 22, TEAL_TITLE);
         heading.setTypeface(null, 1);
-        title.addView(heading, new LinearLayout.LayoutParams(0, dp(52), 1));
+        heading.setGravity(Gravity.CENTER);
+        android.widget.FrameLayout.LayoutParams headLp =
+                new android.widget.FrameLayout.LayoutParams(-2, dp(52), Gravity.CENTER);
+        title.addView(heading, headLp);
         TextView badge = label("⇅ 同步中", 12, TEAL_TITLE);
         badge.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        badge.setPadding(dp(10), 0, dp(10), 0);
-        title.addView(badge, new LinearLayout.LayoutParams(-2, dp(52)));
+        badge.setPadding(dp(6), 0, dp(10), 0);
+        android.widget.FrameLayout.LayoutParams badgeLp =
+                new android.widget.FrameLayout.LayoutParams(-2, dp(52), Gravity.END | Gravity.CENTER_VERTICAL);
+        title.addView(badge, badgeLp);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, dp(56));
         titleLp.bottomMargin = dp(12);
         content.addView(title, titleLp);
@@ -131,6 +164,8 @@ public final class DownloadManagerActivity extends Activity {
         historySummary.setGravity(Gravity.CENTER_VERTICAL);
         historyHead.addView(historySummary, new LinearLayout.LayoutParams(0, dp(38), 1));
         Button clear = smallGlassButton("清空");
+        // v3.8.2 修复：「清空」两字完整显示 —— 按钮加宽加高 + 左右留白
+        clear.setPadding(dp(14), 0, dp(14), 0);
         clear.setOnClickListener(v -> {
             Haptics.perform(v);
             if (history.isEmpty()) return;
@@ -146,8 +181,11 @@ public final class DownloadManagerActivity extends Activity {
                     .setNegativeButton("取消", null)
                     .show();
         });
-        historyHead.addView(clear, new LinearLayout.LayoutParams(-2, dp(32)));
-        content.addView(historyHead, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(dp(68), dp(36));
+        historyHead.addView(clear, clearLp);
+        LinearLayout.LayoutParams historyHeadLp = new LinearLayout.LayoutParams(-1, -2);
+        historyHeadLp.topMargin = dp(14);
+        content.addView(historyHead, historyHeadLp);
 
         historyHost = new LinearLayout(this);
         historyHost.setOrientation(LinearLayout.VERTICAL);
@@ -195,6 +233,21 @@ public final class DownloadManagerActivity extends Activity {
     // ---------- 实时状态（三方同步：本页 / 通知栏 / ROM 查询页） ----------
 
     private void onDownloadUpdate(String state, long d, long t, long sp, long e) {
+        // v3.8.2 修复：任务取消 → 当前任务卡立即清空收起 + 历史即时刷新（此前一直挂在页面）
+        if (state != null && state.startsWith("下载已取消")) {
+            activeName = "";
+            activeOutput = "";
+            stateText = "";
+            taskPaused = false;
+            done = -1;
+            total = -1;
+            speed = -1;
+            eta = -1;
+            loadHistory();
+            renderActive();
+            renderHistory();
+            return;
+        }
         if (state != null) stateText = state;
         if (d >= 0) done = d;
         if (t >= 0) total = t;
@@ -206,9 +259,10 @@ public final class DownloadManagerActivity extends Activity {
             if (state.startsWith("正在下载: ")) activeName = state.substring("正在下载: ".length());
             else if (state.startsWith("已暂停: ")) activeName = state.substring("已暂停: ".length());
         }
-        // 从持久化状态读取输出路径
+        // 从持久化状态读取输出路径；prefs 已清空 = 任务已结束，重置残留路径（v3.8.2）
         String saved = getSharedPreferences("rom_download", MODE_PRIVATE).getString("output", "");
         if (!saved.isEmpty()) activeOutput = saved;
+        else if (!"下载完成".equals(state)) activeOutput = "";
         renderActive();
         if ("下载完成".equals(state) || state != null && state.startsWith("下载完成")) {
             loadHistory();
@@ -382,7 +436,12 @@ public final class DownloadManagerActivity extends Activity {
         }
         for (int i = 0; i < history.size(); i++) {
             final JSONObject entry = history.get(i);
-            historyHost.addView(historyCard(entry, i));
+            // v3.8.2 修复：卡片之间的间距（此前未应用 LayoutParams，圆角框挤在一起）
+            View cardView = historyCard(entry, i);
+            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+            cardLp.topMargin = dp(12);
+            cardLp.bottomMargin = i == history.size() - 1 ? dp(6) : 0;
+            historyHost.addView(cardView, cardLp);
         }
     }
 
@@ -475,9 +534,6 @@ public final class DownloadManagerActivity extends Activity {
         LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(-1, dp(40));
         actionsLp.topMargin = dp(10);
         card.addView(actions, actionsLp);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = dp(10);
         return card;
     }
 

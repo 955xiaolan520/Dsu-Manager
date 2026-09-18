@@ -2027,10 +2027,17 @@ public final class RomActivity extends Activity {
         pendingOutput = output;
         pendingPackageType = downloadPrefs.getString("package", "下载");
         downloadPath.setText("保存到: " + output.getAbsolutePath());
+        // v3.8.2 修复：无论走哪个分支，文件名标题都必须更新（此前完成分支提前 return，
+        // 标题一直是占位符「正在下载: 文件名」）
+        downloadFileTitle.setText("正在下载: " + output.getName());
         downloadCard.setVisibility(View.VISIBLE);
         downloadActionsRow.setVisibility(View.VISIBLE);
         preservedDownloadScrollY = pageScroll == null ? 0 : pageScroll.getScrollY();
-        if (output.isFile()) {
+        // v3.8.2 修复完成判定：aria2c 直接写最终文件（--out），下载进行中 output 也存在，
+        // 旧逻辑把进行中的任务误判为「下载完成」：隐藏暂停/取消按钮 + 误删 .aria2 控制文件。
+        // 正确口径：文件存在 且 .aria2 / .download 控制文件都已消失，才算真正完成；
+        // 否则视为下载中/已暂停 → 恢复暂停/取消按钮，进度由服务广播继续刷新。
+        if (output.isFile() && !control.isFile() && !partial.isFile()) {
             Aria2Downloader.deleteCheckpointFiles(output);
             downloadStatus.setText("下载完成");
             downloadPercent.setText("100%");
@@ -2041,6 +2048,7 @@ public final class RomActivity extends Activity {
         }
         boolean paused = downloadPrefs.getBoolean("paused", true);
         String message = downloadPrefs.getString("message", "等待恢复下载");
+        boolean failedState = message.startsWith("下载失败");
         long[] savedProgress = Aria2Downloader.readSavedProgress(output);
         long savedDone = savedProgress[0] >= 0 ? savedProgress[0] : downloadPrefs.getLong("done", 0);
         long savedTotal = savedProgress[1] > 0 ? savedProgress[1] : downloadPrefs.getLong("total", -1);
@@ -2048,8 +2056,9 @@ public final class RomActivity extends Activity {
         persistedTotal = savedTotal;
         pauseDownload = paused;
         pauseDownloadButton.setText(paused ? "继续" : "暂停");
-        downloadFileTitle.setText("正在下载: " + output.getName());
-        downloadStatus.setText(paused ? "已暂停，点击继续可断点续传" : "下载");
+        if (failedState) downloadFileTitle.setText("下载失败: " + output.getName());
+        downloadStatus.setText(failedState ? message
+                : (paused ? "已暂停，点击继续可断点续传" : "下载"));
         if (savedTotal > 0) updateDownloadProgress(savedDone, savedTotal);
         if (!paused) startDownloadService(address, output, pendingPackageType, false);
     }
