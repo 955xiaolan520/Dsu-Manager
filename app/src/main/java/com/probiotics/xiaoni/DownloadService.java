@@ -296,7 +296,10 @@ public final class DownloadService extends Service {
     private void resumeTask(Task task) {
         task.paused = false;
         synchronized (task.pauseLock) { task.pauseLock.notifyAll(); }
-        broadcastTask(task, "正在继续下载", -1, -1);
+        // v3.9.2 修复：此前广播「正在继续下载」，而下载管理页/ROM查询页状态机只认
+        // 「正在下载」开头才清除暂停态 → 恢复后页面卡片永远卡在「已暂停」，
+        // 只有通知栏（直接读内存字段）正常。改为与 worker 首启一致的标准文案。
+        broadcastTask(task, "正在下载: " + task.output.getName(), task.output.length(), -1);
         notifyTaskNow(task);
     }
 

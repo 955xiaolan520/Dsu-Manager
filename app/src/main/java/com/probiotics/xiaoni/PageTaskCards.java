@@ -296,6 +296,14 @@ public final class PageTaskCards {
                 card.pauseButton.setText("重试");
                 card.cancelButton.setText("关闭");
             }
+        } else if (done >= 0) {
+            // v3.9.2 防御：进度广播（无状态文案）持续到达 = 任务在正常下载，
+            // 清除暂停/排队态并复位按钮，避免文案缺失时卡片永久卡在「已暂停」
+            if (card.paused) {
+                card.paused = false;
+                card.pauseButton.setText("暂停");
+                card.title.setText("正在下载: " + fileName(card.id));
+            }
         }
         if (done >= 0 || total > 0) {
             int percent = total > 0 && done >= 0 ? (int) (done * 100 / total) : 0;

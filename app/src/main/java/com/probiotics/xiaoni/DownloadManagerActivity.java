@@ -309,6 +309,11 @@ public final class DownloadManagerActivity extends Activity {
             } else if (state.startsWith("下载失败") || state.startsWith("下载地址无效")) {
                 s.failed = true;
             }
+        } else if (d >= 0) {
+            // v3.9.2 防御：进度广播（无状态文案）持续到达 = 任务确实在下载，
+            // 无论之前处于暂停/排队态一律清除（文案缺失不应卡死页面状态机）
+            s.paused = false;
+            s.pending = false;
         }
         if (d >= 0) s.done = d;
         if (t >= 0) s.total = t;
