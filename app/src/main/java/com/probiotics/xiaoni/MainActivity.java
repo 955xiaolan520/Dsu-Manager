@@ -134,6 +134,8 @@ public class MainActivity extends Activity {
         }
         bindRootService();
         refreshRootStatus();
+        // v3.9.1：启动自动检查新版本（每进程一次，静默；有新版本才弹窗）
+        UpdateCenter.autoCheck(this);
     }
 
     @Override protected void onResume() {

@@ -3,7 +3,6 @@ package com.probiotics.xiaoni;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -17,16 +16,6 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
-import org.json.JSONArray;
-import org.json.JSONObject;
-
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 
 import java.util.Locale;
 
@@ -37,7 +26,6 @@ public final class SettingsActivity extends Activity {
     }
     private static final String LANGUAGE_KEY = "language_mode";
     private static final String CURRENT_VERSION = BuildConfig.VERSION_NAME;
-    private static final String LATEST_RELEASE_API = "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest";
     private TextView updateStatus;
     private TextView releaseNotes;
     private TextView downloadHint;
@@ -262,44 +250,16 @@ public final class SettingsActivity extends Activity {
         if (initialNotesParent instanceof android.view.View) ((android.view.View) initialNotesParent).setVisibility(android.view.View.GONE);
         downloadButton.setVisibility(android.view.View.GONE);
         downloadHint.setVisibility(android.view.View.GONE);
+        // v3.9.1：检查走 UpdateCenter（直连 + 加速镜像逐个回退，国内不开 VPN 也能查到）
         new Thread(() -> {
-            HttpURLConnection connection = null;
             try {
-                 connection = (HttpURLConnection) new URL(LATEST_RELEASE_API).openConnection();
-                 connection.setRequestMethod("GET");
-                 connection.setConnectTimeout(10000);
-                 connection.setReadTimeout(10000);
-                 connection.setRequestProperty("Accept", "application/vnd.github+json");
-                  connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/" + CURRENT_VERSION);
-                 connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
-                 connection.setUseCaches(false);
-                 int responseCode = connection.getResponseCode();
-                 if (responseCode < 200 || responseCode >= 300) throw new java.io.IOException("GitHub HTTP " + responseCode);
-                StringBuilder body = new StringBuilder();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) body.append(line);
-                }
-                JSONObject release = new JSONObject(body.toString());
-                String tag = release.optString("tag_name", "");
-                String latestVersion = tag.startsWith("v") ? tag.substring(1) : tag;
-                String notes = trimReleaseNotes(release.optString("body", ""));
-                String downloadUrl = release.optString("html_url", "https://github.com/955xiaolan520/Dsu-Manager/releases");
-                JSONArray assets = release.optJSONArray("assets");
-                if (assets != null) {
-                    for (int i = 0; i < assets.length(); i++) {
-                        JSONObject asset = assets.optJSONObject(i);
-                        if (asset != null && asset.optString("name", "").endsWith(".apk") && !asset.optString("name", "").contains("debug")) {
-                            downloadUrl = asset.optString("browser_download_url", downloadUrl);
-                            break;
-                        }
-                    }
-                }
-                final String resultVersion = latestVersion;
-                final String resultNotes = notes.isEmpty() ? (english ? "No release notes." : "暂无更新说明。") : notes;
-                final String resultUrl = downloadUrl;
+                UpdateCenter.ReleaseInfo info = UpdateCenter.fetchLatest();
+                final boolean newer = UpdateCenter.isVersionNewer(info.version, CURRENT_VERSION);
+                final String resultVersion = info.version;
+                final String resultNotes = info.notes.isEmpty()
+                        ? (english ? "No release notes." : "暂无更新说明。") : info.notes;
+                final UpdateCenter.ReleaseInfo result = info;
                 new Handler(Looper.getMainLooper()).post(() -> {
-                    boolean newer = isVersionNewer(resultVersion, CURRENT_VERSION);
                     updateStatus.setText(newer
                             ? (english ? "New version available: " + resultVersion : "发现新版本: " + resultVersion)
                             : (english ? "You are using the latest version: " + CURRENT_VERSION : "当前已是最新版本: " + CURRENT_VERSION));
@@ -309,103 +269,32 @@ public final class SettingsActivity extends Activity {
                     if (newer) {
                         downloadButton.setVisibility(android.view.View.VISIBLE);
                         downloadHint.setVisibility(android.view.View.VISIBLE);
-                        downloadButton.setOnClickListener(v -> downloadAndInstall(resultUrl, english));
+                        downloadButton.setOnClickListener(v -> UpdateCenter.downloadWithDialog(this, result, english,
+                                new UpdateCenter.Listener() {
+                                    @Override public void onStatus(String message) {
+                                        updateStatus.setText(message);
+                                    }
+                                    @Override public void onFinished() {
+                                        updateStatus.setText(english
+                                                ? "Download complete. Confirm installation in the system installer."
+                                                : "下载完成，请在系统安装界面确认安装。");
+                                        downloadButton.setEnabled(true);
+                                        downloadButton.setText(english ? "Install downloaded APK" : "安装已下载 APK");
+                                    }
+                                    @Override public void onFailed(String error) {
+                                        updateStatus.setText(error);
+                                        downloadButton.setEnabled(true);
+                                        downloadButton.setText(english ? "Download latest APK" : "下载最新 APK");
+                                    }
+                                }));
                     }
                 });
             } catch (Exception error) {
                 new Handler(Looper.getMainLooper()).post(() -> updateStatus.setText((english ? "Update check failed: " : "检查更新失败: ") + error.getMessage()));
-            } finally {
-                if (connection != null) connection.disconnect();
             }
         }).start();
     }
 
-    private boolean isVersionNewer(String candidate, String current) {
-        try {
-            String[] candidateParts = candidate.split("\\.");
-            String[] currentParts = current.split("\\.");
-            int count = Math.max(candidateParts.length, currentParts.length);
-            for (int i = 0; i < count; i++) {
-                int candidatePart = i < candidateParts.length ? Integer.parseInt(candidateParts[i]) : 0;
-                int currentPart = i < currentParts.length ? Integer.parseInt(currentParts[i]) : 0;
-                if (candidatePart != currentPart) return candidatePart > currentPart;
-            }
-        } catch (NumberFormatException ignored) { }
-        return false;
-    }
-
-    private String trimReleaseNotes(String notes) {
-        String normalized = notes == null ? "" : notes.replace("\\r\\n", "\n").replace("\\n", "\n").trim();
-        StringBuilder visible = new StringBuilder();
-        for (String line : normalized.split("\\r?\\n")) {
-            String compact = line.trim().toLowerCase(Locale.ROOT).replace(" ", "");
-            if (compact.equals("##安装说明") || compact.equals("##installation") || compact.equals("##校验") || compact.equals("##verification") || compact.equals("##文件说明") || compact.equals("##filelist") || compact.equals("##files")) break;
-            if (visible.length() > 0) visible.append('\n');
-            visible.append(line);
-        }
-        return visible.toString().trim();
-    }
-
-    private void downloadAndInstall(String downloadUrl, boolean english) {
-        downloadButton.setEnabled(false);
-        downloadButton.setText(english ? "Downloading..." : "正在下载...");
-        updateStatus.setText(english ? "Downloading update APK..." : "正在下载更新 APK...");
-        new Thread(() -> {
-            HttpURLConnection connection = null;
-            File apk = new File(getCacheDir(), "dsu-manager-update.apk");
-            try {
-                connection = (HttpURLConnection) new URL(downloadUrl).openConnection();
-                connection.setConnectTimeout(15000);
-                connection.setReadTimeout(30000);
-                connection.setInstanceFollowRedirects(true);
-                if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) {
-                    throw new IllegalStateException("HTTP " + connection.getResponseCode());
-                }
-                int contentLength = connection.getContentLength();
-                try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(apk)) {
-                    byte[] buffer = new byte[8192];
-                    int read;
-                    long total = 0;
-                    while ((read = input.read(buffer)) != -1) {
-                        output.write(buffer, 0, read);
-                        total += read;
-                        if (contentLength > 0) {
-                            int progress = (int) Math.min(100, total * 100 / contentLength);
-                            new Handler(Looper.getMainLooper()).post(() -> downloadButton.setText((english ? "Downloading " : "下载中 ") + progress + "%"));
-                        }
-                    }
-                }
-                Uri apkUri = UpdateFileProvider.getUriForFile(this, apk);
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    updateStatus.setText(english ? "Download complete. Confirm installation in the system installer." : "下载完成，请在系统安装界面确认安装。");
-                    downloadButton.setEnabled(true);
-                    downloadButton.setText(english ? "Install downloaded APK" : "安装已下载 APK");
-                    downloadButton.setOnClickListener(v -> installApk(apkUri));
-                    installApk(apkUri);
-                });
-            } catch (Exception error) {
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    downloadButton.setEnabled(true);
-                    downloadButton.setText(english ? "Download latest APK" : "下载最新 APK");
-                    updateStatus.setText((english ? "Download failed: " : "下载失败: ") + error.getMessage());
-                });
-            } finally {
-                if (connection != null) connection.disconnect();
-            }
-        }).start();
-    }
-
-    private void installApk(Uri apkUri) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
-            updateStatus.setText("请在系统设置中允许本应用安装未知应用。\nPlease allow this app to install unknown apps in system settings.");
-            Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:" + getPackageName()));
-            startActivity(settings);
-            return;
-        }
-        Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-        intent.setData(apkUri);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivity(intent);
-    }
+    // v3.9.1：版本比较 / 说明清理 / 下载安装已统一收敛到 UpdateCenter
+    //（多镜像回退 + 进度弹窗 + ZIP 校验 + 安装意图），设置页只保留状态展示。
 }
