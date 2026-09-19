@@ -1,6 +1,7 @@
 package com.probiotics.xiaoni;
 
 import android.os.ParcelFileDescriptor;
+import com.probiotics.xiaoni.IRootInstallCallback;
 import java.util.List;
 
 interface IPrivilegedService {
@@ -24,5 +25,5 @@ interface IPrivilegedService {
     List<String> getDsuBackingImages(String prefix);
     String listDsuImages();
     String cleanupDsuBackingImages();
-    String replaceDsuBackingImage(String slot, String imageName, in ParcelFileDescriptor fd, long size, boolean force);
+    String replaceDsuBackingImage(String slot, String imageName, in ParcelFileDescriptor fd, long size, boolean force, IRootInstallCallback progress);
 }

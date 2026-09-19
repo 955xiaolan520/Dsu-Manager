@@ -18,7 +18,7 @@
                 <action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".SettingsActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".AboutActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".RomActivity" android:screenOrientation="portrait" android:exported="false" />

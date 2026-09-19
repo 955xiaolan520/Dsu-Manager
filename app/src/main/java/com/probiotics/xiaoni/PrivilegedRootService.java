@@ -368,7 +368,7 @@ public final class PrivilegedRootService extends RootService {
             return String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576d);
         }
         @Override public String replaceDsuBackingImage(String slot, String imageName,
-                ParcelFileDescriptor fd, long size, boolean force) {
+                ParcelFileDescriptor fd, long size, boolean force, IRootInstallCallback progress) {
             if (fd == null) return "input image fd is null";
             try {
                 validateSlot(slot);
@@ -380,7 +380,7 @@ public final class PrivilegedRootService extends RootService {
                 for (int attempt = 0; attempt < 2; attempt++) {
                     try {
                         Object imageService = imageServiceInterface(slot);
-                        writeDsuBackingImage(imageService, imageName, fd, size, force);
+                        writeDsuBackingImage(imageService, imageName, fd, size, force, progress);
                         return "";
                     } catch (Exception error) {
                         firstError = error;
@@ -508,7 +508,7 @@ public final class PrivilegedRootService extends RootService {
             if (!target.getName().matches("[a-z0-9_-]+\\.img\\.[0-9]+"))
                 throw new IOException("target is not a DSU backing data file: " + target.getName());
             Log.i(TAG, "Overwriting existing DSU backing file " + target.getAbsolutePath());
-            copyFileToPath(fd, target, size);
+            copyFileToPath(fd, target, size, null);
         }
 
         private void replaceMappedBackingImage(Object imageService, String targetName,
@@ -532,7 +532,7 @@ public final class PrivilegedRootService extends RootService {
                     throw new IOException("mapped DSU block device path is empty: " + targetName);
                 Log.i(TAG, "Writing mapped DSU block device " + mappedPath
                         + " for " + targetName + " bytes=" + size);
-                copyFileToBlockDevice(fd, mappedPath, size);
+                copyFileToBlockDevice(fd, mappedPath, size, null);
             } finally {
                 try {
                     if (mappedForReplacement && imageMapped(imageService, targetName))
@@ -602,7 +602,7 @@ public final class PrivilegedRootService extends RootService {
         }
 
         private void writeDsuBackingImage(Object service, String name, ParcelFileDescriptor fd,
-                long size, boolean force) throws Exception {
+                long size, boolean force, IRootInstallCallback progress) throws Exception {
             boolean existed = imageExists(service, name);
             boolean mapped = imageMapped(service, name);
             if (existed && !force) throw new IllegalStateException("Image already exists: " + name);
@@ -617,7 +617,7 @@ public final class PrivilegedRootService extends RootService {
                 if (mappedPath == null || mappedPath.length() == 0)
                     throw new IllegalStateException("mapImageDevice(" + name + ") returned empty path");
                 mappedNow = true;
-                copyFileToBlockDevice(fd, mappedPath, size);
+                copyFileToBlockDevice(fd, mappedPath, size, progress);
                 imageVoid(service, "unmapImageDevice", name);
                 mappedNow = false;
             } catch (Exception error) {
@@ -632,20 +632,38 @@ public final class PrivilegedRootService extends RootService {
                     name, size, 1, null);
         }
 
-        private void copyFileToBlockDevice(ParcelFileDescriptor fd, String path, long expected) throws IOException {
-            copyFileToPath(fd, new File(path), expected);
+        private void copyFileToBlockDevice(ParcelFileDescriptor fd, String path, long expected,
+                IRootInstallCallback progress) throws IOException {
+            copyFileToPath(fd, new File(path), expected, progress);
         }
 
-        private void copyFileToPath(ParcelFileDescriptor fd, File target, long expected) throws IOException {
+        private void copyFileToPath(ParcelFileDescriptor fd, File target, long expected,
+                IRootInstallCallback progress) throws IOException {
             long copied = 0;
             try (ParcelFileDescriptor duplicate = ParcelFileDescriptor.dup(fd.getFileDescriptor());
                  ParcelFileDescriptor.AutoCloseInputStream input = new ParcelFileDescriptor.AutoCloseInputStream(duplicate);
                  FileOutputStream output = new FileOutputStream(target)) {
+                // v3.9.5 修复「short image copy」：dup() 与原 fd 共享文件偏移。
+                // gsid 死亡重试（DeadObject → 第二次尝试）时原偏移已在 EOF，复制 0 字节即抛
+                // short image copy。每次复制前把偏移归零，重试也能从文件头完整复制。
+                try {
+                    android.system.Os.lseek(duplicate.getFileDescriptor(), 0, android.system.OsConstants.SEEK_SET);
+                } catch (Exception ignored) { }
                 byte[] buffer = new byte[4 * 1024 * 1024];
                 int count;
+                long lastReport = 0L;
                 while ((count = input.read(buffer)) != -1) {
                     output.write(buffer, 0, count);
                     copied += count;
+                    if (progress != null && expected > 0) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastReport >= 200 || copied >= expected) {
+                            lastReport = now;
+                            try {
+                                progress.onStage("write", (int) Math.min(100, copied * 100 / expected));
+                            } catch (Exception ignored) { }
+                        }
+                    }
                 }
                 output.getFD().sync();
             }

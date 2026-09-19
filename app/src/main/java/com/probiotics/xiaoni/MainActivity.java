@@ -83,8 +83,11 @@ public class MainActivity extends Activity {
     private int currentTab;
     private LinearLayout imageManagementPanel;
     private FrameLayout contentRoot;   // 根布局（引导页淡入转场用）
-    private ProgressBar installProgress;
     private TextView installStage, installZipLabel;
+    /** v3.9.5 分段进度：阶段行容器 + 阶段行索引（每个阶段一条独立 0-100% 进度条） */
+    private LinearLayout stageHost;
+    private final java.util.LinkedHashMap<String, StageRow> stageRows = new java.util.LinkedHashMap<>();
+    private String currentStageId;
     private Button confirmInstallButton;
     private Button[] installSizeButtons;
     private EditText customInstallSizeInput;
@@ -401,6 +404,14 @@ public class MainActivity extends Activity {
           customInstallSizeInput.setOnFocusChangeListener((view, hasFocus) -> {
               String value = customInstallSizeInput.getText().toString().trim();
               setBottomNavigationVisible(!hasFocus);
+              if (hasFocus) {
+                  // v3.9.5：唤起键盘时把输入框滚动到可见区域（此前被键盘完全挡住，看不到输入内容）
+                  view.postDelayed(() -> {
+                      android.graphics.Rect rect = new android.graphics.Rect();
+                      customInstallSizeInput.getHitRect(rect);
+                      customInstallSizeInput.requestRectangleOnScreen(rect, false);
+                  }, 250);
+              }
               if (hasFocus || value.isEmpty()) return;
               try {
                   customInstallSizeInput.setText(formatCustomSize(parseCustomSize(value)) + " GB");
@@ -466,16 +477,17 @@ public class MainActivity extends Activity {
 
          installPanel = new LinearLayout(this);
         installPanel.setOrientation(LinearLayout.VERTICAL);
-        installPanel.setPadding(dp(14), dp(8), dp(14), dp(8));
+        installPanel.setPadding(dp(14), dp(10), dp(14), dp(12));
           installPanel.setBackgroundResource(R.drawable.liquid_glass_panel);
-         installStage = text(t("安装进度", "Installation progress"), 13, Color.rgb(40, 50, 70));
+         installStage = text(t("安装进度", "Installation progress"), 14, Color.rgb(40, 50, 70));
+         installStage.setTypeface(null, 1);
         installPanel.addView(installStage, new LinearLayout.LayoutParams(-1, dp(26)));
-        installProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-         installProgress.setMax(100);
-         installProgress.setProgressDrawable(getDrawable(R.drawable.progress_bar));
-        installPanel.addView(installProgress, new LinearLayout.LayoutParams(-1, dp(8)));
+        // v3.9.5：分段进度 —— 解析/解压/每镜像写入各自独立进度条，不再共用一个全局百分比
+        stageHost = new LinearLayout(this);
+        stageHost.setOrientation(LinearLayout.VERTICAL);
+        installPanel.addView(stageHost, new LinearLayout.LayoutParams(-1, -2));
         installPanel.setVisibility(View.GONE);
-        LinearLayout.LayoutParams progressLp = new LinearLayout.LayoutParams(-1, dp(52));
+        LinearLayout.LayoutParams progressLp = new LinearLayout.LayoutParams(-1, -2);
           progressLp.setMargins(0, dp(4), 0, 0);
          content.addView(installPanel, progressLp);
          imageManagementPanel = new LinearLayout(this);
@@ -513,6 +525,12 @@ public class MainActivity extends Activity {
               root.getWindowVisibleDisplayFrame(visibleFrame);
               boolean keyboardVisible = root.getRootView().getHeight() - visibleFrame.bottom > dp(120);
               setBottomNavigationVisible(!keyboardVisible);
+              // v3.9.5：键盘弹出期间若自定义容量输入框聚焦，持续把它保持在可见区域
+              if (keyboardVisible && customInstallSizeInput != null && customInstallSizeInput.hasFocus()) {
+                  android.graphics.Rect rect = new android.graphics.Rect();
+                  customInstallSizeInput.getHitRect(rect);
+                  customInstallSizeInput.requestRectangleOnScreen(rect, false);
+              }
           });
           root.post(() -> applySystemInsets(root, root.getRootWindowInsets()));
          contentRoot = root;   // 供引导页淡入转场使用
@@ -1897,7 +1915,9 @@ public class MainActivity extends Activity {
                 .create();
         dialog.setOnShowListener(ignored -> {
             input.requestFocus();
-            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            // v3.9.5：改用 ADJUST_PAN —— 对话框无滚动容器，RESIZE 不生效时键盘直接盖住输入框；
+            // PAN 让窗口整体上移，输入内容和光标始终可见
+            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                 String value = input.getText().toString().trim();
                 try {
@@ -1968,7 +1988,9 @@ public class MainActivity extends Activity {
      }
     private String getPath(Uri u,String name){ try { InputStream in=getContentResolver().openInputStream(u); File f=new File(getCacheDir(),name); FileOutputStream out=new FileOutputStream(f); byte[] b=new byte[8192]; int n; while((n=in.read(b))>0)out.write(b,0,n); in.close();out.close();return f.getAbsolutePath(); }catch(Exception e){return "";} }
     private void installWithDsuSideloaderFlow(Uri source){
-         showInstallProgress(t("正在解析 GSI 安装包", "Parsing GSI package"), 0);
+         stagesClear();
+         installStage.setText(t("正在安装 GSI", "Installing GSI"));
+         stageBegin("copy", t("解析安装包", "Parsing package"));
         new Thread(() -> {
             String path = "";
             try {
@@ -1978,7 +2000,7 @@ public class MainActivity extends Activity {
                     return;
                 }
                 runOnUiThread(() -> {
-                     showInstallProgress(t("正在读取 GSI 镜像", "Reading GSI images"), 20);
+                     stageDone("copy", t("解析安装包", "Parsing package"));
                       detailText.setText(t("正在将 ZIP 内的 img 镜像直接写入 DSU\nuserdata: ", "Writing ZIP images directly to DSU\nuserdata: ") + pendingSizeLabel);
                 });
                 String result = installZipThroughRootService(path);
@@ -1989,8 +2011,7 @@ public class MainActivity extends Activity {
     }
     private String copyInstallZip(Uri source) {
         File target = new File(getCacheDir(), "dsu-install.zip");
-        // v3.9.3：取源 ZIP 总大小，复制过程按真实字节推进 2→18%
-        // （旧逻辑整个复制阶段卡在 10%，大安装包复制几十秒~几分钟进度条纹丝不动）
+        // v3.9.5：解析阶段独立进度条（0-100% 真实字节推进）
         long total = -1;
         try (Cursor cursor = getContentResolver().query(source, new String[]{OpenableColumns.SIZE}, null, null, null)) {
             if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) total = cursor.getLong(0);
@@ -2007,13 +2028,13 @@ public class MainActivity extends Activity {
                 output.write(buffer, 0, count);
                 copied += count;
                 if (total > 0) {
-                    int pct = 2 + (int) Math.min(16, copied * 16 / total);   // 2% → 18%
+                    int pct = (int) Math.min(100, copied * 100 / total);
                     long now = System.currentTimeMillis();
-                    if ((pct != lastPct && now - lastUiAt >= 150) || pct >= 18) {
+                    if (pct != lastPct && now - lastUiAt >= 150) {
                         lastPct = pct;
                         lastUiAt = now;
                         final int p = pct;
-                        runOnUiThread(() -> showInstallProgress(t("正在解析 GSI 安装包", "Parsing GSI package"), p));
+                        runOnUiThread(() -> stageUpdate("copy", p));
                     }
                 }
             }
@@ -2028,7 +2049,7 @@ public class MainActivity extends Activity {
         boolean started = false;
         boolean completed = false;
          try (ZipFile zip = new ZipFile(path)) {
-              runOnUiThread(() -> showInstallProgress(t("正在创建 Dynamic System", "Creating Dynamic System"), 35));
+              runOnUiThread(() -> stageBegin("create", t("创建 Dynamic System", "Creating Dynamic System")));
               String cleanupError = service.cleanupDsuBackingImages();
               if (cleanupError != null && !cleanupError.isEmpty()) return t("清理旧 DSU 镜像失败: " + cleanupError, "Failed to clean old DSU images: " + cleanupError);
                if (!service.startInstallation(DSU_SLOT)) return t("Dynamic System 拒绝开始安装，请检查系统 Dynamic System 权限", "Dynamic System rejected the installation. Check Dynamic System permissions.");
@@ -2043,41 +2064,63 @@ public class MainActivity extends Activity {
                       if (partition.matches("[A-Za-z0-9_-]+") && !partition.isEmpty()) imageEntries.add(candidate);
                   }
               }
+              runOnUiThread(() -> stageDone("create", t("创建 Dynamic System", "Creating Dynamic System")));
               boolean wroteImage = false;
               java.util.HashSet<String> partitionNames = new java.util.HashSet<>();
-              // v3.9.3：分区循环进度加权 —— 每个分区在 [40, 88) 区间内均分一段，
-              // 段内「解压临时文件」占前 15%、「写入 DSU 分区」占后 85%。
-              // 旧逻辑每个分区都硬编码 50%（写入期间从 50→85 涨完，下一个分区又跳回 50），
-              // 且解压大镜像（system.img 可达 2GB+）期间进度完全冻结，用户看到的就是
-              // 「长时间卡在一个地方，没到 100% 就进入下一个」。
               int nParts = imageEntries.size();
               for (int idx = 0; idx < nParts; idx++) {
                   ZipEntry entry = imageEntries.get(idx);
                   String fileName = new File(entry.getName()).getName();
                   String partitionName = fileName.substring(0, fileName.length() - 4).toLowerCase(Locale.US);
                   if (!partitionNames.add(partitionName)) return t("ZIP 中存在重复分区镜像: " + fileName, "The ZIP contains a duplicate partition image: " + fileName);
-                  final int base = 40 + (88 - 40) * idx / Math.max(1, nParts);
-                  final int next = 40 + (88 - 40) * (idx + 1) / Math.max(1, nParts);
-                  final int extractTop = base + (next - base) * 15 / 100;
+                  final String extractId = "ext_" + partitionName;
+                  final String writeId = "wr_" + partitionName;
                   File extracted = File.createTempFile("dsu-image-", ".img", getCacheDir());
                   try {
-                      final long entrySize = entry.getSize();   // 解压后大小
-                      try (InputStream input = zip.getInputStream(entry); FileOutputStream output = new FileOutputStream(extracted)) {
-                          byte[] buffer = new byte[1024 * 1024];
-                          int count;
-                          long copied = 0;
-                          long lastUiAt = 0;
-                          runOnUiThread(() -> showInstallProgress(t("正在解压 " + partitionName, "Extracting " + partitionName), base));
-                          while ((count = input.read(buffer)) != -1) {
-                              output.write(buffer, 0, count);
-                              copied += count;
-                              if (entrySize > 0) {
+                      final long entrySize = entry.getSize();   // 解压后大小（raw 直拷进度分母）
+                      runOnUiThread(() -> stageBegin(extractId, t("解压 " + partitionName, "Extracting " + partitionName)));
+                      // v3.9.5：先读 4 字节判别 sparse 格式（OTA 提取的 vendor/product 等多为
+                      // sparse，直接写入 DSU 会导致「替换/安装成功但不开机」）→ 自动转 raw
+                      byte[] peek = new byte[4];
+                      int peeked = 0;
+                      try (InputStream raw = zip.getInputStream(entry)) {
+                          while (peeked < 4) {
+                              int n = raw.read(peek, peeked, 4 - peeked);
+                              if (n < 0) break;
+                              peeked += n;
+                          }
+                      }
+                      boolean sparse = peeked == 4 && SparseImageConverter.isSparseHeader(peek);
+                      if (sparse) runOnUiThread(() -> stageLabel(extractId, t("转换 " + partitionName + "（sparse → raw）", "Converting " + partitionName + " (sparse to raw)"), 0));
+                      try (InputStream tail = new java.io.SequenceInputStream(
+                              new java.io.ByteArrayInputStream(peek, 0, peeked), zip.getInputStream(entry));
+                           FileOutputStream output = new FileOutputStream(extracted)) {
+                          if (sparse) {
+                              final long[] lastUi = {0};
+                              SparseImageConverter.unpack(tail, output, (written, total) -> {
                                   long now = System.currentTimeMillis();
-                                  if (now - lastUiAt >= 120) {
-                                      lastUiAt = now;
-                                      final int p = base + (int) Math.min(extractTop - base, copied * (extractTop - base) / entrySize);
-                                      final String pn = partitionName;
-                                      runOnUiThread(() -> showInstallProgress(t("正在解压 " + pn, "Extracting " + pn), p));
+                                  if (now - lastUi[0] >= 120 || written >= total) {
+                                      lastUi[0] = now;
+                                      final int p = (int) Math.min(99, written * 100 / Math.max(1, total));
+                                      runOnUiThread(() -> stageUpdate(extractId, p));
+                                  }
+                              });
+                              output.getFD().sync();
+                          } else {
+                              byte[] buffer = new byte[1024 * 1024];
+                              int count;
+                              long copied = 0;
+                              long lastUiAt = 0;
+                              while ((count = tail.read(buffer)) != -1) {
+                                  output.write(buffer, 0, count);
+                                  copied += count;
+                                  if (entrySize > 0) {
+                                      long now = System.currentTimeMillis();
+                                      if (now - lastUiAt >= 120) {
+                                          lastUiAt = now;
+                                          final int p = (int) Math.min(99, copied * 100 / entrySize);
+                                          runOnUiThread(() -> stageUpdate(extractId, p));
+                                      }
                                   }
                               }
                           }
@@ -2089,23 +2132,27 @@ public class MainActivity extends Activity {
                       long partitionSize = userdata ? Math.max(userdataSizeBytes, size) : size;
                       int status = service.createPartition(partitionName, partitionSize, !userdata);
                   if (status != 0) return t("创建分区失败: " + partitionName + " (" + status + ")", "Failed to create partition: " + partitionName + " (" + status + ")");
-                  final int writeBase = extractTop;
-                  runOnUiThread(() -> showInstallProgress(t("正在写入 " + partitionName, "Writing " + partitionName), writeBase));
+                  runOnUiThread(() -> {
+                      stageDone(extractId, t("解压 " + partitionName, "Extracting " + partitionName));
+                      stageBegin(writeId, t("写入 " + partitionName, "Writing " + partitionName));
+                  });
                       try (InputStream input = new FileInputStream(extracted)) {
-                          if (!streamEntry(input, service, partitionName, size, extractTop, next - extractTop)) return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
+                          if (!streamEntry(input, service, partitionName, size, writeId)) return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
                       }
                   if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
+                  runOnUiThread(() -> stageDone(writeId, t("写入 " + partitionName, "Writing " + partitionName)));
                   } finally {
                       if (extracted.exists()) extracted.delete();
                   }
              }
               if (!wroteImage) return t("ZIP 中没有可用的 GSI img 镜像", "The ZIP contains no usable GSI .img images");
               if (!partitionNames.contains("userdata")) {
-                  runOnUiThread(() -> showInstallProgress(t("正在创建 userdata", "Creating userdata"), 88));
+                  runOnUiThread(() -> stageBegin("userdata", t("创建 userdata", "Creating userdata")));
                   if (service.createPartition("userdata", userdataSizeBytes, false) != 0) return t("创建 userdata 分区失败", "Failed to create userdata partition");
                   if (!service.closePartition()) return t("关闭 userdata 分区失败", "Failed to close userdata partition");
+                  runOnUiThread(() -> stageDone("userdata", t("创建 userdata", "Creating userdata")));
               }
-             runOnUiThread(() -> showInstallProgress(t("正在完成安装", "Finishing installation"), 94));
+             runOnUiThread(() -> stageBegin("finish", t("完成安装", "Finishing installation")));
              if (!service.finishInstallation()) return t("Dynamic System 未能完成安装", "Dynamic System could not finish installation");
               if (!service.setEnable(true, false)) return t("GSI 已安装，但启用 DSU 失败", "GSI installed, but DSU could not be enabled");
              completed = true;
@@ -2116,8 +2163,8 @@ public class MainActivity extends Activity {
             if (started && !completed) try { service.abort(); } catch (Exception ignored) { }
         }
     }
-     /** v3.9.3：写入进度按 [base, base+span) 区间线性推进（分区循环加权），UI 更新节流 ≥120ms */
-     private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize, int base, int span) throws Exception {
+     /** v3.9.5：写入阶段独立进度条（该镜像 0-100% 真实字节推进），UI 更新节流 ≥120ms */
+     private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize, String stageId) throws Exception {
          final int bufferSize = 4 * 1024 * 1024;
           try (SharedMemory memory = SharedMemory.create("tianming-dsu", bufferSize)) {
               try (ParcelFileDescriptor fd = sharedMemoryFd(memory)) {
@@ -2135,13 +2182,13 @@ public class MainActivity extends Activity {
                           if (!service.submitFromAshmem(count)) return false;
                           written += count;
                           if (totalSize > 0) {
-                              int progress = base + (int) Math.min(span, written * span / totalSize);
+                              int progress = (int) Math.min(100, written * 100 / totalSize);
                               long now = System.currentTimeMillis();
                               if (progress != lastPct && now - lastUiAt >= 120) {
                                   lastPct = progress;
                                   lastUiAt = now;
                                   final int p = progress;
-                                  runOnUiThread(() -> showInstallProgress(t("正在写入 " + partition, "Writing " + partition), p));
+                                  runOnUiThread(() -> stageUpdate(stageId, p));
                               }
                           }
                       }
@@ -2169,21 +2216,120 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { }
         return 16L * 1024L * 1024L * 1024L;
     }
-    private void showInstallProgress(String stage, int progress) {
-         if (installPanel == null) return;
-         installPanel.setVisibility(View.VISIBLE);
-         int clampedProgress = Math.max(0, Math.min(100, progress));
-         installStage.setText(stage + "  " + clampedProgress + "%");
-         installProgress.setProgress(clampedProgress);
+
+    // ---------- v3.9.5 分段进度 API：每阶段一条独立 0-100% 进度条 ----------
+
+    /** 单个阶段行：左侧标签 + 右侧百分比，下方细进度条 */
+    private static final class StageRow {
+        TextView label;
+        TextView pct;
+        ProgressBar bar;
     }
+
+    /** 清空全部阶段行（新安装/新替换开始时调用） */
+    private void stagesClear() {
+        if (stageHost != null) stageHost.removeAllViews();
+        stageRows.clear();
+        currentStageId = null;
+    }
+
+    /** 新增一个阶段行并立即置为当前活跃阶段（0%） */
+    private void stageBegin(String id, String label) {
+        if (stageHost == null) return;
+        currentStageId = id;
+        StageRow row = stageRows.get(id);
+        if (row == null) {
+            row = new StageRow();
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(-1, -2);
+            boxLp.topMargin = dp(7);
+            stageHost.addView(box, boxLp);
+            LinearLayout head = new LinearLayout(this);
+            head.setOrientation(LinearLayout.HORIZONTAL);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+            row.label = text(label, 13, Color.rgb(40, 50, 70));
+            row.label.setSingleLine(true);
+            row.label.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+            head.addView(row.label, new LinearLayout.LayoutParams(0, dp(20), 1f));
+            row.pct = text("0%", 13, Color.rgb(77, 87, 105));
+            LinearLayout.LayoutParams pctLp = new LinearLayout.LayoutParams(-2, dp(20));
+            pctLp.leftMargin = dp(8);
+            head.addView(row.pct, pctLp);
+            box.addView(head, new LinearLayout.LayoutParams(-1, dp(20)));
+            row.bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            row.bar.setMax(100);
+            row.bar.setProgressDrawable(getDrawable(R.drawable.progress_bar));
+            LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(-1, dp(6));
+            barLp.topMargin = dp(3);
+            box.addView(row.bar, barLp);
+            stageRows.put(id, row);
+        } else {
+            row.label.setTextColor(Color.rgb(40, 50, 70));
+            row.label.setText(label);
+            row.pct.setText("0%");
+            row.bar.setProgress(0);
+        }
+        if (installPanel != null) installPanel.setVisibility(View.VISIBLE);
+    }
+
+    /** 更新当前阶段百分比（0-100） */
+    private void stageUpdate(String id, int pct) {
+        StageRow row = stageRows.get(id);
+        if (row == null) return;
+        int clamped = Math.max(0, Math.min(100, pct));
+        row.pct.setText(clamped + "%");
+        row.bar.setProgress(clamped);
+        if (installPanel != null) installPanel.setVisibility(View.VISIBLE);
+    }
+
+    /** 更新阶段标签 + 百分比（阶段内语义变化时，如解压 → sparse 转换） */
+    private void stageLabel(String id, String label, int pct) {
+        StageRow row = stageRows.get(id);
+        if (row == null) return;
+        row.label.setText(label);
+        stageUpdate(id, pct);
+    }
+
+    /** 阶段完成：✓ 100% */
+    private void stageDone(String id, String label) {
+        StageRow row = stageRows.get(id);
+        if (row == null) return;
+        row.label.setText(label);
+        row.pct.setText("✓");
+        row.pct.setTextColor(0xff1f8a4c);
+        row.bar.setProgress(100);
+    }
+
+    /** 阶段失败：✗ 红色 */
+    private void stageFail(String id, String label) {
+        StageRow row = stageRows.get(id);
+        if (row == null) return;
+        row.label.setText(label);
+        row.label.setTextColor(0xffb3261e);
+        row.pct.setText("✗");
+        row.pct.setTextColor(0xffb3261e);
+    }
+
+    /** 兼容旧调用：从结果消息自动判定成败（安装流程用） */
     private void finishProgress(String message){
-             boolean success=message.contains("已安装并启用") || message.contains("DSU 已启动") || message.contains("替换完成")
-                  || message.contains("installed and DSU enabled") || message.contains("replacement complete");
-         boolean replacement=message.contains("替换完成") || message.contains("替换 ") || message.contains("replacement complete") || message.contains("replacement failed");
-         showInstallProgress(replacement ? (success ? t("替换完成", "Replacement complete") : t("替换失败", "Replacement failed"))
-                 : (success ? t("安装完成", "Installation complete") : t("安装失败", "Installation failed")), success?100:0);
+        boolean success = message.contains("已安装并启用") || message.contains("DSU 已启动") || message.contains("替换完成")
+                || message.contains("installed and DSU enabled") || message.contains("replacement complete");
+        finishProgress(message, success);
+    }
+
+    private void finishProgress(String message, boolean success){
+         boolean replacement = message.contains("替换 ") || message.contains("替换完成")
+                 || message.contains("replacement complete") || message.contains("replacement failed");
+         installStage.setText(replacement ? (success ? t("替换完成", "Replacement complete") : t("替换失败", "Replacement failed"))
+                 : (success ? t("安装完成", "Installation complete") : t("安装失败", "Installation failed")));
           detailText.setText(message);
           toast(message);
+          if (success) {
+              if (currentStageId != null) stageDone(currentStageId, t("完成", "Done"));
+          } else if (currentStageId != null) {
+              stageFail(currentStageId, t("失败", "Failed"));
+          }
           if (success && !replacement) {
               gsiStatus.setText(t("已安装，等待启动", "Installed, waiting to boot"));
               showInstalledGsiSummary();
@@ -2215,7 +2361,7 @@ public class MainActivity extends Activity {
              runOnUiThread(() -> {
                  if (success) {
                      installPanel.setVisibility(View.GONE);
-                     installProgress.setProgress(0);
+                     stagesClear();
                       installStage.setText(t("安装进度", "Installation progress"));
                       detailText.setText(t("GSI 状态\n未安装", "GSI status\nNot installed"));
                       gsiStatus.setText(t("未安装", "Not installed"));
@@ -2340,37 +2486,90 @@ public class MainActivity extends Activity {
                       "Partition name mismatch: expected " + expectedPartition + ".img, got " + selectedName));
               return;
           }
-         showInstallProgress(t("正在准备替换 " + targetPartition, "Preparing to replace " + targetPartition), 5);
+         // v3.9.5：替换分段进度（校验 → sparse 转换 → 写入），每阶段独立 0-100% 真实进度
+         stagesClear();
+         installStage.setText(t("正在替换 " + targetPartition, "Replacing " + targetPartition));
+         stageBegin("check", t("校验镜像 " + targetPartition, "Verifying image"));
            new Thread(() -> {
                ParcelFileDescriptor fd = null;
                String error = "";
                boolean success = false;
-               runOnUiThread(() -> showInstallProgress(t("正在复制 " + targetPartition + " 镜像", "Copying " + targetPartition + " image"), 35));
+               File converted = null;
                 try {
-                    fd = getContentResolver().openFileDescriptor(source, "r");
-                    long size = replacementSize(source, fd);
-                    if (fd == null) error = "无法打开镜像文件";
-                    else if (privilegedService != null) {
-                        error = privilegedService.replaceDsuBackingImage(targetSlot, targetBackingImage, fd, size, true);
-                        success = error != null && error.isEmpty();
-                    } else error = "ROOT service unavailable";
+                    // 读头 4 字节判别 sparse（OTA 提取的 vendor/product 等多为 sparse 格式）
+                    byte[] peek = new byte[4];
+                    int peeked = 0;
+                    try (InputStream head = getContentResolver().openInputStream(source)) {
+                        if (head == null) error = "无法打开镜像文件";
+                        else while (peeked < 4) {
+                            int n = head.read(peek, peeked, 4 - peeked);
+                            if (n < 0) break;
+                            peeked += n;
+                        }
+                    }
+                    boolean sparse = error.isEmpty() && peeked == 4 && SparseImageConverter.isSparseHeader(peek);
+                    runOnUiThread(() -> stageDone("check", t("校验镜像 " + targetPartition, "Verifying image")));
+                    if (error.isEmpty()) {
+                        if (sparse) {
+                            // sparse → raw：转换到临时文件（raw 大小 = blkSize × totalBlocks）
+                            runOnUiThread(() -> stageBegin("convert", t("转换 " + targetPartition + "（sparse → raw）", "Converting " + targetPartition + " (sparse to raw)")));
+                            converted = File.createTempFile("dsu-replace-", ".raw", getCacheDir());
+                            final long[] lastUi = {0};
+                            try (InputStream tail = new java.io.SequenceInputStream(
+                                         new java.io.ByteArrayInputStream(peek, 0, peeked),
+                                         getContentResolver().openInputStream(source));
+                                 FileOutputStream output = new FileOutputStream(converted)) {
+                                SparseImageConverter.unpack(tail, output, (written, total) -> {
+                                    long now = System.currentTimeMillis();
+                                    if (now - lastUi[0] >= 150 || written >= total) {
+                                        lastUi[0] = now;
+                                        final int p = (int) Math.min(100, written * 100 / Math.max(1, total));
+                                        runOnUiThread(() -> stageUpdate("convert", p));
+                                    }
+                                });
+                                output.getFD().sync();
+                            }
+                            runOnUiThread(() -> stageDone("convert", t("转换 " + targetPartition + "（sparse → raw）", "Converting " + targetPartition + " (sparse to raw)")));
+                        }
+                        runOnUiThread(() -> stageBegin("write", t("写入 " + targetPartition + " 镜像", "Writing " + targetPartition + " image")));
+                        if (sparse) {
+                            fd = ParcelFileDescriptor.open(converted, ParcelFileDescriptor.MODE_READ_ONLY);
+                            if (privilegedService != null) {
+                                error = privilegedService.replaceDsuBackingImage(targetSlot, targetBackingImage, fd, converted.length(), true, replaceProgressCallback);
+                                success = error != null && error.isEmpty();
+                            } else error = "ROOT service unavailable";
+                        } else if (privilegedService != null) {
+                            fd = getContentResolver().openFileDescriptor(source, "r");
+                            long size = replacementSize(source, fd);
+                            error = privilegedService.replaceDsuBackingImage(targetSlot, targetBackingImage, fd, size, true, replaceProgressCallback);
+                            success = error != null && error.isEmpty();
+                        } else error = "ROOT service unavailable";
+                    }
                 } catch (Exception exception) { error = exception.getMessage() == null ? exception.toString() : exception.getMessage(); }
-               finally { if (fd != null) try { fd.close(); } catch (Exception ignored) { } }
+               finally {
+                   if (fd != null) try { fd.close(); } catch (Exception ignored) { }
+                   if (converted != null && converted.exists()) converted.delete();
+               }
                final String operationError = error;
                 String message = success ? t("替换 " + targetPartition + " 完成，请点击“重启到 DSU”使其生效", "Replacement of " + targetPartition + " complete. Tap \"Reboot to DSU\" to apply it.")
                         : t("替换 " + targetPartition + " 失败：" + operationError, "Failed to replace " + targetPartition + ": " + operationError);
-             boolean result = success;
-             runOnUiThread(() -> {
-                  showInstallProgress(result ? t("替换完成", "Replacement complete") : t("替换失败", "Replacement failed"), result ? 100 : 0);
-                 detailText.setText(message);
-                 toast(message);
-                 if (result) {
-                     showImageManagement();
-                     mainHandler.postDelayed(() -> installPanel.setVisibility(View.GONE), 1200);
-                 }
-             });
+              boolean result = success;
+              runOnUiThread(() -> {
+                  finishProgress(message, result);
+                  if (result) {
+                      showImageManagement();
+                      mainHandler.postDelayed(() -> installPanel.setVisibility(View.GONE), 1200);
+                  }
+              });
           }).start();
       }
+     /** v3.9.5：root 服务写入进度的 binder 回调（“写入”阶段真实百分比） */
+     private final IRootInstallCallback.Stub replaceProgressCallback = new IRootInstallCallback.Stub() {
+         @Override public void onStage(String stage, int progress) {
+             runOnUiThread(() -> stageUpdate("write", Math.max(0, Math.min(100, progress))));
+         }
+         @Override public void onFinished(boolean success, String message) { }
+     };
       private String partitionBaseName(String name) {
           String normalized = name == null ? "" : name.toLowerCase(java.util.Locale.US);
           if (normalized.endsWith(".img") || normalized.endsWith(".raw"))
