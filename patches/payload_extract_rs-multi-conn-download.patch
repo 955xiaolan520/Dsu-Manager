@@ -1,0 +1,88 @@
+diff --git a/src/input/http.rs b/src/input/http.rs
+index 6b6f45a..eaa3def 100644
+--- a/src/input/http.rs
++++ b/src/input/http.rs
+@@ -273,34 +273,60 @@ pub fn open_http_extract(
+                 .context("failed to clone temp file handle")?,
+         );
+ 
++        // Dsu-Manager 多连接加速：CDN 对单连接限速（实测 ~600KB/s），原实现里单个
++        // 分区的数据在 payload 中连续、合并后只有 1 个 range → 只有 1 个连接在下载。
++        // 这里把每个大 range 切成多个子块并行下载（aria2c 思路），块大小 8MB、
++        // 每 range 最多 16 块、全局信号量 16 并发，多连接即可跑满带宽。
++        const SPLIT_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
++        const MAX_CONNECTIONS: usize = 16;
++
+         let client = Arc::new(client);
+         let url: Arc<str> = Arc::from(url);
+         let downloaded = Arc::new(AtomicU64::new(0));
+-        let sem = Arc::new(tokio::sync::Semaphore::new(8));
++        let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+ 
+-        let mut handles = Vec::with_capacity(merged.len());
++        let mut handles = Vec::new();
+         for (i, &(data_region_off, length)) in merged.iter().enumerate() {
+-            let client = client.clone();
+-            let url = url.clone();
+-            let downloaded = downloaded.clone();
+-            let sem = sem.clone();
+-            let write_file = write_file.clone();
+-            let remote_off = payload_off + data_offset + data_region_off;
+-            let file_base = bases[i];
+-
+-            handles.push(tokio::spawn(async move {
+-                let _permit = sem.acquire().await.unwrap();
+-                range_download_to_file(
+-                    &client,
+-                    &url,
+-                    remote_off,
+-                    length,
+-                    &write_file,
+-                    file_base,
+-                    &downloaded,
+-                )
+-                .await
+-            }));
++            let n_splits = if length > SPLIT_CHUNK_BYTES {
++                (((length + SPLIT_CHUNK_BYTES - 1) / SPLIT_CHUNK_BYTES) as usize)
++                    .min(MAX_CONNECTIONS)
++                    .max(1)
++            } else {
++                1
++            };
++            let chunk_len = length / n_splits as u64;
++            for s in 0..n_splits {
++                let this_off = data_region_off + chunk_len * s as u64;
++                let this_len = if s == n_splits - 1 {
++                    length - chunk_len * s as u64
++                } else {
++                    chunk_len
++                };
++                if this_len == 0 {
++                    continue;
++                }
++                let client = client.clone();
++                let url = url.clone();
++                let downloaded = downloaded.clone();
++                let sem = sem.clone();
++                let write_file = write_file.clone();
++                let remote_off = payload_off + data_offset + this_off;
++                let file_base = bases[i] + (this_off - data_region_off);
++
++                handles.push(tokio::spawn(async move {
++                    let _permit = sem.acquire().await.unwrap();
++                    range_download_to_file(
++                        &client,
++                        &url,
++                        remote_off,
++                        this_len,
++                        &write_file,
++                        file_base,
++                        &downloaded,
++                    )
++                    .await
++                }));
++            }
+         }
+ 
+         let pb = indicatif::ProgressBar::new(total_data);
