@@ -2075,80 +2075,62 @@ public class MainActivity extends Activity {
                   if (!partitionNames.add(partitionName)) return t("ZIP 中存在重复分区镜像: " + fileName, "The ZIP contains a duplicate partition image: " + fileName);
                   final String extractId = "ext_" + partitionName;
                   final String writeId = "wr_" + partitionName;
-                  File extracted = File.createTempFile("dsu-image-", ".img", getCacheDir());
-                  try {
-                      final long entrySize = entry.getSize();   // 解压后大小（raw 直拷进度分母）
-                      runOnUiThread(() -> stageBegin(extractId, t("解压 " + partitionName, "Extracting " + partitionName)));
-                      // v3.9.5：先读 4 字节判别 sparse 格式（OTA 提取的 vendor/product 等多为
-                      // sparse，直接写入 DSU 会导致「替换/安装成功但不开机」）→ 自动转 raw
-                      byte[] peek = new byte[4];
-                      int peeked = 0;
-                      try (InputStream raw = zip.getInputStream(entry)) {
-                          while (peeked < 4) {
-                              int n = raw.read(peek, peeked, 4 - peeked);
-                              if (n < 0) break;
-                              peeked += n;
-                          }
+                  final long entrySize = entry.getSize();
+                  // v3.9.6 核心修复：读 28 字节文件头，sparse 镜像直接取 raw 尺寸建分区，
+                  // 之后边解包边流式写入 ashmem 通道 —— 全程不落任何临时镜像文件。
+                  // v3.9.5 的「先转 raw 临时文件再建 raw 分区」使空间峰值 = 2×raw + 之前所有
+                  // 分区的 raw 扩容，/data 被挤爆后 gsid fiemap 分配失败返回 1，
+                  // 即用户遇到的「创建分区失败: odm (1)」。
+                  byte[] peek = new byte[28];
+                  int peeked = 0;
+                  try (InputStream raw = zip.getInputStream(entry)) {
+                      while (peeked < 28) {
+                          int n = raw.read(peek, peeked, 28 - peeked);
+                          if (n < 0) break;
+                          peeked += n;
                       }
-                      boolean sparse = peeked == 4 && SparseImageConverter.isSparseHeader(peek);
-                      if (sparse) runOnUiThread(() -> stageLabel(extractId, t("转换 " + partitionName + "（sparse → raw）", "Converting " + partitionName + " (sparse to raw)"), 0));
-                      try (InputStream tail = new java.io.SequenceInputStream(
-                              new java.io.ByteArrayInputStream(peek, 0, peeked), zip.getInputStream(entry));
-                           FileOutputStream output = new FileOutputStream(extracted)) {
-                          if (sparse) {
-                              final long[] lastUi = {0};
-                              SparseImageConverter.unpack(tail, output, (written, total) -> {
-                                  long now = System.currentTimeMillis();
-                                  if (now - lastUi[0] >= 120 || written >= total) {
-                                      lastUi[0] = now;
-                                      final int p = (int) Math.min(99, written * 100 / Math.max(1, total));
-                                      runOnUiThread(() -> stageUpdate(extractId, p));
-                                  }
-                              });
-                              output.getFD().sync();
-                          } else {
-                              byte[] buffer = new byte[1024 * 1024];
-                              int count;
-                              long copied = 0;
-                              long lastUiAt = 0;
-                              while ((count = tail.read(buffer)) != -1) {
-                                  output.write(buffer, 0, count);
-                                  copied += count;
-                                  if (entrySize > 0) {
-                                      long now = System.currentTimeMillis();
-                                      if (now - lastUiAt >= 120) {
-                                          lastUiAt = now;
-                                          final int p = (int) Math.min(99, copied * 100 / entrySize);
-                                          runOnUiThread(() -> stageUpdate(extractId, p));
-                                      }
-                                  }
-                              }
-                          }
-                      }
-                      long size = extracted.length();
-                      if (size <= 0) return t("镜像为空: " + fileName, "The image is empty: " + fileName);
-                      wroteImage = true;
-                      boolean userdata = partitionName.equalsIgnoreCase("userdata");
-                      long partitionSize = userdata ? Math.max(userdataSizeBytes, size) : size;
-                      int status = service.createPartition(partitionName, partitionSize, !userdata);
-                  if (status != 0) return t("创建分区失败: " + partitionName + " (" + status + ")", "Failed to create partition: " + partitionName + " (" + status + ")");
-                  runOnUiThread(() -> {
-                      stageDone(extractId, t("解压 " + partitionName, "Extracting " + partitionName));
-                      stageBegin(writeId, t("写入 " + partitionName, "Writing " + partitionName));
-                  });
-                      try (InputStream input = new FileInputStream(extracted)) {
-                          if (!streamEntry(input, service, partitionName, size, writeId)) return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
-                      }
-                  if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
-                  runOnUiThread(() -> stageDone(writeId, t("写入 " + partitionName, "Writing " + partitionName)));
-                  } finally {
-                      if (extracted.exists()) extracted.delete();
                   }
+                  boolean sparse = peeked == 28 && SparseImageConverter.isSparseHeader(peek);
+                  long imageSize = sparse
+                          ? SparseImageConverter.sparseRawSize(peek)
+                          : (entrySize > 0 ? entrySize : 0);
+                  if (imageSize <= 0) return t("镜像为空或损坏: " + fileName, "The image is empty or corrupt: " + fileName);
+                  boolean userdata = partitionName.equalsIgnoreCase("userdata");
+                  // gsid 要求分区尺寸 512 字节对齐（非对齐直接返回错误 1）；
+                  // userdata 不小于用户选择的自定义容量
+                  long partitionSize = ((userdata ? Math.max(userdataSizeBytes, imageSize) : imageSize) + 511L) & ~511L;
+                  int status = service.createPartition(partitionName, partitionSize, !userdata);
+                  if (status != 0) return gsiStatusDetail(partitionName, status, partitionSize);
+                  wroteImage = true;
+                  final String extractLabel = sparse
+                          ? t("解压转换 " + partitionName + "（sparse）", "Extracting " + partitionName + " (sparse)")
+                          : t("解压 " + partitionName, "Extracting " + partitionName);
+                  final String writeLabel = t("写入 " + partitionName, "Writing " + partitionName);
+                  runOnUiThread(() -> {
+                      stageBegin(extractId, extractLabel);
+                      stageBegin(writeId, writeLabel);
+                  });
+                  // 「解压」条 = 已消费的 ZIP 条目字节（sparse 时为 sparse 文件侧进度），
+                  // 「写入」条 = 已灌入分区的字节（sparse 时为 raw 侧进度）—— 两条独立真实进度
+                  try (AshmemPartitionWriter writer = new AshmemPartitionWriter(service, partitionName, partitionSize, writeId);
+                       InputStream tail = new java.io.SequenceInputStream(
+                               new java.io.ByteArrayInputStream(peek, 0, peeked), zip.getInputStream(entry))) {
+                      if (sparse) SparseImageConverter.unpack(new UiCountingInputStream(tail, entrySize, extractId), writer, writer);
+                      else writer.copyFrom(tail, entrySize, extractId);
+                      writer.finish();
+                  }
+                  if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
+                  runOnUiThread(() -> {
+                      stageDone(extractId, extractLabel);
+                      stageDone(writeId, writeLabel);
+                  });
              }
               if (!wroteImage) return t("ZIP 中没有可用的 GSI img 镜像", "The ZIP contains no usable GSI .img images");
               if (!partitionNames.contains("userdata")) {
                   runOnUiThread(() -> stageBegin("userdata", t("创建 userdata", "Creating userdata")));
-                  if (service.createPartition("userdata", userdataSizeBytes, false) != 0) return t("创建 userdata 分区失败", "Failed to create userdata partition");
+                  long userdataSize = (userdataSizeBytes + 511L) & ~511L;
+                  int status = service.createPartition("userdata", userdataSize, false);
+                  if (status != 0) return gsiStatusDetail("userdata", status, userdataSize);
                   if (!service.closePartition()) return t("关闭 userdata 分区失败", "Failed to close userdata partition");
                   runOnUiThread(() -> stageDone("userdata", t("创建 userdata", "Creating userdata")));
               }
@@ -2163,41 +2145,184 @@ public class MainActivity extends Activity {
             if (started && !completed) try { service.abort(); } catch (Exception ignored) { }
         }
     }
-     /** v3.9.5：写入阶段独立进度条（该镜像 0-100% 真实字节推进），UI 更新节流 ≥120ms */
-     private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize, String stageId) throws Exception {
-         final int bufferSize = 4 * 1024 * 1024;
-          try (SharedMemory memory = SharedMemory.create("tianming-dsu", bufferSize)) {
-              try (ParcelFileDescriptor fd = sharedMemoryFd(memory)) {
-                  if (!service.setAshmem(fd, bufferSize)) return false;
-                  ByteBuffer mapped = memory.mapReadWrite();
-                  try {
-                      byte[] buffer = new byte[1024 * 1024];
-                      int count;
-                      long written = 0;
-                      long lastUiAt = 0;
-                      int lastPct = -1;
-                      while ((count = input.read(buffer)) != -1) {
-                          mapped.position(0);
-                          mapped.put(buffer, 0, count);
-                          if (!service.submitFromAshmem(count)) return false;
-                          written += count;
-                          if (totalSize > 0) {
-                              int progress = (int) Math.min(100, written * 100 / totalSize);
-                              long now = System.currentTimeMillis();
-                              if (progress != lastPct && now - lastUiAt >= 120) {
-                                  lastPct = progress;
-                                  lastUiAt = now;
-                                  final int p = progress;
-                                  runOnUiThread(() -> stageUpdate(stageId, p));
-                              }
-                          }
-                      }
-                      return true;
-                  } finally {
-                      memory.unmap(mapped);
-                  }
-              }
-          }
+     /**
+      * v3.9.6：分区流式写入器 —— 把 sparse 转换 / ZIP 解压输出直接灌进 gsid 的 ashmem 通道。
+      * 替代 v3.9.5 及更早的「先解压到临时文件再 streamEntry」两段式流程。
+      * 同时实现 SparseImageConverter.Progress：sparse 转换的输出进度即「写入」进度。
+      */
+     private final class AshmemPartitionWriter extends OutputStream implements SparseImageConverter.Progress {
+         private static final int BUFFER_SIZE = 4 * 1024 * 1024;
+         private static final int CHUNK = 1024 * 1024;
+         private final IPrivilegedService service;
+         private final String partition;
+         private final long totalSize;
+         private final String stageId;
+         private final SharedMemory memory;
+         private final ParcelFileDescriptor fd;
+         private final ByteBuffer mapped;
+         private final byte[] chunkBuffer = new byte[CHUNK];
+         private long written = 0;
+         private long lastUiAt = 0;
+
+         AshmemPartitionWriter(IPrivilegedService service, String partition, long totalSize, String stageId)
+                 throws Exception {
+             this.service = service;
+             this.partition = partition;
+             this.totalSize = totalSize;
+             this.stageId = stageId;
+             this.memory = SharedMemory.create("tianming-dsu", BUFFER_SIZE);
+             this.fd = sharedMemoryFd(memory);
+             if (!service.setAshmem(fd, BUFFER_SIZE))
+                 throw new IOException("setAshmem failed for " + partition);
+             this.mapped = memory.mapReadWrite();
+         }
+
+         @Override public void onProgress(long out, long total) { updateUi(out); }
+
+         private void updateUi(long nowWritten) {
+             if (totalSize <= 0) return;
+             long now = System.currentTimeMillis();
+             if (now - lastUiAt >= 120) {
+                 lastUiAt = now;
+                 final int p = (int) Math.min(100, nowWritten * 100 / totalSize);
+                 runOnUiThread(() -> stageUpdate(stageId, p));
+             }
+         }
+
+         @Override public void write(int b) throws IOException {
+             chunkBuffer[0] = (byte) b;
+             write(chunkBuffer, 0, 1);
+         }
+
+         @Override public void write(byte[] b, int off, int len) throws IOException {
+             try {
+                 int offset = off;
+                 int remaining = len;
+                 while (remaining > 0) {
+                     int piece = Math.min(remaining, CHUNK);
+                     mapped.position(0);
+                     mapped.put(b, offset, piece);
+                     if (!service.submitFromAshmem(piece))
+                         throw new IOException("submitFromAshmem failed for " + partition);
+                     written += piece;
+                     offset += piece;
+                     remaining -= piece;
+                     if (written > totalSize)
+                         throw new IOException("image data exceeds partition size: " + partition);
+                     updateUi(written);
+                 }
+             } catch (IOException direct) {
+                 throw direct;
+             } catch (Exception wrapped) {
+                 throw new IOException(wrapped);
+             }
+         }
+
+         /** raw 直拷路径：边拷贝边分别推进「解压」与「写入」两条进度条 */
+         void copyFrom(InputStream input, long inputTotal, String extractStageId) throws IOException {
+             byte[] local = new byte[CHUNK];
+             long consumed = 0;
+             long lastExtUi = 0;
+             int count;
+             try {
+                 while ((count = input.read(local)) != -1) {
+                     write(local, 0, count);
+                     consumed += count;
+                     if (inputTotal > 0) {
+                         long now = System.currentTimeMillis();
+                         if (now - lastExtUi >= 120) {
+                             lastExtUi = now;
+                             final int p = (int) Math.min(100, consumed * 100 / inputTotal);
+                             runOnUiThread(() -> stageUpdate(extractStageId, p));
+                         }
+                     }
+                 }
+             } catch (IOException direct) {
+                 throw direct;
+             } catch (Exception wrapped) {
+                 throw new IOException(wrapped);
+             }
+         }
+
+         /** 补零到分区尺寸（512 取整 / userdata 扩容后的余量），并把「写入」推到 100% */
+         void finish() throws IOException {
+             byte[] zeros = new byte[CHUNK];
+             while (written < totalSize) {
+                 int piece = (int) Math.min(zeros.length, totalSize - written);
+                 write(zeros, 0, piece);
+             }
+             runOnUiThread(() -> stageUpdate(stageId, 100));
+         }
+
+         @Override public void close() {
+             try { memory.unmap(mapped); } catch (Exception ignored) { }
+             try { fd.close(); } catch (Exception ignored) { }
+             try { memory.close(); } catch (Exception ignored) { }
+         }
+     }
+
+     /** v3.9.6：sparse 转换路径的输入侧进度 —— 「解压」条 = 已消费 sparse 字节 / ZIP 条目大小 */
+     private final class UiCountingInputStream extends java.io.FilterInputStream {
+         private final long total;
+         private final String stageId;
+         private long consumed = 0;
+         private long lastUiAt = 0;
+
+         UiCountingInputStream(InputStream in, long total, String stageId) {
+             super(in);
+             this.total = total;
+             this.stageId = stageId;
+         }
+
+         @Override public int read() throws IOException {
+             int value = super.read();
+             if (value >= 0) report(1);
+             return value;
+         }
+
+         @Override public int read(byte[] b, int off, int len) throws IOException {
+             int count = super.read(b, off, len);
+             if (count > 0) report(count);
+             return count;
+         }
+
+         private void report(int bytes) {
+             consumed += bytes;
+             if (total <= 0) return;
+             long now = System.currentTimeMillis();
+             if (now - lastUiAt >= 120) {
+                 lastUiAt = now;
+                 final int p = (int) Math.min(100, consumed * 100 / total);
+                 runOnUiThread(() -> stageUpdate(stageId, p));
+             }
+         }
+     }
+
+     /** v3.9.6：gsid INSTALL_* 状态码 → 可读诊断（含分区尺寸与 /data 可用空间） */
+     private String gsiStatusDetail(String partition, int status, long sizeBytes) {
+         long freeBytes = 0;
+         try { freeBytes = new android.os.StatFs("/data").getAvailableBytes(); } catch (Exception ignored) { }
+         String need = formatSizeBytesHuman(sizeBytes);
+         String free = formatSizeBytesHuman(Math.max(0, freeBytes));
+         if (status == 2)
+             return t("创建分区失败: " + partition + "（错误 2：存储空间不足）。该分区需要约 " + need + "，/data 当前可用 " + free + "，请清理空间后重试",
+                     "Failed to create partition: " + partition + " (error 2: no space). It needs about " + need + "; /data has " + free + " free.");
+         if (status == 3)
+             return t("创建分区失败: " + partition + "（错误 3：剩余空间低于安全阈值）。A/B 设备需额外预留约一个 super 分区的空间；该分区需 " + need + "，/data 可用 " + free,
+                     "Failed to create partition: " + partition + " (error 3: below safe free-space threshold). A/B devices must also reserve about one super partition; it needs " + need + ", " + free + " free.");
+         if (status == 1)
+             return t("创建分区失败: " + partition + "（错误 1：底层镜像分配失败，常见于存储空间不足或碎片化）。该分区需 " + need + "，/data 可用 " + free + "，请清理空间后重试",
+                     "Failed to create partition: " + partition + " (error 1: backing image allocation failed, usually low or fragmented storage). It needs " + need + ", " + free + " free.");
+         return t("创建分区失败: " + partition + "（错误 " + status + "）",
+                 "Failed to create partition: " + partition + " (error " + status + ")");
+     }
+
+     private String formatSizeBytesHuman(long bytes) {
+         if (bytes >= 1024L * 1024L * 1024L)
+             return String.format(Locale.US, "%.1f GB", bytes / 1073741824d);
+         if (bytes >= 1024L * 1024L)
+             return String.format(Locale.US, "%.1f MB", bytes / 1048576d);
+         return bytes + " B";
      }
     private ParcelFileDescriptor sharedMemoryFd(SharedMemory memory) throws Exception {
         try {
@@ -2486,7 +2611,7 @@ public class MainActivity extends Activity {
                       "Partition name mismatch: expected " + expectedPartition + ".img, got " + selectedName));
               return;
           }
-         // v3.9.5：替换分段进度（校验 → sparse 转换 → 写入），每阶段独立 0-100% 真实进度
+         // v3.9.6：替换分段进度（校验 → 写入），sparse 转换在 root 进程内边解包边写块设备
          stagesClear();
          installStage.setText(t("正在替换 " + targetPartition, "Replacing " + targetPartition));
          stageBegin("check", t("校验镜像 " + targetPartition, "Verifying image"));
@@ -2494,61 +2619,47 @@ public class MainActivity extends Activity {
                ParcelFileDescriptor fd = null;
                String error = "";
                boolean success = false;
-               File converted = null;
                 try {
-                    // 读头 4 字节判别 sparse（OTA 提取的 vendor/product 等多为 sparse 格式）
-                    byte[] peek = new byte[4];
+                    // 读 28 字节文件头：判别 sparse 并直接算出 raw 尺寸（blkSize × totalBlocks）
+                    byte[] peek = new byte[28];
                     int peeked = 0;
                     try (InputStream head = getContentResolver().openInputStream(source)) {
                         if (head == null) error = "无法打开镜像文件";
-                        else while (peeked < 4) {
-                            int n = head.read(peek, peeked, 4 - peeked);
+                        else while (peeked < 28) {
+                            int n = head.read(peek, peeked, 28 - peeked);
                             if (n < 0) break;
                             peeked += n;
                         }
                     }
-                    boolean sparse = error.isEmpty() && peeked == 4 && SparseImageConverter.isSparseHeader(peek);
+                    boolean sparse = error.isEmpty() && peeked == 28 && SparseImageConverter.isSparseHeader(peek);
+                    long imageSize = 0;
+                    if (error.isEmpty() && sparse) {
+                        // raw 尺寸在建镜像前就确定 → root 服务按此尺寸重建分区并流式解包写入，
+                        // 不再先落 raw 临时文件（v3.9.5 的做法空间峰值翻倍且耗时翻倍）
+                        imageSize = SparseImageConverter.sparseRawSize(peek);
+                        if ((imageSize & 511L) != 0) error = "sparse 镜像解包后尺寸未按 512 字节对齐";
+                    }
                     runOnUiThread(() -> stageDone("check", t("校验镜像 " + targetPartition, "Verifying image")));
+                    if (error.isEmpty() && privilegedService == null) error = "ROOT service unavailable";
                     if (error.isEmpty()) {
-                        if (sparse) {
-                            // sparse → raw：转换到临时文件（raw 大小 = blkSize × totalBlocks）
-                            runOnUiThread(() -> stageBegin("convert", t("转换 " + targetPartition + "（sparse → raw）", "Converting " + targetPartition + " (sparse to raw)")));
-                            converted = File.createTempFile("dsu-replace-", ".raw", getCacheDir());
-                            final long[] lastUi = {0};
-                            try (InputStream tail = new java.io.SequenceInputStream(
-                                         new java.io.ByteArrayInputStream(peek, 0, peeked),
-                                         getContentResolver().openInputStream(source));
-                                 FileOutputStream output = new FileOutputStream(converted)) {
-                                SparseImageConverter.unpack(tail, output, (written, total) -> {
-                                    long now = System.currentTimeMillis();
-                                    if (now - lastUi[0] >= 150 || written >= total) {
-                                        lastUi[0] = now;
-                                        final int p = (int) Math.min(100, written * 100 / Math.max(1, total));
-                                        runOnUiThread(() -> stageUpdate("convert", p));
-                                    }
-                                });
-                                output.getFD().sync();
-                            }
-                            runOnUiThread(() -> stageDone("convert", t("转换 " + targetPartition + "（sparse → raw）", "Converting " + targetPartition + " (sparse to raw)")));
+                        runOnUiThread(() -> stageBegin("write",
+                                sparse ? t("解包写入 " + targetPartition + " 镜像（sparse）", "Unpacking and writing " + targetPartition + " image (sparse)")
+                                       : t("写入 " + targetPartition + " 镜像", "Writing " + targetPartition + " image")));
+                        fd = getContentResolver().openFileDescriptor(source, "r");
+                        if (!sparse) {
+                            imageSize = replacementSize(source, fd);
+                            if (imageSize <= 0) error = "无法确定镜像大小";
                         }
-                        runOnUiThread(() -> stageBegin("write", t("写入 " + targetPartition + " 镜像", "Writing " + targetPartition + " image")));
-                        if (sparse) {
-                            fd = ParcelFileDescriptor.open(converted, ParcelFileDescriptor.MODE_READ_ONLY);
-                            if (privilegedService != null) {
-                                error = privilegedService.replaceDsuBackingImage(targetSlot, targetBackingImage, fd, converted.length(), true, replaceProgressCallback);
-                                success = error != null && error.isEmpty();
-                            } else error = "ROOT service unavailable";
-                        } else if (privilegedService != null) {
-                            fd = getContentResolver().openFileDescriptor(source, "r");
-                            long size = replacementSize(source, fd);
-                            error = privilegedService.replaceDsuBackingImage(targetSlot, targetBackingImage, fd, size, true, replaceProgressCallback);
+                        if (error.isEmpty()) {
+                            // root 侧复制前会 lseek 归零，fd 上面 peek 过 28 字节也没关系
+                            error = privilegedService.replaceDsuBackingImage(
+                                    targetSlot, targetBackingImage, fd, imageSize, true, sparse, replaceProgressCallback);
                             success = error != null && error.isEmpty();
-                        } else error = "ROOT service unavailable";
+                        }
                     }
                 } catch (Exception exception) { error = exception.getMessage() == null ? exception.toString() : exception.getMessage(); }
                finally {
                    if (fd != null) try { fd.close(); } catch (Exception ignored) { }
-                   if (converted != null && converted.exists()) converted.delete();
                }
                final String operationError = error;
                 String message = success ? t("替换 " + targetPartition + " 完成，请点击“重启到 DSU”使其生效", "Replacement of " + targetPartition + " complete. Tap \"Reboot to DSU\" to apply it.")

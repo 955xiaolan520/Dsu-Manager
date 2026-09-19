@@ -27,6 +27,21 @@ public final class SparseImageConverter {
                 && (first4[3] & 0xFF) == 0xED;
     }
 
+    /**
+     * v3.9.6：从 28 字节 sparse 文件头解析解包后的 raw 尺寸（= blkSize × totalBlocks）。
+     * 用于在创建分区前就确定 raw 尺寸，从而流式写入（无需先落临时 raw 文件）。
+     *
+     * @return raw 字节数；头部不完整/非法时抛 IOException
+     */
+    public static long sparseRawSize(byte[] header28) throws IOException {
+        if (header28 == null || header28.length < 28 || !isSparseHeader(header28))
+            throw new IOException("not an Android sparse image header");
+        long blkSize = readLe32(header28, 12) & 0xFFFFFFFFL;
+        long totalBlocks = readLe32(header28, 16) & 0xFFFFFFFFL;
+        if (blkSize <= 0 || totalBlocks <= 0) throw new IOException("corrupt sparse header");
+        return blkSize * totalBlocks;
+    }
+
     /** 转换进度回调：written / total（字节） */
     public interface Progress {
         void onProgress(long written, long total);

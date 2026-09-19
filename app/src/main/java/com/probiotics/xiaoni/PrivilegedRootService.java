@@ -11,6 +11,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -368,7 +369,8 @@ public final class PrivilegedRootService extends RootService {
             return String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576d);
         }
         @Override public String replaceDsuBackingImage(String slot, String imageName,
-                ParcelFileDescriptor fd, long size, boolean force, IRootInstallCallback progress) {
+                ParcelFileDescriptor fd, long size, boolean force, boolean sparse,
+                IRootInstallCallback progress) {
             if (fd == null) return "input image fd is null";
             try {
                 validateSlot(slot);
@@ -379,8 +381,12 @@ public final class PrivilegedRootService extends RootService {
                 Exception firstError = null;
                 for (int attempt = 0; attempt < 2; attempt++) {
                     try {
+                        // v3.9.6（参照 DSU Sideloader Plus）：打开镜像服务前确保
+                        // /data/gsi/<prefix> 与 /metadata/gsi/<prefix> 目录存在并具有正确
+                        // 权限/SELinux 标签，否则 openImageService/后续 fiemap 写入可能失败
+                        ensureGsiServiceDirectory(slot);
                         Object imageService = imageServiceInterface(slot);
-                        writeDsuBackingImage(imageService, imageName, fd, size, force, progress);
+                        writeDsuBackingImage(imageService, imageName, fd, size, force, sparse, progress);
                         return "";
                     } catch (Exception error) {
                         firstError = error;
@@ -500,49 +506,6 @@ public final class PrivilegedRootService extends RootService {
             return base.toLowerCase(java.util.Locale.US);
         }
 
-        private void replaceBackingImageFile(String targetName, ParcelFileDescriptor fd, long size)
-                throws IOException {
-            File target = findInstalledImage(targetName);
-            if (!target.isFile())
-                throw new IOException("existing DSU backing image is unavailable: " + targetName);
-            if (!target.getName().matches("[a-z0-9_-]+\\.img\\.[0-9]+"))
-                throw new IOException("target is not a DSU backing data file: " + target.getName());
-            Log.i(TAG, "Overwriting existing DSU backing file " + target.getAbsolutePath());
-            copyFileToPath(fd, target, size, null);
-        }
-
-        private void replaceMappedBackingImage(Object imageService, String targetName,
-                ParcelFileDescriptor fd, long size) throws Exception {
-            if (!imageExists(imageService, targetName))
-                throw new IOException("DSU backing image does not exist: " + targetName);
-            boolean wasMapped = imageMapped(imageService, targetName);
-            String mappedPath = null;
-            boolean mappedForReplacement = false;
-            try {
-                if (wasMapped) {
-                    mappedPath = mappedImageDevice(imageService, targetName);
-                    Log.i(TAG, "Reusing mapped DSU block device " + mappedPath
-                            + " for " + targetName);
-                } else {
-                    Log.i(TAG, "Mapping existing DSU backing image " + targetName);
-                    mappedPath = imageMap(imageService, targetName);
-                    mappedForReplacement = true;
-                }
-                if (mappedPath == null || mappedPath.length() == 0)
-                    throw new IOException("mapped DSU block device path is empty: " + targetName);
-                Log.i(TAG, "Writing mapped DSU block device " + mappedPath
-                        + " for " + targetName + " bytes=" + size);
-                copyFileToBlockDevice(fd, mappedPath, size, null);
-            } finally {
-                try {
-                    if (mappedForReplacement && imageMapped(imageService, targetName))
-                        imageVoid(imageService, "unmapImageDevice", targetName);
-                } catch (Exception error) {
-                    Log.w(TAG, "Unable to unmap DSU image " + targetName, error);
-                }
-            }
-        }
-
         private Set<String> backingImageNames(Object service) throws Exception {
             Set<String> names = new HashSet<>();
             Object images = invokeHidden("android.gsi.IImageService", service, "getAllBackingImages");
@@ -601,8 +564,35 @@ public final class PrivilegedRootService extends RootService {
             throw new IOException("blockdev failed for " + path);
         }
 
+        /**
+         * v3.9.6（参照 DSU Sideloader Plus 反编译逻辑）：确保 gsid 的镜像目录存在。
+         * slot（image service prefix）形如 "dsu/dsu"，对应实际目录：
+         *   /data/gsi/<prefix> 与 /metadata/gsi/<prefix>
+         * 目录不存在则创建（0755），随后 restorecon 修正 SELinux 标签 ——
+         * gsid 的 fiemap 写入与 liblp 元数据都依赖这两个目录的合法上下文。
+         */
+        private void ensureGsiServiceDirectory(String slot) {
+            String prefix = slot == null ? "" : slot;
+            for (String root : new String[]{"/data/gsi/", "/metadata/gsi/"}) {
+                String path = root + prefix;
+                try {
+                    File directory = new File(path);
+                    if (!directory.exists() && !directory.mkdirs())
+                        throw new IOException("failed to create " + path);
+                    try { android.system.Os.chmod(path, 0755); } catch (Exception ignored) { }
+                    // restorecon 修正 SELinux 标签（新建目录默认继承的标签可能不被 gsid 接受）
+                    try {
+                        new ProcessBuilder(Arrays.asList("/system/bin/restorecon", "-R", path))
+                                .redirectErrorStream(true).start().waitFor();
+                    } catch (Exception ignored) { }
+                } catch (Exception error) {
+                    Log.w(TAG, "ensureGsiServiceDirectory failed for " + path, error);
+                }
+            }
+        }
+
         private void writeDsuBackingImage(Object service, String name, ParcelFileDescriptor fd,
-                long size, boolean force, IRootInstallCallback progress) throws Exception {
+                long size, boolean force, boolean sparse, IRootInstallCallback progress) throws Exception {
             boolean existed = imageExists(service, name);
             boolean mapped = imageMapped(service, name);
             if (existed && !force) throw new IllegalStateException("Image already exists: " + name);
@@ -617,7 +607,7 @@ public final class PrivilegedRootService extends RootService {
                 if (mappedPath == null || mappedPath.length() == 0)
                     throw new IllegalStateException("mapImageDevice(" + name + ") returned empty path");
                 mappedNow = true;
-                copyFileToBlockDevice(fd, mappedPath, size, progress);
+                copyFileToBlockDevice(fd, mappedPath, size, progress, sparse);
                 imageVoid(service, "unmapImageDevice", name);
                 mappedNow = false;
             } catch (Exception error) {
@@ -633,41 +623,65 @@ public final class PrivilegedRootService extends RootService {
         }
 
         private void copyFileToBlockDevice(ParcelFileDescriptor fd, String path, long expected,
-                IRootInstallCallback progress) throws IOException {
-            copyFileToPath(fd, new File(path), expected, progress);
+                IRootInstallCallback progress, boolean sparse) throws IOException {
+            copyFileToPath(fd, new File(path), expected, progress, sparse);
         }
 
+        /**
+         * v3.9.6：sparse 镜像在 root 进程内边解包边写块设备 —— 不再先落 raw 临时文件。
+         * 旧实现（v3.9.5）在应用侧先转 raw 临时文件再替换，空间峰值 = raw×2，极易把
+         * /data 挤爆导致 createBackingImage 失败。
+         *
+         * @param expected sparse=true 时为解包后的 raw 尺寸（= blkSize × totalBlocks）
+         */
         private void copyFileToPath(ParcelFileDescriptor fd, File target, long expected,
-                IRootInstallCallback progress) throws IOException {
+                IRootInstallCallback progress, boolean sparse) throws IOException {
             long copied = 0;
             try (ParcelFileDescriptor duplicate = ParcelFileDescriptor.dup(fd.getFileDescriptor());
                  ParcelFileDescriptor.AutoCloseInputStream input = new ParcelFileDescriptor.AutoCloseInputStream(duplicate);
                  FileOutputStream output = new FileOutputStream(target)) {
-                // v3.9.5 修复「short image copy」：dup() 与原 fd 共享文件偏移。
-                // gsid 死亡重试（DeadObject → 第二次尝试）时原偏移已在 EOF，复制 0 字节即抛
-                // short image copy。每次复制前把偏移归零，重试也能从文件头完整复制。
+                // 修复「short image copy」：dup() 与原 fd 共享文件偏移。
+                // gsid 死亡重试（DeadObject → 第二次尝试）或应用侧 peek 过文件头后
+                // 原偏移不在 0，复制前把偏移归零，确保始终从文件头完整读取。
                 try {
                     android.system.Os.lseek(duplicate.getFileDescriptor(), 0, android.system.OsConstants.SEEK_SET);
                 } catch (Exception ignored) { }
                 byte[] buffer = new byte[4 * 1024 * 1024];
                 int count;
-                long lastReport = 0L;
-                while ((count = input.read(buffer)) != -1) {
-                    output.write(buffer, 0, count);
-                    copied += count;
-                    if (progress != null && expected > 0) {
+                final long[] lastReport = {0L};
+                if (sparse) {
+                    // sparse → raw 流式转换，进度 = 已输出 raw 字节 / raw 总尺寸
+                    copied = SparseImageConverter.unpack(input, output, (written, total) -> {
                         long now = System.currentTimeMillis();
-                        if (now - lastReport >= 200 || copied >= expected) {
-                            lastReport = now;
-                            try {
-                                progress.onStage("write", (int) Math.min(100, copied * 100 / expected));
-                            } catch (Exception ignored) { }
+                        if (now - lastReport[0] >= 200 || written >= total) {
+                            lastReport[0] = now;
+                            reportProgress(progress, written, expected);
+                        }
+                    });
+                    output.getFD().sync();
+                } else {
+                    while ((count = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, count);
+                        copied += count;
+                        if (progress != null && expected > 0) {
+                            long now = System.currentTimeMillis();
+                            if (now - lastReport[0] >= 200 || copied >= expected) {
+                                lastReport[0] = now;
+                                reportProgress(progress, copied, expected);
+                            }
                         }
                     }
+                    output.getFD().sync();
                 }
-                output.getFD().sync();
             }
-            if (copied != expected) throw new IOException("short image copy");
+            if (copied != expected) throw new IOException("short image copy: " + copied + " / " + expected);
+        }
+
+        private void reportProgress(IRootInstallCallback progress, long written, long total) {
+            if (progress == null || total <= 0) return;
+            try {
+                progress.onStage("write", (int) Math.min(100, written * 100 / total));
+            } catch (Exception ignored) { }
         }
     };
 
