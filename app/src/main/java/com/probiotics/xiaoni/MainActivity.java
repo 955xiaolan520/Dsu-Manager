@@ -1989,15 +1989,34 @@ public class MainActivity extends Activity {
     }
     private String copyInstallZip(Uri source) {
         File target = new File(getCacheDir(), "dsu-install.zip");
+        // v3.9.3：取源 ZIP 总大小，复制过程按真实字节推进 2→18%
+        // （旧逻辑整个复制阶段卡在 10%，大安装包复制几十秒~几分钟进度条纹丝不动）
+        long total = -1;
+        try (Cursor cursor = getContentResolver().query(source, new String[]{OpenableColumns.SIZE}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) total = cursor.getLong(0);
+        } catch (Exception ignored) { }
         try (InputStream input = getContentResolver().openInputStream(source);
              FileOutputStream output = new FileOutputStream(target)) {
             if (input == null) return "";
             byte[] buffer = new byte[1024 * 1024];
             int count;
-                while ((count = input.read(buffer)) != -1) {
-                    output.write(buffer, 0, count);
-                 runOnUiThread(() -> showInstallProgress(t("正在解析 GSI 安装包", "Parsing GSI package"), 10));
+            long copied = 0;
+            long lastUiAt = 0;
+            int lastPct = -1;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
+                copied += count;
+                if (total > 0) {
+                    int pct = 2 + (int) Math.min(16, copied * 16 / total);   // 2% → 18%
+                    long now = System.currentTimeMillis();
+                    if ((pct != lastPct && now - lastUiAt >= 150) || pct >= 18) {
+                        lastPct = pct;
+                        lastUiAt = now;
+                        final int p = pct;
+                        runOnUiThread(() -> showInstallProgress(t("正在解析 GSI 安装包", "Parsing GSI package"), p));
+                    }
                 }
+            }
             return target.getAbsolutePath();
         } catch (Exception e) {
             return "";
@@ -2026,16 +2045,42 @@ public class MainActivity extends Activity {
               }
               boolean wroteImage = false;
               java.util.HashSet<String> partitionNames = new java.util.HashSet<>();
-              for (ZipEntry entry : imageEntries) {
+              // v3.9.3：分区循环进度加权 —— 每个分区在 [40, 88) 区间内均分一段，
+              // 段内「解压临时文件」占前 15%、「写入 DSU 分区」占后 85%。
+              // 旧逻辑每个分区都硬编码 50%（写入期间从 50→85 涨完，下一个分区又跳回 50），
+              // 且解压大镜像（system.img 可达 2GB+）期间进度完全冻结，用户看到的就是
+              // 「长时间卡在一个地方，没到 100% 就进入下一个」。
+              int nParts = imageEntries.size();
+              for (int idx = 0; idx < nParts; idx++) {
+                  ZipEntry entry = imageEntries.get(idx);
                   String fileName = new File(entry.getName()).getName();
                   String partitionName = fileName.substring(0, fileName.length() - 4).toLowerCase(Locale.US);
                   if (!partitionNames.add(partitionName)) return t("ZIP 中存在重复分区镜像: " + fileName, "The ZIP contains a duplicate partition image: " + fileName);
+                  final int base = 40 + (88 - 40) * idx / Math.max(1, nParts);
+                  final int next = 40 + (88 - 40) * (idx + 1) / Math.max(1, nParts);
+                  final int extractTop = base + (next - base) * 15 / 100;
                   File extracted = File.createTempFile("dsu-image-", ".img", getCacheDir());
                   try {
+                      final long entrySize = entry.getSize();   // 解压后大小
                       try (InputStream input = zip.getInputStream(entry); FileOutputStream output = new FileOutputStream(extracted)) {
                           byte[] buffer = new byte[1024 * 1024];
                           int count;
-                          while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                          long copied = 0;
+                          long lastUiAt = 0;
+                          runOnUiThread(() -> showInstallProgress(t("正在解压 " + partitionName, "Extracting " + partitionName), base));
+                          while ((count = input.read(buffer)) != -1) {
+                              output.write(buffer, 0, count);
+                              copied += count;
+                              if (entrySize > 0) {
+                                  long now = System.currentTimeMillis();
+                                  if (now - lastUiAt >= 120) {
+                                      lastUiAt = now;
+                                      final int p = base + (int) Math.min(extractTop - base, copied * (extractTop - base) / entrySize);
+                                      final String pn = partitionName;
+                                      runOnUiThread(() -> showInstallProgress(t("正在解压 " + pn, "Extracting " + pn), p));
+                                  }
+                              }
+                          }
                       }
                       long size = extracted.length();
                       if (size <= 0) return t("镜像为空: " + fileName, "The image is empty: " + fileName);
@@ -2044,9 +2089,10 @@ public class MainActivity extends Activity {
                       long partitionSize = userdata ? Math.max(userdataSizeBytes, size) : size;
                       int status = service.createPartition(partitionName, partitionSize, !userdata);
                   if (status != 0) return t("创建分区失败: " + partitionName + " (" + status + ")", "Failed to create partition: " + partitionName + " (" + status + ")");
-                  runOnUiThread(() -> showInstallProgress(t("正在写入 " + partitionName, "Writing " + partitionName), 50));
+                  final int writeBase = extractTop;
+                  runOnUiThread(() -> showInstallProgress(t("正在写入 " + partitionName, "Writing " + partitionName), writeBase));
                       try (InputStream input = new FileInputStream(extracted)) {
-                          if (!streamEntry(input, service, partitionName, size)) return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
+                          if (!streamEntry(input, service, partitionName, size, extractTop, next - extractTop)) return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
                       }
                   if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
                   } finally {
@@ -2070,7 +2116,8 @@ public class MainActivity extends Activity {
             if (started && !completed) try { service.abort(); } catch (Exception ignored) { }
         }
     }
-     private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize) throws Exception {
+     /** v3.9.3：写入进度按 [base, base+span) 区间线性推进（分区循环加权），UI 更新节流 ≥120ms */
+     private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize, int base, int span) throws Exception {
          final int bufferSize = 4 * 1024 * 1024;
           try (SharedMemory memory = SharedMemory.create("tianming-dsu", bufferSize)) {
               try (ParcelFileDescriptor fd = sharedMemoryFd(memory)) {
@@ -2080,13 +2127,23 @@ public class MainActivity extends Activity {
                       byte[] buffer = new byte[1024 * 1024];
                       int count;
                       long written = 0;
+                      long lastUiAt = 0;
+                      int lastPct = -1;
                       while ((count = input.read(buffer)) != -1) {
                           mapped.position(0);
                           mapped.put(buffer, 0, count);
                           if (!service.submitFromAshmem(count)) return false;
                           written += count;
-                          int progress = 50 + (int) Math.min(35, totalSize > 0 ? written * 35 / totalSize : 0);
-                          runOnUiThread(() -> showInstallProgress(t("正在写入 " + partition, "Writing " + partition), progress));
+                          if (totalSize > 0) {
+                              int progress = base + (int) Math.min(span, written * span / totalSize);
+                              long now = System.currentTimeMillis();
+                              if (progress != lastPct && now - lastUiAt >= 120) {
+                                  lastPct = progress;
+                                  lastUiAt = now;
+                                  final int p = progress;
+                                  runOnUiThread(() -> showInstallProgress(t("正在写入 " + partition, "Writing " + partition), p));
+                              }
+                          }
                       }
                       return true;
                   } finally {

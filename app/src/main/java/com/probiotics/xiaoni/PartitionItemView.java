@@ -218,14 +218,19 @@ public class PartitionItemView extends LinearLayout {
         }
     }
     
-    public void setProgress(int percent, float speedMBps, int etaSeconds) {
+    /**
+     * v3.9.3：第三个参数为阶段标记（来自 native 进度上报）——
+     * 0 = 下载中（在线提取下载压缩数据），1 = 写入中（本地解压写盘）。
+     * 在百分比旁显示阶段，让用户清楚当前在做什么，避免误以为卡住。
+     */
+    public void setProgress(int percent, float speedMBps, int phase) {
         progressBar.setProgress(percent);
-        progressText.setText(percent + "%");
-        
+        progressText.setText((phase == 1 ? "写入 " : "下载 ") + percent + "%");
+
         if (speedMBps > 0.01f) {
             speedText.setText(String.format("%.2f MB/s", speedMBps));
         } else {
-            speedText.setText("计算中...");
+            speedText.setText(phase == 1 ? "写入中..." : "计算中...");
         }
     }
     

@@ -5,11 +5,13 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.net.TrafficStats;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -1166,10 +1168,13 @@ public final class PayloadDumperActivity extends Activity {
                 long lastTime = startTime;
                 int stuckCount = 0;
                 int nullCount = 0;
-                
+
                 // 速度平滑：移动平均
                 java.util.LinkedList<Float> speedHistory = new java.util.LinkedList<>();
                 final int SPEED_WINDOW = 5; // 取最近 5 次的平均值
+
+                // v3.9.3：下载阶段用系统网络接收字节计算真实网速（与状态栏同源）
+                long lastRxBytes = -1;
                 
                 android.util.Log.d("PayloadDumper", "开始监听进度: " + partitionName + ", 文件大小: " + (finalPartitionSize / 1024 / 1024) + " MB");
                 
@@ -1273,6 +1278,7 @@ public final class PayloadDumperActivity extends Activity {
                         lastPercent = -1;
                         lastTime = System.currentTimeMillis();
                         speedHistory.clear();
+                        lastRxBytes = -1; // v3.9.3：阶段切换后重新采样网络字节基准
                     }
                     lastPhase = phase;
                     
@@ -1299,17 +1305,32 @@ public final class PayloadDumperActivity extends Activity {
                         stuckCount = 0;
                     }
                     
-                    // 计算速度（基于文件实际大小，带平滑）
+                    // 计算速度
+                    // v3.9.3 修复：下载阶段(phase 0)的百分比是「压缩数据」的下载进度，
+                    // 旧逻辑却乘以「分区解压后大小」折算速度 → 虚高约 3~20 倍（payload 压缩比），
+                    // 例如真实网速 640KB/s 显示成 12.44MB/s，与状态栏严重不符。
+                    // 现在下载阶段改用系统网络接收字节（TrafficStats，与状态栏同源）计算真实网速；
+                    // 写入阶段(phase 1)是本地解压写盘，仍按镜像大小折算吞吐（原逻辑正确）。
                     long currentTime = System.currentTimeMillis();
                     long timeDiff = currentTime - lastTime;
                     float instantSpeed = 0;
-                    
-                    if (timeDiff > 0 && percent > lastPercent && lastPercent >= 0 && finalPartitionSize > 0) {
+
+                    if (phase == 0) {
+                        long rx = TrafficStats.getUidRxBytes(Process.myUid());
+                        if (lastRxBytes >= 0 && rx >= lastRxBytes && timeDiff > 0) {
+                            instantSpeed = (rx - lastRxBytes) / 1024f / 1024f / (timeDiff / 1000f);
+                            speedHistory.add(instantSpeed);
+                            if (speedHistory.size() > SPEED_WINDOW) {
+                                speedHistory.removeFirst();
+                            }
+                        }
+                        lastRxBytes = rx;
+                    } else if (timeDiff > 0 && percent > lastPercent && lastPercent >= 0 && finalPartitionSize > 0) {
                         float progressDiff = (percent - lastPercent) / 100.0f;
                         float timeSeconds = timeDiff / 1000.0f;
                         float sizeMB = finalPartitionSize / 1024.0f / 1024.0f;
                         instantSpeed = (progressDiff * sizeMB) / timeSeconds; // MB/s
-                        
+
                         // 添加到历史记录
                         speedHistory.add(instantSpeed);
                         if (speedHistory.size() > SPEED_WINDOW) {
