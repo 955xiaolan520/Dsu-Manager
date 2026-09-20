@@ -240,7 +240,15 @@ public class MainActivity extends Activity {
          content.setPadding(dp(18), dp(14), dp(18), dp(96));
         content.setOnApplyWindowInsetsListener((view, insets) -> {
             int top = insets.getSystemWindowInsetTop();
-            int bottom = insets.getSystemWindowInsetBottom();
+            int bars = insets.getSystemWindowInsetBottom();
+            // v3.9.7：edge-to-edge（setDecorFitsSystemWindows(false)）下 adjustResize
+            // 不再缩放窗口，键盘高度必须从 Type.ime() 单独取；取 max 兼容旧版
+            // system window insets 已含 IME 的系统。键盘弹出时 content 底部内边距
+            // 随之变大，ScrollView 才有余量把输入框滚到键盘上方。
+            int ime = 0;
+            if (Build.VERSION.SDK_INT >= 30)
+                ime = insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+            int bottom = Math.max(bars, ime);
              view.setPadding(dp(18), dp(14) + top, dp(18), dp(96) + bottom);
             return insets;
         });
@@ -525,12 +533,9 @@ public class MainActivity extends Activity {
               root.getWindowVisibleDisplayFrame(visibleFrame);
               boolean keyboardVisible = root.getRootView().getHeight() - visibleFrame.bottom > dp(120);
               setBottomNavigationVisible(!keyboardVisible);
-              // v3.9.5：键盘弹出期间若自定义容量输入框聚焦，持续把它保持在可见区域
-              if (keyboardVisible && customInstallSizeInput != null && customInstallSizeInput.hasFocus()) {
-                  android.graphics.Rect rect = new android.graphics.Rect();
-                  customInstallSizeInput.getHitRect(rect);
-                  customInstallSizeInput.requestRectangleOnScreen(rect, false);
-              }
+              // v3.9.7：键盘弹出时手动把聚焦的输入框滚到键盘上方 ——
+              // edge-to-edge 下窗口不缩放，requestRectangleOnScreen 感知不到键盘
+              if (keyboardVisible) revealFocusedInputAboveKeyboard(visibleFrame.bottom);
           });
           root.post(() -> applySystemInsets(root, root.getRootWindowInsets()));
          contentRoot = root;   // 供引导页淡入转场使用
@@ -1239,6 +1244,30 @@ public class MainActivity extends Activity {
          }
      }
 
+     /**
+      * v3.9.7：把当前聚焦的输入框滚动到键盘可见区域之上（含 14dp 余量）。
+      * edge-to-edge 下窗口不缩放，需按「窗口坐标 - 键盘顶部」手动计算滚动量；
+      * 配合 content 底部内边距随 IME 增大，ScrollView 有足够滚动余量。
+      */
+     private void revealFocusedInputAboveKeyboard(int visibleBottomInWindow) {
+         View focused = getCurrentFocus();
+         if (focused == null) return;
+         ViewParent parent = focused.getParent();
+         while (parent != null) {
+             if (parent instanceof ScrollView) {
+                 ScrollView scroll = (ScrollView) parent;
+                 int[] location = new int[2];
+                 focused.getLocationInWindow(location);
+                 int focusedBottom = location[1] + focused.getHeight() + dp(14);
+                 int overlap = focusedBottom - visibleBottomInWindow;
+                 if (overlap > 0)
+                     scroll.smoothScrollTo(0, Math.max(0, scroll.getScrollY() + overlap));
+                 return;
+             }
+             parent = parent.getParent();
+         }
+     }
+
      private LinearLayout page(String title) {
          LinearLayout page = new LinearLayout(this);
          page.setOrientation(LinearLayout.VERTICAL);
@@ -1812,7 +1841,7 @@ public class MainActivity extends Activity {
             String status = formatGsiStatus(raw);
             runOnUiThread(() -> {
                 gsiStatus.setText(status);
-                 if (status.equals("已安装，等待启动")) {
+                 if (status.equals("GSI 已成功安装，等待启动")) {
                      showInstalledGsiSummary();
                  } else {
                      detailText.setText(t("GSI: ", "GSI: ") + localizedStatus(status));
@@ -1845,7 +1874,7 @@ public class MainActivity extends Activity {
          if (status.equals("未安装")) return "Not installed";
          if (status.equals("空闲（未运行 GSI）")) return "Idle (GSI not running)";
          if (status.equals("运行中")) return "Running";
-         if (status.equals("已安装，等待启动")) return "Installed, waiting to boot";
+         if (status.equals("GSI 已成功安装，等待启动")) return "GSI installed, waiting to boot";
          return status;
      }
      private String formatGsiStatus(String raw){
@@ -1856,7 +1885,7 @@ public class MainActivity extends Activity {
             if (value.isEmpty() || value.matches("\\[\\d+\\].*")) continue;
             if(value.equalsIgnoreCase("normal")) return "空闲（未运行 GSI）";
             if(value.equalsIgnoreCase("running")) return "运行中";
-            if(value.equalsIgnoreCase("installed")) return "已安装，等待启动";
+            if(value.equalsIgnoreCase("installed")) return "GSI 已成功安装，等待启动";
         }
         return "未安装";
     }
@@ -2067,63 +2096,61 @@ public class MainActivity extends Activity {
               runOnUiThread(() -> stageDone("create", t("创建 Dynamic System", "Creating Dynamic System")));
               boolean wroteImage = false;
               java.util.HashSet<String> partitionNames = new java.util.HashSet<>();
-              int nParts = imageEntries.size();
-              for (int idx = 0; idx < nParts; idx++) {
-                  ZipEntry entry = imageEntries.get(idx);
+              for (ZipEntry entry : imageEntries) {
                   String fileName = new File(entry.getName()).getName();
                   String partitionName = fileName.substring(0, fileName.length() - 4).toLowerCase(Locale.US);
                   if (!partitionNames.add(partitionName)) return t("ZIP 中存在重复分区镜像: " + fileName, "The ZIP contains a duplicate partition image: " + fileName);
                   final String extractId = "ext_" + partitionName;
                   final String writeId = "wr_" + partitionName;
                   final long entrySize = entry.getSize();
-                  // v3.9.6 核心修复：读 28 字节文件头，sparse 镜像直接取 raw 尺寸建分区，
-                  // 之后边解包边流式写入 ashmem 通道 —— 全程不落任何临时镜像文件。
-                  // v3.9.5 的「先转 raw 临时文件再建 raw 分区」使空间峰值 = 2×raw + 之前所有
-                  // 分区的 raw 扩容，/data 被挤爆后 gsid fiemap 分配失败返回 1，
-                  // 即用户遇到的「创建分区失败: odm (1)」。
-                  byte[] peek = new byte[28];
-                  int peeked = 0;
-                  try (InputStream raw = zip.getInputStream(entry)) {
-                      while (peeked < 28) {
-                          int n = raw.read(peek, peeked, 28 - peeked);
-                          if (n < 0) break;
-                          peeked += n;
-                      }
-                  }
-                  boolean sparse = peeked == 28 && SparseImageConverter.isSparseHeader(peek);
-                  long imageSize = sparse
-                          ? SparseImageConverter.sparseRawSize(peek)
-                          : (entrySize > 0 ? entrySize : 0);
-                  if (imageSize <= 0) return t("镜像为空或损坏: " + fileName, "The image is empty or corrupt: " + fileName);
-                  boolean userdata = partitionName.equalsIgnoreCase("userdata");
-                  // gsid 要求分区尺寸 512 字节对齐（非对齐直接返回错误 1）；
-                  // userdata 不小于用户选择的自定义容量
-                  long partitionSize = ((userdata ? Math.max(userdataSizeBytes, imageSize) : imageSize) + 511L) & ~511L;
-                  int status = service.createPartition(partitionName, partitionSize, !userdata);
-                  if (status != 0) return gsiStatusDetail(partitionName, status, partitionSize);
-                  wroteImage = true;
-                  final String extractLabel = sparse
-                          ? t("解压转换 " + partitionName + "（sparse）", "Extracting " + partitionName + " (sparse)")
-                          : t("解压 " + partitionName, "Extracting " + partitionName);
+                  final String extractLabel = t("解压 " + partitionName, "Extracting " + partitionName);
                   final String writeLabel = t("写入 " + partitionName, "Writing " + partitionName);
-                  runOnUiThread(() -> {
-                      stageBegin(extractId, extractLabel);
-                      stageBegin(writeId, writeLabel);
-                  });
-                  // 「解压」条 = 已消费的 ZIP 条目字节（sparse 时为 sparse 文件侧进度），
-                  // 「写入」条 = 已灌入分区的字节（sparse 时为 raw 侧进度）—— 两条独立真实进度
-                  try (AshmemPartitionWriter writer = new AshmemPartitionWriter(service, partitionName, partitionSize, writeId);
-                       InputStream tail = new java.io.SequenceInputStream(
-                               new java.io.ByteArrayInputStream(peek, 0, peeked), zip.getInputStream(entry))) {
-                      if (sparse) SparseImageConverter.unpack(new UiCountingInputStream(tail, entrySize, extractId), writer, writer);
-                      else writer.copyFrom(tail, entrySize, extractId);
-                      writer.finish();
+                  // v3.9.7：回退 v3.8.6 老流程 —— 先把 ZIP 条目完整解压到临时文件
+                  // （「解压」条独立走完 0-100%），解压完成后再建分区、经 ashmem 通道写入
+                  // （「写入」条独立走完 0-100%）。两个阶段严格串行，不再边解压边写入。
+                  runOnUiThread(() -> stageBegin(extractId, extractLabel));
+                  File extracted = File.createTempFile("dsu-image-", ".img", getCacheDir());
+                  try {
+                      try (InputStream input = zip.getInputStream(entry);
+                           FileOutputStream output = new FileOutputStream(extracted)) {
+                          byte[] buffer = new byte[1024 * 1024];
+                          int count;
+                          long copied = 0;
+                          long lastUiAt = 0;
+                          int lastPct = -1;
+                          while ((count = input.read(buffer)) != -1) {
+                              output.write(buffer, 0, count);
+                              copied += count;
+                              if (entrySize > 0) {
+                                  int pct = (int) Math.min(100, copied * 100 / entrySize);
+                                  long now = System.currentTimeMillis();
+                                  if (pct != lastPct && now - lastUiAt >= 150) {
+                                      lastPct = pct;
+                                      lastUiAt = now;
+                                      final int p = pct;
+                                      runOnUiThread(() -> stageUpdate(extractId, p));
+                                  }
+                              }
+                          }
+                      }
+                      long size = extracted.length();
+                      if (size <= 0) return t("镜像为空: " + fileName, "The image is empty: " + fileName);
+                      runOnUiThread(() -> stageDone(extractId, extractLabel));
+                      wroteImage = true;
+                      boolean userdata = partitionName.equalsIgnoreCase("userdata");
+                      long partitionSize = userdata ? Math.max(userdataSizeBytes, size) : size;
+                      int status = service.createPartition(partitionName, partitionSize, !userdata);
+                      if (status != 0) return gsiStatusDetail(partitionName, status, partitionSize);
+                      runOnUiThread(() -> stageBegin(writeId, writeLabel));
+                      try (InputStream input = new FileInputStream(extracted)) {
+                          if (!streamEntry(input, service, partitionName, size, writeId))
+                              return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
+                      }
+                      if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
+                      runOnUiThread(() -> stageDone(writeId, writeLabel));
+                  } finally {
+                      if (extracted.exists()) extracted.delete();
                   }
-                  if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
-                  runOnUiThread(() -> {
-                      stageDone(extractId, extractLabel);
-                      stageDone(writeId, writeLabel);
-                  });
              }
               if (!wroteImage) return t("ZIP 中没有可用的 GSI img 镜像", "The ZIP contains no usable GSI .img images");
               if (!partitionNames.contains("userdata")) {
@@ -2146,156 +2173,41 @@ public class MainActivity extends Activity {
         }
     }
      /**
-      * v3.9.6：分区流式写入器 —— 把 sparse 转换 / ZIP 解压输出直接灌进 gsid 的 ashmem 通道。
-      * 替代 v3.9.5 及更早的「先解压到临时文件再 streamEntry」两段式流程。
-      * 同时实现 SparseImageConverter.Progress：sparse 转换的输出进度即「写入」进度。
+      * v3.9.7：回退 v3.8.6 的 ashmem 写入通道 —— 4MiB 共享内存分块 submitFromAshmem。
+      * 进度按「写入 <分区>」阶段内真实字节推进（0-100%）。
       */
-     private final class AshmemPartitionWriter extends OutputStream implements SparseImageConverter.Progress {
-         private static final int BUFFER_SIZE = 4 * 1024 * 1024;
-         private static final int CHUNK = 1024 * 1024;
-         private final IPrivilegedService service;
-         private final String partition;
-         private final long totalSize;
-         private final String stageId;
-         private final SharedMemory memory;
-         private final ParcelFileDescriptor fd;
-         private final ByteBuffer mapped;
-         private final byte[] chunkBuffer = new byte[CHUNK];
-         private long written = 0;
-         private long lastUiAt = 0;
-
-         AshmemPartitionWriter(IPrivilegedService service, String partition, long totalSize, String stageId)
-                 throws Exception {
-             this.service = service;
-             this.partition = partition;
-             this.totalSize = totalSize;
-             this.stageId = stageId;
-             this.memory = SharedMemory.create("tianming-dsu", BUFFER_SIZE);
-             this.fd = sharedMemoryFd(memory);
-             if (!service.setAshmem(fd, BUFFER_SIZE))
-                 throw new IOException("setAshmem failed for " + partition);
-             this.mapped = memory.mapReadWrite();
-         }
-
-         @Override public void onProgress(long out, long total) { updateUi(out); }
-
-         private void updateUi(long nowWritten) {
-             if (totalSize <= 0) return;
-             long now = System.currentTimeMillis();
-             if (now - lastUiAt >= 120) {
-                 lastUiAt = now;
-                 final int p = (int) Math.min(100, nowWritten * 100 / totalSize);
-                 runOnUiThread(() -> stageUpdate(stageId, p));
-             }
-         }
-
-         @Override public void write(int b) throws IOException {
-             chunkBuffer[0] = (byte) b;
-             write(chunkBuffer, 0, 1);
-         }
-
-         @Override public void write(byte[] b, int off, int len) throws IOException {
-             try {
-                 int offset = off;
-                 int remaining = len;
-                 while (remaining > 0) {
-                     int piece = Math.min(remaining, CHUNK);
-                     mapped.position(0);
-                     mapped.put(b, offset, piece);
-                     if (!service.submitFromAshmem(piece))
-                         throw new IOException("submitFromAshmem failed for " + partition);
-                     written += piece;
-                     offset += piece;
-                     remaining -= piece;
-                     if (written > totalSize)
-                         throw new IOException("image data exceeds partition size: " + partition);
-                     updateUi(written);
-                 }
-             } catch (IOException direct) {
-                 throw direct;
-             } catch (Exception wrapped) {
-                 throw new IOException(wrapped);
-             }
-         }
-
-         /** raw 直拷路径：边拷贝边分别推进「解压」与「写入」两条进度条 */
-         void copyFrom(InputStream input, long inputTotal, String extractStageId) throws IOException {
-             byte[] local = new byte[CHUNK];
-             long consumed = 0;
-             long lastExtUi = 0;
-             int count;
-             try {
-                 while ((count = input.read(local)) != -1) {
-                     write(local, 0, count);
-                     consumed += count;
-                     if (inputTotal > 0) {
-                         long now = System.currentTimeMillis();
-                         if (now - lastExtUi >= 120) {
-                             lastExtUi = now;
-                             final int p = (int) Math.min(100, consumed * 100 / inputTotal);
-                             runOnUiThread(() -> stageUpdate(extractStageId, p));
-                         }
-                     }
-                 }
-             } catch (IOException direct) {
-                 throw direct;
-             } catch (Exception wrapped) {
-                 throw new IOException(wrapped);
-             }
-         }
-
-         /** 补零到分区尺寸（512 取整 / userdata 扩容后的余量），并把「写入」推到 100% */
-         void finish() throws IOException {
-             byte[] zeros = new byte[CHUNK];
-             while (written < totalSize) {
-                 int piece = (int) Math.min(zeros.length, totalSize - written);
-                 write(zeros, 0, piece);
-             }
-             runOnUiThread(() -> stageUpdate(stageId, 100));
-         }
-
-         @Override public void close() {
-             try { memory.unmap(mapped); } catch (Exception ignored) { }
-             try { fd.close(); } catch (Exception ignored) { }
-             try { memory.close(); } catch (Exception ignored) { }
-         }
-     }
-
-     /** v3.9.6：sparse 转换路径的输入侧进度 —— 「解压」条 = 已消费 sparse 字节 / ZIP 条目大小 */
-     private final class UiCountingInputStream extends java.io.FilterInputStream {
-         private final long total;
-         private final String stageId;
-         private long consumed = 0;
-         private long lastUiAt = 0;
-
-         UiCountingInputStream(InputStream in, long total, String stageId) {
-             super(in);
-             this.total = total;
-             this.stageId = stageId;
-         }
-
-         @Override public int read() throws IOException {
-             int value = super.read();
-             if (value >= 0) report(1);
-             return value;
-         }
-
-         @Override public int read(byte[] b, int off, int len) throws IOException {
-             int count = super.read(b, off, len);
-             if (count > 0) report(count);
-             return count;
-         }
-
-         private void report(int bytes) {
-             consumed += bytes;
-             if (total <= 0) return;
-             long now = System.currentTimeMillis();
-             if (now - lastUiAt >= 120) {
-                 lastUiAt = now;
-                 final int p = (int) Math.min(100, consumed * 100 / total);
-                 runOnUiThread(() -> stageUpdate(stageId, p));
-             }
-         }
+     private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize, String stageId) throws Exception {
+         final int bufferSize = 4 * 1024 * 1024;
+          try (SharedMemory memory = SharedMemory.create("tianming-dsu", bufferSize)) {
+              try (ParcelFileDescriptor fd = sharedMemoryFd(memory)) {
+                  if (!service.setAshmem(fd, bufferSize)) return false;
+                  ByteBuffer mapped = memory.mapReadWrite();
+                  try {
+                      byte[] buffer = new byte[1024 * 1024];
+                      int count;
+                      long written = 0;
+                      long lastUiAt = 0;
+                      while ((count = input.read(buffer)) != -1) {
+                          mapped.position(0);
+                          mapped.put(buffer, 0, count);
+                          if (!service.submitFromAshmem(count)) return false;
+                          written += count;
+                          if (totalSize > 0) {
+                              long now = System.currentTimeMillis();
+                              if (now - lastUiAt >= 150) {
+                                  lastUiAt = now;
+                                  final int p = (int) Math.min(100, written * 100 / totalSize);
+                                  runOnUiThread(() -> stageUpdate(stageId, p));
+                              }
+                          }
+                      }
+                      runOnUiThread(() -> stageUpdate(stageId, 100));
+                      return true;
+                  } finally {
+                      memory.unmap(mapped);
+                  }
+              }
+          }
      }
 
      /** v3.9.6：gsid INSTALL_* 状态码 → 可读诊断（含分区尺寸与 /data 可用空间） */
@@ -2408,14 +2320,6 @@ public class MainActivity extends Activity {
         if (installPanel != null) installPanel.setVisibility(View.VISIBLE);
     }
 
-    /** 更新阶段标签 + 百分比（阶段内语义变化时，如解压 → sparse 转换） */
-    private void stageLabel(String id, String label, int pct) {
-        StageRow row = stageRows.get(id);
-        if (row == null) return;
-        row.label.setText(label);
-        stageUpdate(id, pct);
-    }
-
     /** 阶段完成：✓ 100% */
     private void stageDone(String id, String label) {
         StageRow row = stageRows.get(id);
@@ -2456,8 +2360,14 @@ public class MainActivity extends Activity {
               stageFail(currentStageId, t("失败", "Failed"));
           }
           if (success && !replacement) {
-              gsiStatus.setText(t("已安装，等待启动", "Installed, waiting to boot"));
+              gsiStatus.setText(t("GSI 已成功安装，等待启动", "GSI installed, waiting to boot"));
               showInstalledGsiSummary();
+              // v3.9.7：全部完成后自动收起进度面板（保留 1.2 秒展示 ✓ 收尾状态）
+              mainHandler.postDelayed(() -> {
+                  installPanel.setVisibility(View.GONE);
+                  stagesClear();
+                  installStage.setText(t("安装进度", "Installation progress"));
+              }, 1200);
           }
     }
     private CommandResult runPrivilegedCommand(String... args){
@@ -2611,7 +2521,9 @@ public class MainActivity extends Activity {
                       "Partition name mismatch: expected " + expectedPartition + ".img, got " + selectedName));
               return;
           }
-         // v3.9.6：替换分段进度（校验 → 写入），sparse 转换在 root 进程内边解包边写块设备
+         // v3.9.7：替换链路完全按 DSU Sideloader Plus 原版（反编译 smali）执行：
+         // 校验分区名 → root 服务 replaceDsuBackingImage（内部 createBackingImage →
+         // mapImageDevice → copyFileToBlockDevice → unmapImageDevice，失败清理）
          stagesClear();
          installStage.setText(t("正在替换 " + targetPartition, "Replacing " + targetPartition));
          stageBegin("check", t("校验镜像 " + targetPartition, "Verifying image"));
@@ -2620,42 +2532,19 @@ public class MainActivity extends Activity {
                String error = "";
                boolean success = false;
                 try {
-                    // 读 28 字节文件头：判别 sparse 并直接算出 raw 尺寸（blkSize × totalBlocks）
-                    byte[] peek = new byte[28];
-                    int peeked = 0;
-                    try (InputStream head = getContentResolver().openInputStream(source)) {
-                        if (head == null) error = "无法打开镜像文件";
-                        else while (peeked < 28) {
-                            int n = head.read(peek, peeked, 28 - peeked);
-                            if (n < 0) break;
-                            peeked += n;
-                        }
-                    }
-                    boolean sparse = error.isEmpty() && peeked == 28 && SparseImageConverter.isSparseHeader(peek);
-                    long imageSize = 0;
-                    if (error.isEmpty() && sparse) {
-                        // raw 尺寸在建镜像前就确定 → root 服务按此尺寸重建分区并流式解包写入，
-                        // 不再先落 raw 临时文件（v3.9.5 的做法空间峰值翻倍且耗时翻倍）
-                        imageSize = SparseImageConverter.sparseRawSize(peek);
-                        if ((imageSize & 511L) != 0) error = "sparse 镜像解包后尺寸未按 512 字节对齐";
-                    }
                     runOnUiThread(() -> stageDone("check", t("校验镜像 " + targetPartition, "Verifying image")));
-                    if (error.isEmpty() && privilegedService == null) error = "ROOT service unavailable";
+                    if (privilegedService == null) error = "ROOT service unavailable";
                     if (error.isEmpty()) {
                         runOnUiThread(() -> stageBegin("write",
-                                sparse ? t("解包写入 " + targetPartition + " 镜像（sparse）", "Unpacking and writing " + targetPartition + " image (sparse)")
-                                       : t("写入 " + targetPartition + " 镜像", "Writing " + targetPartition + " image")));
+                                t("写入 " + targetPartition + " 镜像", "Writing " + targetPartition + " image")));
+                        // 直接打开全新 fd，不 peek 文件头 —— 偏移天然为 0，
+                        // root 侧 AutoCloseInputStream 从文件头读起，与 smali 行为一致
                         fd = getContentResolver().openFileDescriptor(source, "r");
-                        if (!sparse) {
-                            imageSize = replacementSize(source, fd);
-                            if (imageSize <= 0) error = "无法确定镜像大小";
-                        }
-                        if (error.isEmpty()) {
-                            // root 侧复制前会 lseek 归零，fd 上面 peek 过 28 字节也没关系
-                            error = privilegedService.replaceDsuBackingImage(
-                                    targetSlot, targetBackingImage, fd, imageSize, true, sparse, replaceProgressCallback);
-                            success = error != null && error.isEmpty();
-                        }
+                        long imageSize = replacementSize(source, fd);
+                        if (imageSize <= 0) error = "无法确定镜像大小";
+                        else error = privilegedService.replaceDsuBackingImage(
+                                targetSlot, targetBackingImage, fd, imageSize, true, replaceProgressCallback);
+                        success = error != null && error.isEmpty();
                     }
                 } catch (Exception exception) { error = exception.getMessage() == null ? exception.toString() : exception.getMessage(); }
                finally {
@@ -2692,7 +2581,7 @@ public class MainActivity extends Activity {
       private void showInstalledGsiSummary() {
           String packageName = installedZipName == null || installedZipName.trim().isEmpty()
                   ? t("未记录安装包名称", "Package name unavailable") : installedZipName;
-          detailText.setText(t("GSI 状态\n已安装，等待启动\n安装包:\n", "GSI status\nInstalled, waiting to boot\nPackage:\n") + packageName);
+          detailText.setText(t("GSI 状态\nGSI 已成功安装，等待启动\n安装包:\n", "GSI status\nGSI installed, waiting to boot\nPackage:\n") + packageName);
       }
      private long replacementSize(Uri uri, ParcelFileDescriptor fd) {
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {

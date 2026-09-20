@@ -25,5 +25,5 @@ interface IPrivilegedService {
     List<String> getDsuBackingImages(String prefix);
     String listDsuImages();
     String cleanupDsuBackingImages();
-    String replaceDsuBackingImage(String slot, String imageName, in ParcelFileDescriptor fd, long size, boolean force, boolean sparse, IRootInstallCallback progress);
+    String replaceDsuBackingImage(String slot, String imageName, in ParcelFileDescriptor fd, long size, boolean force, IRootInstallCallback progress);
 }
