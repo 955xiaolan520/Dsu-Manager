@@ -16,6 +16,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.LinkedHashMap
 import java.util.Random
+import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.GZIPInputStream
 
@@ -200,7 +201,7 @@ class VivoOtaClient(private val context: Context) {
             throw RuntimeException(updateResponse)
         }
 
-        return parseResult(updateResponse, isPhone, modelSwVer, codename, swVersion, channel, domain)
+        return parseResult(updateResponse, isPhone, modelSwVer, codename, swVersion, sn, channel, domain)
     }
 
     /** 公测/内测共用参数集，与 PC 版 buildBetaBaseParams 对应。 */
@@ -228,6 +229,7 @@ class VivoOtaClient(private val context: Context) {
         modelSwVer: String,
         codename: String,
         swVersion: String,
+        snp: String,
         channel: QueryChannel = QueryChannel.NORMAL,
         domain: Domain = Domain.CN
     ): VivoOtaResult {
@@ -237,6 +239,8 @@ class VivoOtaClient(private val context: Context) {
         val pkName = extractJsonStr(updateResponse, "pkName\":\"")
         val pkLen = extractJsonStr(updateResponse, "pkLen\":\"")
         val sizeMb = try { (pkLen.toLong() / 1048576).toString() } catch (_: Exception) { "" }
+        // 服务端实际返回的包类型（ext.isFull）：1=全量 0=增量；无更新/旧服务器可能不带
+        val isFullPackage = extractIsFullFlag(updateResponse)
 
         var downloadUrl = ""
 
@@ -254,12 +258,22 @@ class VivoOtaClient(private val context: Context) {
         val md5 = extractField(updateResponse, listOf("md5", "fileMd5", "pkMd5"))
 
         Log.d(TAG, "Security patch: '$securityPatch', Update date: '$updateDate', MD5: '$md5'")
+        Log.d(TAG, "Package type (ext.isFull): $isFullPackage")
 
         val pkUrl = extractPkUrl(updateResponse)
         if (pkUrl != null) {
             try {
-                val queryStart = pkUrl.indexOf("?")
-                val redirParams = if (queryStart >= 0) pkUrl.substring(queryStart + 1) else pkUrl
+                // v3.9.8：同步上游 8bd882a 修复（镜像 APK HttpUtils.getDlRequestParams()）：
+                // redirPost 不再只回传 pk 的查询串，而是 基础设备参数 + pk 查询串 + upversion/timeStamp/nonce 等固定字段
+                val redirParams = buildRedirParams(
+                    codename = codename,
+                    deviceModel = modelSwVer,
+                    swVersion = swVersion,
+                    isPhone = isPhone,
+                    snp = snp,
+                    pkUrl = pkUrl,
+                    updateResponse = updateResponse
+                )
                 val redirRes = requestRedirPost(redirParams, domain)
                 Log.d(TAG, "Redir response: $redirRes")
                 val dataIdx = redirRes.indexOf("\"data\":\"")
@@ -294,8 +308,148 @@ class VivoOtaClient(private val context: Context) {
             updateDate = updateDate,
             md5 = md5,
             channel = channel.value,
+            isFullPackage = isFullPackage,
             rawResponse = updateResponse
         )
+    }
+
+    /**
+     * 提取响应中 ext.isFull 包类型标志：1=全量包 0=增量包。
+     * 值可能是数字（"isFull":1）或字符串（"isFull":"1"），两者都兼容。
+     */
+    private fun extractIsFullFlag(json: String): Boolean? {
+        val key = "\"isFull\":"
+        var idx = json.indexOf(key)
+        while (idx >= 0) {
+            var s = idx + key.length
+            // 跳过空白
+            while (s < json.length && json[s].isWhitespace()) s++
+            val quoted = s < json.length && json[s] == '"'
+            if (quoted) s++
+            val digits = StringBuilder()
+            while (s < json.length && json[s].isDigit()) {
+                digits.append(json[s])
+                s++
+            }
+            if (digits.isNotEmpty()) return digits.toString() != "0"
+            // 该处不是数字值（如 "isFullUpdate" 前缀误匹配），继续找下一处
+            idx = json.indexOf(key, idx + 1)
+        }
+        return null
+    }
+
+    /**
+     * redirPost.do 基础设备参数（同步自上游 build_base_params，镜像 APK HttpUtils.getBaseUrl()）。
+     * 手机与平板的字段差异在末尾统一覆盖。
+     */
+    private fun buildRedirBaseParams(
+        codename: String,
+        deviceModel: String,
+        swVersion: String,
+        isPhone: Boolean,
+        snp: String
+    ): Map<String, Any> {
+        val hwVer = codename + "MA"
+        val fullSwVersion = if (swVersion.contains(".W")) "$swVersion.V000L1" else swVersion
+        val fullVer = if (swVersion.contains(".W")) "${codename}_A_$swVersion.V000L1" else "${codename}_A_$swVersion"
+        val versionLong = if (swVersion.contains(".W")) "${codename}_N_${codename}MA_$swVersion.V000L1" else "${codename}_N_${codename}MA_$swVersion"
+
+        val random = Random()
+        val elapsedtime = if (isPhone) 140000 + random.nextInt(80000) else 2000000 + random.nextInt(500000)
+
+        val p = LinkedHashMap<String, Any>()
+        p["model"] = codename
+        p["dModel"] = codename + "A"
+        p["imei"] = genImei()
+        p["s_n"] = "null"
+        p["dType"] = "phone"
+        p["version"] = versionLong
+        p["public_model"] = deviceModel
+        p["cy"] = "CN-ZH"
+        p["cu"] = "N"
+        p["vgcSwVer"] = "1.1.1"
+        p["vgcCu"] = "V000"
+        p["hasVgc"] = 1
+        p["elapsedtime"] = elapsedtime
+        p["st1"] = if (isPhone) 100000 + random.nextInt(60000) else 0
+        p["st2"] = 0
+        p["emmcid"] = ""
+        p["fullVer"] = fullVer
+        p["si"] = "null"
+        p["ne"] = "null"
+        p["ch"] = "N"
+        p["hwVer"] = hwVer
+        p["swVer"] = fullSwVersion
+        p["language"] = "zh_CN"
+        p["ms"] = "0"
+        p["mtype"] = "no"
+        p["radiotype"] = "L"
+        if (!isPhone) {
+            p["dType"] = "tablet"
+            p["snp"] = snp
+            p["imei"] = ""
+            p["mtype"] = "FULL_SC"
+            p["radiotype"] = "A"
+        }
+        return p
+    }
+
+    /**
+     * redirPost.do 请求参数（同步自上游 build_redir_params，镜像 APK HttpUtils.getDlRequestParams()）：
+     * 基础设备参数 + pk 查询串 + upversion/dlrequest/downloadType/timeStamp/nonce/hwFingerprint。
+     */
+    private fun buildRedirParams(
+        codename: String,
+        deviceModel: String,
+        swVersion: String,
+        isPhone: Boolean,
+        snp: String,
+        pkUrl: String,
+        updateResponse: String
+    ): String {
+        val parts = mutableListOf<String>()
+        for ((k, v) in buildRedirBaseParams(codename, deviceModel, swVersion, isPhone, snp)) {
+            parts.add("$k=${pyQuote(v.toString())}")
+        }
+        // pk 自带的查询串（name/fileType/fileLength/packageType 等）
+        val queryStart = pkUrl.indexOf('?')
+        if (queryStart >= 0) {
+            parts.add(pkUrl.substring(queryStart + 1))
+        }
+        // upversion = 升级响应里的目标版本
+        val targetVersion = extractJsonStr(updateResponse, "version\":\"")
+        if (targetVersion != "(Not found)") {
+            parts.add("upversion=${pyQuote(targetVersion)}")
+        }
+        // 固定请求字段
+        parts += listOf(
+            "dlrequest=0", "downloadType=0", "isPacakgeActive=1", "timeToUptouch=0",
+            "httpsSupport=1", "isTrialVersion=false", "retry=0"
+        )
+        // 安全校验字段：timeStamp 取升级响应 ext 里的值，缺失时为 0
+        val timeStamp = extractJsonStr(updateResponse, "timeStamp\"")
+        parts.add(if (timeStamp != "(Not found)") "timeStamp=$timeStamp" else "timeStamp=0")
+        parts.add("nonce=${UUID.randomUUID().toString().replace("-", "")}")
+        parts.add("hwFingerprint=")
+        return parts.joinToString("&")
+    }
+
+    /** Python urllib.parse.quote 的等价实现：unreserved 字符与 '/' 保留，其余按 UTF-8 百分号编码。 */
+    private fun pyQuote(s: String): String {
+        val sb = StringBuilder(s.length)
+        for (b in s.toByteArray(StandardCharsets.UTF_8)) {
+            val c = b.toInt() and 0xFF
+            val keep = (c in 0x30..0x39) || (c in 0x41..0x5A) || (c in 0x61..0x7A) ||
+                c == 0x2E /* . */ || c == 0x5F /* _ */ || c == 0x2D /* - */ || c == 0x7E /* ~ */ || c == 0x2F /* / */
+            if (keep) {
+                sb.append(c.toChar())
+            } else {
+                sb.append('%')
+                sb.append("0123456789ABCDEF"[c ushr 4])
+                sb.append("0123456789ABCDEF"[c and 0x0F])
+            }
+        }
+        return sb.toString()
     }
 
     private fun joinParams(params: Map<String, Any>): String {

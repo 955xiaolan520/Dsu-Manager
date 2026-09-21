@@ -55,6 +55,21 @@ object VivoDeviceDatabase {
 
     fun dataVersion(): Int = version.get()
 
+    /**
+     * 按 PD 值（codename）反查机型名称（如 PD2408 → X200）。
+     * 大小写不敏感；未收录返回 null，由调用方决定回退文案。
+     */
+    fun findModelName(codename: String?): String? {
+        val target = codename?.trim()?.uppercase() ?: return null
+        if (target.isEmpty()) return null
+        for (devices in database.values) {
+            for (d in devices) {
+                if (d.codename.equals(target, ignoreCase = true)) return d.model
+            }
+        }
+        return null
+    }
+
     // ------------------------------------------------------------------
     // 在线更新
     // ------------------------------------------------------------------

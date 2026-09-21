@@ -1091,8 +1091,14 @@ public final class VivoActivity extends Activity {
         String v = normalizeV(rawV);
         manualPdInput.setText(pd);
         manualVInput.setText(v);
-        
-        queryDevice("手动输入设备", pd, v, version,
+
+        // v3.9.9：按 PD 从设备清单反查机型名，查询结果与历史都显示真实机型；
+        // 清单未收录才回退提示文案
+        String manualModelName = com.mytiantian.updater.vivo.VivoDeviceDatabase.INSTANCE.findModelName(pd);
+        if (manualModelName == null || manualModelName.trim().isEmpty()) {
+            manualModelName = "设备清单未收录，未知机型";
+        }
+        queryDevice(manualModelName, pd, v, version,
                     manualAndroidVersion, manualPackageType, manualFullOrIncremental,
                     manualSerialInput, manualImeiInput, manualDomainSpinner);
     }
@@ -1145,12 +1151,35 @@ public final class VivoActivity extends Activity {
                 final String domainName = domain.name();
                 runOnUiThread(() -> {
                     renderResult(modelName, pd, v, result, android, channel, version, isFull, domainName);
-                    saveHistory(modelName, pd, v, version, android, isFull, channel.name(), domainName, manualMode, result);
+                    // v3.9.10：仅"真实更新"才保存历史 —— vivo 服务器在已是最新版时也会返回
+                    // 当前版本的包信息，仅凭"有版本号/文件名"判断会每次查询都保存。
+                    // 判定条件：服务端目标版本存在且与当前版本不同（去掉 .V000L1 后缀比较）。
+                    if (isRealUpdate(version, result)) {
+                        // 历史里记录的包类型优先取服务端实际返回值（ext.isFull）
+                        boolean effectiveFull = result.isFullPackage != null ? result.isFullPackage : isFull;
+                        saveHistory(modelName, pd, v, version, android, effectiveFull, channel.name(), domainName, manualMode, result);
+                    }
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> status.setText("查询失败: " + error.getMessage()));
             }
         });
+    }
+
+    /**
+     * v3.9.10：判断是否"真实更新"（是否值得写入查询历史）。
+     * vivo 服务器对已是最新版的设备同样会回包信息（版本=当前版本），仅凭"有版本号"判断
+     * 会导致每次查询都保存历史。这里要求：目标版本非空且去掉 .V000L1 后缀后与当前版本不同。
+     */
+    private boolean isRealUpdate(String baseVersion, VivoOtaClient.VivoResult result) {
+        if (result == null) return false;
+        String target = result.version == null ? "" : result.version.trim();
+        if (target.isEmpty() || "(Not found)".equals(target)) return false;
+        String base = baseVersion == null ? "" : baseVersion.trim();
+        if (target.endsWith(".V000L1")) {
+            target = target.substring(0, target.length() - ".V000L1".length());
+        }
+        return !target.equalsIgnoreCase(base);
     }
 
     private String normalizePd(String value) {
@@ -1198,8 +1227,20 @@ public final class VivoActivity extends Activity {
         // 两两并排显示：设备型号和当前版本
         addPairRow(card, "设备型号", pd, "当前版本", currentVersion);
         
-        // 两两并排显示：安卓版本和包完整性
-        addPairRow(card, "安卓版本", String.valueOf(androidVer), "包完整性", isFull ? "完整包" : "增量包");
+        // 两两并排显示：安卓版本和包类型
+        // v3.9.12：优先显示服务端实际返回的包类型（响应 ext.isFull，逆向自系统升级 APP）；
+        // 响应未携带该标志时回退到查询时选择的类型；两者不一致时标注"服务端返回"，
+        // 让"选了完整包但服务器实际给增量包"的情况一目了然
+        String packageTypeDisplay;
+        if (result.isFullPackage != null) {
+            packageTypeDisplay = result.isFullPackage ? "完整包" : "增量包";
+            if (result.isFullPackage != isFull) {
+                packageTypeDisplay += "（服务端返回）";
+            }
+        } else {
+            packageTypeDisplay = isFull ? "完整包" : "增量包";
+        }
+        addPairRow(card, "安卓版本", String.valueOf(androidVer), "包类型", packageTypeDisplay);
         
         // 两两并排显示：查询模式和服务端目标版本
         String serverVersion = result.version.isEmpty() ? "未获取" : result.version;

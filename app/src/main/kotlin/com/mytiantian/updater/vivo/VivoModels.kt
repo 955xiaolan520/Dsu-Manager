@@ -21,8 +21,13 @@ data class VivoOtaResult(
     val changelogUrl: String = "",
     val securityPatch: String = "",
     val updateDate: String = "",
-    val md5: String = "",
+    val md5: String,
     val channel: String = "NORMAL",
+    /**
+     * 服务端实际返回的包类型（响应 ext.isFull）：true=全量包 false=增量包。
+     * null = 响应未携带该标志（旧服务器/无更新时），UI 应回退到查询时选择的包类型。
+     */
+    val isFullPackage: Boolean? = null,
     val rawResponse: String = ""
 )
 
