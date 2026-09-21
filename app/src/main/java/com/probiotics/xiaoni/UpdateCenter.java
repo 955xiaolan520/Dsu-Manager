@@ -463,11 +463,11 @@ public final class UpdateCenter {
                     percent.setText("100%");
                     bytes.setText(english ? "Download complete" : "下载完成");
                     speedView.setText("");
-                    title.setText(english ? "Download complete" : "下载完成");
+                    title.setText(english ? "Download complete · installing..." : "下载完成 · 正在自动安装...");
                     cancel.setText(english ? "Close" : "关闭");
                     cancelled.set(true);   // 复位为「关闭」语义
                     if (listener != null) listener.onFinished();
-                    installApk(activity, UpdateFileProvider.getUriForFile(activity, apk), english);
+                    installApk(activity, apk, english);   // v3.9.13 PackageInstaller 免 root 静默安装
                 } else {
                     dialog.dismiss();
                     String error = failure == null ? "unknown" : failure.getMessage();
@@ -483,9 +483,15 @@ public final class UpdateCenter {
         }, "app-update-download").start();
     }
 
-    // ---------- 安装 ----------
+    // ---------- 安装（v3.9.13：PackageInstaller 会话式免 root 自动安装） ----------
 
-    public static void installApk(Activity activity, Uri apkUri, boolean english) {
+    /**
+     * PackageInstaller 会话式安装（免 root，无需任何系统权限）：
+     *  - Android 12+ 且已授予「安装未知应用」→ 同签名自更新静默安装，无确认弹窗（应用商店级体验）；
+     *  - Android 8~11 → 系统回调 PENDING_USER_ACTION，自动拉起安装确认页，点一下「安装」即完成；
+     *  - 个别 OEM 会话提交异常 → 回退系统安装器 Intent（老行为）。
+     */
+    public static void installApk(Activity activity, File apk, boolean english) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !activity.getPackageManager().canRequestPackageInstalls()) {
             Toast.makeText(activity, english
@@ -498,12 +504,52 @@ public final class UpdateCenter {
             return;
         }
         try {
-            Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-            intent.setData(apkUri);
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            activity.startActivity(intent);
+            android.content.pm.PackageInstaller installer =
+                    activity.getPackageManager().getPackageInstaller();
+            android.content.pm.PackageInstaller.SessionParams params =
+                    new android.content.pm.PackageInstaller.SessionParams(
+                            android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            // Android 12+：同签名自更新免用户确认（静默安装的关键开关）
+            if (Build.VERSION.SDK_INT >= 31) {
+                params.setRequireUserAction(
+                        android.content.pm.PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
+            }
+            final int sessionId = installer.createSession(params);
+            android.content.pm.PackageInstaller.Session session = installer.openSession(sessionId);
+            try {
+                try (java.io.FileInputStream in = new java.io.FileInputStream(apk);
+                     java.io.OutputStream out = session.openWrite(
+                             "dsu-update-" + sessionId, 0, apk.length())) {
+                    byte[] buffer = new byte[65536];
+                    int read;
+                    while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                    session.fsync(out);
+                }
+                // 提交安装：结果经 UpdateInstallReceiver 回调（成功提示 / 老系统拉确认页 / 失败原因）
+                Intent result = new Intent(activity, UpdateInstallReceiver.class)
+                        .setAction(UpdateInstallReceiver.ACTION_INSTALL_RESULT);
+                // Android 12+ 必须 MUTABLE（系统要向 PendingIntent 填装安装结果 extras）
+                android.app.PendingIntent pending = android.app.PendingIntent.getBroadcast(
+                        activity, sessionId, result,
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                                | android.app.PendingIntent.FLAG_MUTABLE);
+                session.commit(pending.getIntentSender());
+            } finally {
+                session.close();
+            }
+            Toast.makeText(activity, english ? "Installing update..." : "正在自动安装新版本...",
+                    Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            Toast.makeText(activity, english ? "Installer unavailable" : "系统安装器不可用", Toast.LENGTH_LONG).show();
+            // 个别 OEM 会话安装异常 → 回退系统安装器
+            try {
+                Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+                intent.setData(UpdateFileProvider.getUriForFile(activity, apk));
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                activity.startActivity(intent);
+            } catch (Exception e2) {
+                Toast.makeText(activity, english ? "Installer unavailable" : "系统安装器不可用",
+                        Toast.LENGTH_LONG).show();
+            }
         }
     }
 

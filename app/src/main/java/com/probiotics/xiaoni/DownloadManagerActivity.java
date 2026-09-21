@@ -7,16 +7,23 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.DocumentsContract;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -148,12 +155,34 @@ public final class DownloadManagerActivity extends Activity {
         android.widget.FrameLayout.LayoutParams headLp =
                 new android.widget.FrameLayout.LayoutParams(-2, dp(52), Gravity.CENTER);
         title.addView(heading, headLp);
-        TextView badge = label("⇅ 同步中", 12, TEAL_TITLE);
-        badge.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        badge.setPadding(dp(6), 0, dp(10), 0);
-        android.widget.FrameLayout.LayoutParams badgeLp =
-                new android.widget.FrameLayout.LayoutParams(-2, dp(52), Gravity.END | Gravity.CENTER_VERTICAL);
-        title.addView(badge, badgeLp);
+        // v3.9.13 标题栏右上角「＋ 新建下载」（图一同款入口位置，液态玻璃蓝渐变胶囊）
+        Button newDownload = new Button(this, null, 0);
+        newDownload.setText("＋ 新建下载");
+        newDownload.setAllCaps(false);
+        newDownload.setTextSize(12.5f);
+        newDownload.setTypeface(Typeface.DEFAULT_BOLD, Typeface.BOLD);
+        newDownload.setTextColor(Color.WHITE);
+        newDownload.setGravity(Gravity.CENTER);
+        newDownload.setMinWidth(0);
+        newDownload.setMinHeight(0);
+        newDownload.setIncludeFontPadding(false);
+        newDownload.setPadding(dp(14), 0, dp(14), 0);
+        newDownload.setStateListAnimator(null);
+        GradientDrawable newBg = new GradientDrawable();
+        newBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+        newBg.setColors(new int[]{0xFF6C9BF2, 0xFF4472DE});
+        newBg.setCornerRadius(dp(17));
+        newBg.setStroke(Math.max(1, dp(1)), 0x59FFFFFF);
+        newDownload.setBackground(newBg);
+        newDownload.setElevation(dp(3));
+        newDownload.setOnClickListener(v -> {
+            Haptics.perform(v);
+            showNewDownloadDialog();
+        });
+        android.widget.FrameLayout.LayoutParams newLp =
+                new android.widget.FrameLayout.LayoutParams(-2, dp(34), Gravity.END | Gravity.CENTER_VERTICAL);
+        newLp.rightMargin = dp(4);
+        title.addView(newDownload, newLp);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, dp(56));
         titleLp.bottomMargin = dp(12);
         content.addView(title, titleLp);
@@ -327,6 +356,7 @@ public final class DownloadManagerActivity extends Activity {
         if ("RomActivity".equals(page)) return "小米";
         if ("VivoActivity".equals(page)) return "vivo";
         if ("OPlusOtaActivity".equals(page)) return "OPPO";
+        if ("DownloadManagerActivity".equals(page)) return "链接";   // v3.9.13 手动新建下载
         return page == null || page.isEmpty() ? "本机" : page;
     }
 
@@ -345,7 +375,7 @@ public final class DownloadManagerActivity extends Activity {
             empty.setGravity(Gravity.CENTER);
             empty.setTypeface(null, 1);
             card.addView(empty, new LinearLayout.LayoutParams(-1, dp(34)));
-            TextView hint = label("去 ROM 更新中心选择机型开始下载，任务进度会实时同步到这里", 12.5f, TEAL_SOFT);
+            TextView hint = label("去 ROM 更新中心选择机型，或点右上角「新建下载」粘贴任意链接", 12.5f, TEAL_SOFT);
             hint.setGravity(Gravity.CENTER);
             card.addView(hint, new LinearLayout.LayoutParams(-1, -2));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
@@ -716,23 +746,354 @@ public final class DownloadManagerActivity extends Activity {
         return card;
     }
 
-    /** 跳转到文件所在目录（DocumentsUI 目录定位），失败时复制路径到剪贴板 */
+    // ---------- v3.9.13 新建下载（手动输入链接，下载任意文件） ----------
+
+    /** 「＋ 新建下载」弹窗：链接输入（剪贴板自动预填）+ 文件名实时预览，白卡胶囊按钮（与更新中心同款） */
+    private void showNewDownloadDialog() {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(22), dp(20), dp(22), dp(16));
+        GradientDrawable bodyBg = new GradientDrawable();
+        bodyBg.setColor(0xFFFFFFFF);
+        bodyBg.setCornerRadius(dp(24));
+        body.setBackground(bodyBg);
+
+        TextView title = label("新建下载", 17.5f, 0xde000000);
+        title.setTypeface(Typeface.DEFAULT_BOLD, Typeface.BOLD);
+        body.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView hint = label("粘贴任意 http / https 文件直链即可下载，保存到 Download/DsuManager",
+                12.5f, 0x8a000000);
+        hint.setLineSpacing(dp(2), 1.1f);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+        hintLp.topMargin = dp(6);
+        body.addView(hint, hintLp);
+
+        final EditText input = new EditText(this);
+        input.setTextSize(14f);
+        input.setTextColor(0xff20375b);
+        input.setHintTextColor(0x8a94a3b8);
+        input.setHint("https://example.com/file.zip");
+        input.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
+        input.setSingleLine(true);
+        input.setMaxLines(1);
+        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        GradientDrawable fieldBg = new GradientDrawable();
+        fieldBg.setColor(0xFFF3F6FA);
+        fieldBg.setCornerRadius(dp(14));
+        fieldBg.setStroke(Math.max(1, dp(1)), 0x1A20375b);
+        input.setBackground(fieldBg);
+        input.setPadding(dp(12), dp(11), dp(12), dp(11));
+        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(-1, -2);
+        inputLp.topMargin = dp(14);
+        body.addView(input, inputLp);
+
+        // 文件名预览（随输入实时更新）
+        final TextView preview = label("将自动识别文件名", 12f, 0x8a000000);
+        preview.setMaxLines(1);
+        preview.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(-1, dp(20));
+        previewLp.topMargin = dp(8);
+        body.addView(preview, previewLp);
+        input.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) {
+                String url = s.toString().trim();
+                preview.setText(url.isEmpty() ? "将自动识别文件名" : "保存为: " + manualFileName(url));
+            }
+        });
+        // 剪贴板有链接时自动预填（省去长按粘贴）
+        try {
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null
+                    && cm.getPrimaryClip().getItemCount() > 0) {
+                CharSequence text = cm.getPrimaryClip().getItemAt(0).coerceToText(this);
+                String clip = text == null ? "" : text.toString().trim();
+                if (clip.matches("(?i)https?://\\S+")) input.setText(clip);
+            }
+        } catch (Exception ignored) { }
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button cancel = dialogPillButton("取消", 0xFFF1F3F7, 0xFF46536B, false);
+        Button ok = dialogPillButton("开始下载", 0xFF4472DE, 0xFFFFFFFF, true);
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(46), 1));
+        LinearLayout.LayoutParams okLp = new LinearLayout.LayoutParams(0, dp(46), 1.15f);
+        okLp.leftMargin = dp(10);
+        actions.addView(ok, okLp);
+        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(-1, dp(46));
+        actionsLp.topMargin = dp(14);
+        body.addView(actions, actionsLp);
+
+        final android.app.Dialog dialog = new android.app.Dialog(this);
+        dialog.setContentView(body);
+        android.view.Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000));
+            window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.92),
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.show();
+
+        cancel.setOnClickListener(v -> {
+            Haptics.perform(v);
+            dialog.dismiss();
+        });
+        ok.setOnClickListener(v -> {
+            Haptics.perform(v);
+            String url = input.getText().toString().trim().replaceAll("\\s", "");
+            if (!url.matches("(?i)https?://[^/\\s]+/.+")) {
+                Toast.makeText(this, "链接无效，请输入完整的 http / https 下载地址", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            dialog.dismiss();
+            startManualDownload(url);
+        });
+    }
+
+    /** 从链接推导文件名（URL 解码 + 去查询串 + 清理非法字符），取不到时按时间生成 */
+    private static String manualFileName(String url) {
+        String noQuery = url.split("[?#]")[0];
+        int slash = noQuery.lastIndexOf('/');
+        String name = slash >= 0 ? noQuery.substring(slash + 1) : "";
+        try { name = java.net.URLDecoder.decode(name, "UTF-8"); } catch (Exception ignored) { }
+        name = name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        if (name.isEmpty() || ".".equals(name) || "..".equals(name)) {
+            name = "download_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.CHINA).format(new Date());
+        }
+        return name;
+    }
+
+    /** 提交手动下载任务（4 线程 + 16MB 分片，与 ROM 下载同参数；并行满 3 个自动排队接续） */
+    private void startManualDownload(String url) {
+        File directory = new File(Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_DOWNLOADS), "DsuManager");
+        if (!directory.exists()) directory.mkdirs();
+        File output = new File(directory, manualFileName(url));
+        // 同名文件已存在 / 已是活动任务 → 自动追加 (1) (2)…（避免覆盖历史下载）
+        String base = output.getName();
+        int dot = base.lastIndexOf('.');
+        String stem = dot > 0 ? base.substring(0, dot) : base;
+        String ext = dot > 0 ? base.substring(dot) : "";
+        int seq = 1;
+        while (output.exists() || states.containsKey(output.getAbsolutePath())) {
+            output = new File(directory, stem + " (" + (seq++) + ")" + ext);
+        }
+        final String id = output.getAbsolutePath();
+        Intent intent = new Intent(this, DownloadService.class)
+                .setAction(DownloadService.ACTION_START)
+                .putExtra(DownloadService.EXTRA_ADDRESS, url)
+                .putExtra(DownloadService.EXTRA_OUTPUT, id)
+                .putExtra(DownloadService.EXTRA_PACKAGE, "链接下载")
+                .putExtra(DownloadService.EXTRA_PAGE, "DownloadManagerActivity")
+                .putExtra("download_threads", 4)
+                .putExtra("download_chunk_mb", 16L);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
+            else startService(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "任务提交失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // 乐观本地建卡（服务广播到达后自动刷新为排队 / 下载中）
+        TaskState s = new TaskState();
+        s.id = id;
+        s.page = "DownloadManagerActivity";
+        s.pkg = "链接下载";
+        s.output = id;
+        s.message = "正在准备下载";
+        states.put(s.id, s);
+        renderTasks();
+        Toast.makeText(this, "已加入下载队列: " + output.getName(), Toast.LENGTH_SHORT).show();
+    }
+
+    /** 弹窗胶囊按钮（与更新中心同款：主按钮蓝渐变、次按钮浅灰） */
+    private Button dialogPillButton(String text, int bg, int fg, boolean bold) {
+        Button button = new Button(this, null, 0);
+        button.setText(text);
+        button.setAllCaps(false);
+        button.setTextSize(bold ? 15f : 14.5f);
+        if (bold) button.setTypeface(Typeface.DEFAULT_BOLD, Typeface.BOLD);
+        button.setTextColor(fg);
+        button.setGravity(Gravity.CENTER);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setIncludeFontPadding(false);
+        button.setPadding(0, 0, 0, 0);
+        button.setStateListAnimator(null);
+        GradientDrawable background = new GradientDrawable();
+        if (bold) {
+            background.setOrientation(GradientDrawable.Orientation.TL_BR);
+            background.setColors(new int[]{0xFF6C9BF2, 0xFF4472DE});
+        } else {
+            background.setColor(bg);
+        }
+        background.setCornerRadius(dp(23));
+        background.setStroke(Math.max(1, dp(1)), bold ? 0x59FFFFFF : 0x14000000);
+        button.setBackground(background);
+        return button;
+    }
+
+    // ---------- v3.9.13 打开文件位置：文件管理器选择器 ----------
+
+    /**
+     * 跳转到文件所在目录：查询可处理目录跳转的文件管理器（系统文件管理 / MT 管理器等），
+     * 弹「选择应用」列表（同系统打开方式）；一个都没有时回退 DocumentsUI / 复制路径。
+     */
     private void openFileLocation(String path) {
         File file = new File(path);
         File dir = file.getParentFile();
+        String abs = dir != null ? dir.getAbsolutePath()
+                : Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                        + "/DsuManager";
+        String docId = "primary:" + abs.replace("/storage/emulated/0/", "");
+
+        // 候选跳转意图：DocumentsUI 目录定位 + file:// 目录（resource/folder 为 MT 管理器等注册的 MIME）
+        List<Intent> candidates = new ArrayList<>();
         try {
-            String base = "/storage/emulated/0/";
-            String abs = dir != null ? dir.getAbsolutePath() : base + "Download/DsuManager";
-            String docId = "primary:" + abs.replace(base, "");
-            Uri uri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", docId);
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(uri, "vnd.android.document/directory");
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(intent);
-        } catch (Exception e) {
+            Uri docUri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", docId);
+            candidates.add(new Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(docUri, "vnd.android.document/directory")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        } catch (Exception ignored) { }
+        candidates.add(new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(Uri.parse("file://" + abs), "resource/folder"));
+        candidates.add(new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(Uri.parse("file://" + abs), "inode/directory"));
+
+        // 合并去重（同包名保留第一个能处理的意图），保持 DocumentsUI 在前的顺序
+        java.util.LinkedHashMap<String, ResolveInfo> apps = new java.util.LinkedHashMap<>();
+        java.util.HashMap<String, Intent> appIntents = new java.util.HashMap<>();
+        android.content.pm.PackageManager pm = getPackageManager();
+        for (Intent candidate : candidates) {
+            try {
+                for (ResolveInfo info : pm.queryIntentActivities(candidate, 0)) {
+                    String pkg = info.activityInfo.packageName;
+                    if (pkg != null && !apps.containsKey(pkg)) {
+                        apps.put(pkg, info);
+                        appIntents.put(pkg, candidate);
+                    }
+                }
+            } catch (Exception ignored) { }
+        }
+        if (apps.isEmpty()) {
+            // 无任何文件管理器响应 → 老逻辑兜底：直接拉 DocumentsUI，仍失败则复制路径
+            try {
+                Uri docUri = DocumentsContract.buildDocumentUri(
+                        "com.android.externalstorage.documents", docId);
+                startActivity(new Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(docUri, "vnd.android.document/directory")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+            } catch (Exception e) {
+                copyPathToClipboard(path);
+            }
+            return;
+        }
+        showFileManagerChooser(apps, appIntents, path);
+    }
+
+    /** 文件管理器选择弹窗：应用图标 + 名称列表，底部固定「复制文件路径」兜底 */
+    private void showFileManagerChooser(java.util.LinkedHashMap<String, ResolveInfo> apps,
+                                        java.util.HashMap<String, Intent> appIntents, String path) {
+        final android.app.Dialog[] dialogRef = new android.app.Dialog[1];
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(20), dp(18), dp(20), dp(12));
+        GradientDrawable bodyBg = new GradientDrawable();
+        bodyBg.setColor(0xFFFFFFFF);
+        bodyBg.setCornerRadius(dp(24));
+        body.setBackground(bodyBg);
+
+        TextView title = label("选择应用打开文件位置", 16.5f, 0xde000000);
+        title.setTypeface(Typeface.DEFAULT_BOLD, Typeface.BOLD);
+        body.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        String parent = new File(path).getParent();
+        TextView pathView = label(new File(path).getName()
+                + (parent == null ? "" : " · " + parent), 11.5f, 0x8a000000);
+        pathView.setMaxLines(1);
+        pathView.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        LinearLayout.LayoutParams pvLp = new LinearLayout.LayoutParams(-1, -2);
+        pvLp.topMargin = dp(4);
+        body.addView(pathView, pvLp);
+
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        for (java.util.Map.Entry<String, ResolveInfo> entry : apps.entrySet()) {
+            ResolveInfo info = entry.getValue();
+            final Intent launch = appIntents.get(entry.getKey());
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(8), dp(9), dp(8), dp(9));
+            GradientDrawable rowBg = new GradientDrawable();
+            rowBg.setColor(0x0A20375B);
+            rowBg.setCornerRadius(dp(14));
+            row.setBackground(rowBg);
+            try {
+                ImageView icon = new ImageView(this);
+                icon.setImageDrawable(info.loadIcon(getPackageManager()));
+                icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                row.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(34)));
+            } catch (Exception ignored) { }
+            TextView name = label(String.valueOf(info.loadLabel(getPackageManager())), 14.5f, 0xff20375b);
+            name.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(0, dp(36), 1);
+            nameLp.leftMargin = dp(12);
+            row.addView(name, nameLp);
+            row.setOnClickListener(v -> {
+                Haptics.perform(v);
+                if (dialogRef[0] != null) dialogRef[0].dismiss();
+                try {
+                    startActivity(launch);
+                } catch (Exception e) {
+                    copyPathToClipboard(path);
+                }
+            });
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+            rowLp.topMargin = dp(6);
+            list.addView(row, rowLp);
+        }
+        ScrollView listScroll = new ScrollView(this);
+        listScroll.setVerticalScrollBarEnabled(false);
+        listScroll.addView(list, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, -2);
+        scrollLp.topMargin = dp(8);
+        body.addView(listScroll, scrollLp);
+        if (apps.size() > 5) scrollLp.height = dp(296);   // 列表过长时限高滚动
+
+        Button copy = dialogPillButton("📋 复制文件路径", 0xFFF1F3F7, 0xFF46536B, false);
+        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(-1, dp(44));
+        copyLp.topMargin = dp(10);
+        body.addView(copy, copyLp);
+        copy.setOnClickListener(v -> {
+            Haptics.perform(v);
+            if (dialogRef[0] != null) dialogRef[0].dismiss();
+            copyPathToClipboard(path);
+        });
+
+        android.app.Dialog dialog = new android.app.Dialog(this);
+        dialogRef[0] = dialog;
+        dialog.setContentView(body);
+        android.view.Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000));
+            window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.92),
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+    }
+
+    /** 复制完整文件路径到剪贴板（所有跳转失败的最终兜底） */
+    private void copyPathToClipboard(String path) {
+        try {
             ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText("rom_path", path));
-            Toast.makeText(this, "系统文件管理器不支持定位，已复制文件路径", Toast.LENGTH_LONG).show();
+            cm.setPrimaryClip(ClipData.newPlainText("file_path", path));
+            Toast.makeText(this, "已复制文件路径: " + path, Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, path, Toast.LENGTH_LONG).show();
         }
     }
 

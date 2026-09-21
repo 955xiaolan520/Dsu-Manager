@@ -1765,12 +1765,11 @@ public class MainActivity extends Activity {
                       int count;
                       while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
                   }
-                  Uri apkUri = UpdateFileProvider.getUriForFile(this, apk);
                   mainHandler.post(() -> {
                       embeddedDownloadButton.setEnabled(true);
                       embeddedDownloadButton.setText(t("安装已下载 APK", "Install downloaded APK"));
-                      embeddedDownloadButton.setOnClickListener(v -> installApk(apkUri));
-                      installApk(apkUri);
+                      embeddedDownloadButton.setOnClickListener(v -> installApk(apk));
+                      installApk(apk);   // v3.9.13 下载完自动免 root 安装
                   });
                   connection.disconnect();
               } catch (Exception error) {
@@ -1783,16 +1782,9 @@ public class MainActivity extends Activity {
           }).start();
       }
 
-      private void installApk(Uri apkUri) {
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
-              Intent settings = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName()));
-              startActivity(settings);
-              return;
-          }
-          Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-          intent.setData(apkUri);
-          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-          startActivity(intent);
+      private void installApk(File apk) {
+          // v3.9.13：统一走 UpdateCenter 的 PackageInstaller 会话式免 root 自动安装（应用商店级体验）
+          UpdateCenter.installApk(this, apk, UpdateCenter.isEnglish(this));
       }
 
      private void saveLanguage(int mode) {

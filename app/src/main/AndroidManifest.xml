@@ -12,6 +12,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v3.9.13 「打开文件位置」选择器需要看到其他文件管理器（Android 11+ 包可见性） -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="file" />
+        </intent>
+    </queries>
     <application android:theme="@style/AppTheme" android:label="Dsu 管理器" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true" android:requestLegacyExternalStorage="true" android:extractNativeLibs="true" android:enableOnBackInvokedCallback="false">
         <activity android:name=".OnboardingActivity" android:screenOrientation="portrait" android:exported="true" android:theme="@style/AppTheme">
             <intent-filter>
@@ -29,6 +40,8 @@
         <activity android:name=".OPlusOtaActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".PayloadDumperActivity" android:screenOrientation="portrait" android:exported="false" />
         <service android:name=".DownloadService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="dataSync" />
+        <!-- v3.9.13 PackageInstaller 自更新安装结果回调（显式 PendingIntent，无需导出） -->
+        <receiver android:name=".UpdateInstallReceiver" android:exported="false" />
         <activity android:name=".MoreActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".LinuxTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".AlpineTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
