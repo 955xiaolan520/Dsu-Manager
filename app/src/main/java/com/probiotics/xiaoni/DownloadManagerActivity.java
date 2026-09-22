@@ -86,9 +86,7 @@ public final class DownloadManagerActivity extends Activity {
     private final java.util.HashMap<String, CardViews> cards = new java.util.HashMap<>();
 
     // UI
-    private LinearLayout activeHost;      // 任务卡列表容器
-    private LinearLayout historyHost;     // 历史列表容器
-    private TextView historySummary;      // 历史统计
+    private LinearLayout listHost;        // v3.9.15 统一任务列表容器（活跃任务 + 下载历史合并，按筛选标签过滤）
     private LinearLayout filterHost;      // v3.9.14 任务筛选标签行（全部/下载中/已完成/已暂停）
     private int taskFilter = 0;           // 当前筛选：0=全部 1=下载中 2=已完成 3=已暂停
 
@@ -187,69 +185,23 @@ public final class DownloadManagerActivity extends Activity {
         titleLp.bottomMargin = dp(12);
         content.addView(title, titleLp);
 
-        // ---------- 队列说明条（增强玻璃） ----------
-        TextView queueTip = label("任务队列 · 新任务自动排队接续 · 通知栏 / ROM 查询 / 本页三方实时同步",
-                12, TEAL_SOFT);
-        queueTip.setPadding(dp(14), dp(12), dp(14), dp(12));
-        queueTip.setBackground(enhancedGlass(dp(18)));
-        LinearLayout.LayoutParams tipLp = new LinearLayout.LayoutParams(-1, -2);
-        tipLp.bottomMargin = dp(12);
-        content.addView(queueTip, tipLp);
-
-        // ---------- 当前任务卡 ----------
-        TextView section = label("当前任务", 15.5f, TEAL_TITLE);
-        section.setTypeface(null, 1);
-        content.addView(section, new LinearLayout.LayoutParams(-1, dp(32)));
-        // v3.9.14 筛选标签行（全部 / 下载中 / 已完成 / 已暂停，胶囊带计数，点击切换过滤）
+        // ---------- v3.9.15 统一任务列表：筛选标签行直接作为列表头部 ----------
+        // 删除「任务队列」提示卡与「当前任务 / 下载历史」两个小标题（与系统下载管理同构），
+        // 四个胶囊真正过滤「活跃任务 + 下载历史」合并列表；清空按钮挪到列表尾部。
         filterHost = new LinearLayout(this);
         filterHost.setOrientation(LinearLayout.HORIZONTAL);
-        content.addView(filterHost, new LinearLayout.LayoutParams(-1, dp(32)));
-        activeHost = new LinearLayout(this);
-        activeHost.setOrientation(LinearLayout.VERTICAL);
-        content.addView(activeHost, new LinearLayout.LayoutParams(-1, -2));
-
-        // ---------- 下载历史 ----------
-        LinearLayout historyHead = new LinearLayout(this);
-        historyHead.setOrientation(LinearLayout.HORIZONTAL);
-        historyHead.setGravity(Gravity.CENTER_VERTICAL);
-        TextView historyTitle = label("下载历史", 15.5f, TEAL_TITLE);
-        historyTitle.setTypeface(null, 1);
-        historyHead.addView(historyTitle, new LinearLayout.LayoutParams(0, dp(40), 1));
-        historySummary = label("", 12, TEAL_SOFT);
-        historySummary.setGravity(Gravity.CENTER_VERTICAL);
-        historyHead.addView(historySummary, new LinearLayout.LayoutParams(0, dp(38), 1));
-        Button clear = smallGlassButton("清空");
-        // v3.8.2 修复：「清空」两字完整显示 —— 按钮加宽加高 + 左右留白
-        clear.setPadding(dp(14), 0, dp(14), 0);
-        clear.setOnClickListener(v -> {
-            Haptics.perform(v);
-            if (history.isEmpty()) return;
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle("清空下载历史")
-                    .setMessage("确定删除全部 " + history.size() + " 条下载记录？（不会删除已下载的 ROM 文件）")
-                    .setPositiveButton("清空", (d, w) -> {
-                        Haptics.perform(v);
-                        history.clear();
-                        saveHistory();
-                        renderHistory();
-                    })
-                    .setNegativeButton("取消", null)
-                    .show();
-        });
-        LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(dp(68), dp(36));
-        historyHead.addView(clear, clearLp);
-        LinearLayout.LayoutParams historyHeadLp = new LinearLayout.LayoutParams(-1, -2);
-        historyHeadLp.topMargin = dp(14);
-        content.addView(historyHead, historyHeadLp);
-
-        historyHost = new LinearLayout(this);
-        historyHost.setOrientation(LinearLayout.VERTICAL);
-        content.addView(historyHost, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams filterLp = new LinearLayout.LayoutParams(-1, dp(32));
+        filterLp.topMargin = dp(6);
+        content.addView(filterHost, filterLp);
+        listHost = new LinearLayout(this);
+        listHost.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(-1, -2);
+        listLp.topMargin = dp(16);
+        content.addView(listHost, listLp);
 
         loadHistory();
         loadStatesFromStore();
         renderTasks();
-        renderHistory();
 
         // 实时同步：接收下载服务广播（与通知栏同源，按任务 ID 增量更新对应卡片）
         receiver = new BroadcastReceiver() {
@@ -274,7 +226,6 @@ public final class DownloadManagerActivity extends Activity {
         loadHistory();
         loadStatesFromStore();
         renderTasks();
-        renderHistory();
         startService(new Intent(this, DownloadService.class).setAction(DownloadService.ACTION_QUERY));
     }
 
@@ -340,8 +291,8 @@ public final class DownloadManagerActivity extends Activity {
                 s.pending = true;
             } else if ("下载完成".equals(state)) {
                 s.finished = true;
+                // v3.9.15：完成即入历史（统一列表由历史卡接管，下方类别切换触发 renderTasks 全量刷新）
                 loadHistory();
-                renderHistory();
             } else if (state.startsWith("下载失败") || state.startsWith("下载地址无效")) {
                 s.failed = true;
             }
@@ -386,14 +337,8 @@ public final class DownloadManagerActivity extends Activity {
     private void renderFilterTabs() {
         if (filterHost == null) return;
         filterHost.removeAllViews();
-        int downloading = 0, finished = 0, paused = 0;
-        for (TaskState s : states.values()) {
-            int cat = categoryOf(s);
-            if (cat == 1) downloading++;
-            else if (cat == 2) finished++;
-            else paused++;
-        }
-        int[] counts = {states.size(), downloading, finished, paused};
+        // v3.9.15：计数覆盖「活跃任务 + 下载历史」合并视图（此前只统计活跃任务，「已完成」永远 0）
+        int[] counts = computeCounts();
         for (int i = 0; i < FILTER_NAMES.length; i++) {
             final int index = i;
             Button tab = new Button(this, null, 0);
@@ -427,52 +372,117 @@ public final class DownloadManagerActivity extends Activity {
         }
     }
 
+    /** v3.9.15：历史中是否已有该输出文件的记录（任务卡与历史卡去重，防止「全部」下重复显示） */
+    private boolean historyHas(String output) {
+        if (output == null || output.isEmpty()) return false;
+        for (JSONObject e : history) {
+            if (output.equals(e.optString("path"))) return true;
+        }
+        return false;
+    }
+
+    /** v3.9.15：各筛选标签实时计数（已完成 = 历史完成数 + 刚完成未入历史的任务） */
+    private int[] computeCounts() {
+        int downloading = 0, finished = 0, paused = 0, active = 0;
+        for (TaskState s : states.values()) {
+            if (s.finished && historyHas(s.output)) continue;   // 已入历史，由历史卡计数
+            active++;
+            int cat = categoryOf(s);
+            if (cat == 1) downloading++;
+            else if (cat == 2) finished++;
+            else paused++;
+        }
+        int doneHistory = 0;
+        for (JSONObject e : history) {
+            if ("done".equals(e.optString("status"))) doneHistory++;
+        }
+        return new int[]{active + history.size(), downloading, finished + doneHistory, paused};
+    }
+
     private void renderTasks() {
         renderFilterTabs();
-        activeHost.removeAllViews();
+        listHost.removeAllViews();
         cards.clear();
-        if (states.isEmpty()) {
+        // v3.9.15：活跃任务与下载历史合并为统一列表，按筛选标签真正过滤：
+        //   全部 = 活跃任务（下载中/排队/暂停/失败）+ 全部历史；下载中 = 进行/排队任务；
+        //   已完成 = 历史中 done 的文件；已暂停 = 暂停/失败任务。
+        //   刚完成的任务写入历史后由历史卡接管（去重），不再重复渲染任务卡。
+        List<TaskState> shownTasks = new ArrayList<>();
+        for (TaskState s : states.values()) {
+            if (s.finished && historyHas(s.output)) continue;   // 历史接管
+            int cat = categoryOf(s);
+            if (taskFilter == 1 && cat != 1) continue;
+            if (taskFilter == 2 && cat != 2) continue;
+            if (taskFilter == 3 && cat != 3) continue;
+            shownTasks.add(s);
+        }
+        List<JSONObject> shownHistory = new ArrayList<>();
+        if (taskFilter == 0 || taskFilter == 2) {
+            for (JSONObject e : history) {
+                if (taskFilter == 2 && !"done".equals(e.optString("status"))) continue;
+                shownHistory.add(e);
+            }
+        }
+        if (shownTasks.isEmpty() && shownHistory.isEmpty()) {
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(18), dp(16), dp(18), dp(16));
+            card.setPadding(dp(18), dp(18), dp(18), dp(18));
             card.setBackground(enhancedGlass(dp(24)));
             card.setElevation(dp(8));
-            TextView empty = label("当前没有下载任务", 15.5f, TEAL_DARK);
+            String emptyTitle = taskFilter == 1 ? "没有正在下载的任务"
+                    : taskFilter == 2 ? "「已完成」分类下暂无文件"
+                    : taskFilter == 3 ? "没有暂停或失败的任务"
+                    : "当前没有下载任务";
+            TextView empty = label(emptyTitle, 15.5f, TEAL_DARK);
             empty.setGravity(Gravity.CENTER);
             empty.setTypeface(null, 1);
             card.addView(empty, new LinearLayout.LayoutParams(-1, dp(34)));
-            TextView hint = label("去 ROM 更新中心选择机型，或点右上角「新建下载」粘贴任意链接", 12.5f, TEAL_SOFT);
+            String emptyHint = taskFilter == 1 ? "新任务自动排队接续 · 最多同时下载 3 个"
+                    : taskFilter == 2 ? "下载完成的文件会保存在 Download/DsuManager"
+                    : taskFilter == 3 ? "暂停的任务点击「继续」可断点续传"
+                    : "去 ROM 更新中心选择机型，或点右上角「新建下载」粘贴任意链接";
+            TextView hint = label(emptyHint, 12.5f, TEAL_SOFT);
             hint.setGravity(Gravity.CENTER);
+            hint.setLineSpacing(dp(3), 1.1f);
             card.addView(hint, new LinearLayout.LayoutParams(-1, -2));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-            lp.bottomMargin = dp(12);
-            activeHost.addView(card, lp);
+            listHost.addView(card, new LinearLayout.LayoutParams(-1, -2));
             return;
         }
-        // v3.9.14：按当前筛选标签过滤（全部 / 下载中 / 已完成 / 已暂停）
-        List<TaskState> shown = new ArrayList<>();
-        for (TaskState s : states.values()) {
-            if (taskFilter == 0 || categoryOf(s) == taskFilter) shown.add(s);
-        }
-        if (shown.isEmpty()) {
-            LinearLayout card = new LinearLayout(this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(18), dp(14), dp(18), dp(14));
-            card.setBackground(enhancedGlass(dp(24)));
-            card.setElevation(dp(8));
-            TextView empty = label("「" + FILTER_NAMES[taskFilter] + "」分类下暂无任务", 13.5f, TEAL_SOFT);
-            empty.setGravity(Gravity.CENTER);
-            card.addView(empty, new LinearLayout.LayoutParams(-1, dp(30)));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-            lp.bottomMargin = dp(12);
-            activeHost.addView(card, lp);
-            return;
-        }
-        for (TaskState s : shown) {
+        for (TaskState s : shownTasks) {
             View cardView = taskCard(s);
             LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
-            cardLp.bottomMargin = dp(12);
-            activeHost.addView(cardView, cardLp);
+            cardLp.topMargin = dp(12);
+            listHost.addView(cardView, cardLp);
+        }
+        for (JSONObject entry : shownHistory) {
+            View cardView = historyCard(entry);
+            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+            cardLp.topMargin = dp(12);
+            listHost.addView(cardView, cardLp);
+        }
+        // v3.9.15：清空按钮挪到列表尾部（有历史时，全部 / 已完成筛选下显示）
+        if ((taskFilter == 0 || taskFilter == 2) && !history.isEmpty()) {
+            Button clear = smallGlassButton("🗑 清空全部记录");
+            clear.setPadding(dp(16), 0, dp(16), 0);
+            LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(-2, dp(36));
+            clearLp.topMargin = dp(6);
+            clearLp.gravity = Gravity.CENTER_HORIZONTAL;
+            clear.setOnClickListener(v -> {
+                Haptics.perform(v);
+                if (history.isEmpty()) return;
+                new android.app.AlertDialog.Builder(this)
+                        .setTitle("清空下载记录")
+                        .setMessage("确定删除全部 " + history.size() + " 条下载记录？（不会删除已下载的文件）")
+                        .setPositiveButton("清空", (d, w) -> {
+                            Haptics.perform(v);
+                            history.clear();
+                            saveHistory();
+                            renderTasks();
+                        })
+                        .setNegativeButton("取消", null)
+                        .show();
+            });
+            listHost.addView(clear, clearLp);
         }
     }
 
@@ -731,28 +741,9 @@ public final class DownloadManagerActivity extends Activity {
         } catch (Exception ignored) { }
     }
 
-    private void renderHistory() {
-        if (historySummary != null) historySummary.setText(history.isEmpty() ? "" : "共 " + history.size() + " 条");
-        historyHost.removeAllViews();
-        if (history.isEmpty()) {
-            TextView empty = label("暂无下载历史 · 下载完成后可在此一键打开文件位置", 12.5f, TEAL_SOFT);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(14), 0, dp(14));
-            historyHost.addView(empty, new LinearLayout.LayoutParams(-1, -2));
-            return;
-        }
-        for (int i = 0; i < history.size(); i++) {
-            final JSONObject entry = history.get(i);
-            // v3.8.2 修复：卡片之间的间距（此前未应用 LayoutParams，圆角框挤在一起）
-            View cardView = historyCard(entry, i);
-            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
-            cardLp.topMargin = dp(12);
-            cardLp.bottomMargin = i == history.size() - 1 ? dp(6) : 0;
-            historyHost.addView(cardView, cardLp);
-        }
-    }
+    // v3.9.15：renderHistory 已删除 —— 历史卡并入统一列表（renderTasks 按筛选标签渲染）
 
-    private View historyCard(JSONObject entry, int index) {
+    private View historyCard(JSONObject entry) {
         String status = entry.optString("status", "done");
         String name = entry.optString("name", "");
         long size = entry.optLong("size", 0);
@@ -843,7 +834,7 @@ public final class DownloadManagerActivity extends Activity {
             Haptics.perform(v);
             history.remove(entry);
             saveHistory();
-            renderHistory();
+            renderTasks();
         });
         LinearLayout.LayoutParams removeLp = new LinearLayout.LayoutParams(0, dp(40), 1f);
         removeLp.leftMargin = dp(8);
@@ -1044,31 +1035,83 @@ public final class DownloadManagerActivity extends Activity {
         return button;
     }
 
-    // ---------- v3.9.14 打开文件位置：仅文件管理器（系统原生「打开方式」） ----------
+    // ---------- v3.9.15 打开文件位置：四级回退（修复 vivo 等设备上只复制路径不跳转） ----------
 
     /**
-     * 跳转到文件所在目录（v3.9.14 重做）：
-     *  - 只发 DocumentsUI 目录定位意图（ACTION_VIEW + vnd.android.document/directory），
-     *    该专用 MIME 只有真正的文件管理器（系统文件管理 / MT 管理器等）会注册，
-     *    音乐、网盘类应用不会出现——v3.9.13 的 file:// 宽泛 MIME 把它们也拉了进来；
-     *  - 多个文件管理器时系统自动弹原生「打开方式」选择器（应用图标网格，带「定位所在位置」
-     *    能力描述，与系统体验一致）；单个直接跳转；都没有则复制路径兜底。
+     * 跳转到文件所在目录（v3.9.15 重做为四级回退链，层层保底）：
+     *  1. DocumentsUI 精确定位（ACTION_VIEW + vnd.android.document/directory，
+     *     Google Files / AOSP 文件响应，直达文件所在目录）；
+     *  2. 第三方文件管理器（file:// 目录 + resource/folder / inode/directory 专用 MIME，
+     *     MT 管理器 / RE / ES 等注册，音乐网盘类不会出现；单个直接拉起，多个弹系统选择器）；
+     *  3. 系统下载列表（DownloadManager.ACTION_VIEW_DOWNLOADS，几乎所有 ROM 都有，
+     *     打开系统「下载」页可看到 Download/DsuManager 下的文件）；
+     *  4. 复制文件路径（最终兜底）。
+     * v3.9.14 只发第 1 路意图，无应用注册时 startActivity 直接抛异常 → 永远走复制路径。
      */
     private void openFileLocation(String path) {
         File file = new File(path);
         File dir = file.getParentFile();
-        String abs = dir != null ? dir.getAbsolutePath()
+        String abs = dir != null && dir.isDirectory()
+                ? dir.getAbsolutePath()
                 : Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                         + "/DsuManager";
-        String docId = "primary:" + abs.replace("/storage/emulated/0/", "");
+        // 1) DocumentsUI 精确定位（先 query 再启动，避免直接抛 ActivityNotFoundException）
         try {
+            String docId = "primary:" + abs.replace("/storage/emulated/0/", "");
             Uri docUri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", docId);
-            Intent intent = new Intent(Intent.ACTION_VIEW)
+            Intent doc = new Intent(Intent.ACTION_VIEW)
                     .setDataAndType(docUri, "vnd.android.document/directory")
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (doc.resolveActivity(getPackageManager()) != null) {
+                startActivity(doc);
+                return;
+            }
+        } catch (Exception ignored) { }
+        // 2) 第三方文件管理器（resource/folder 是目录专用 MIME，只有管理器注册）
+        try {
+            java.util.LinkedHashSet<String> packages = new java.util.LinkedHashSet<>();
+            String[] folderMimes = {"resource/folder", "inode/directory"};
+            for (String mime : folderMimes) {
+                Intent probe = new Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(Uri.fromFile(new File(abs)), mime);
+                for (android.content.pm.ResolveInfo ri
+                        : getPackageManager().queryIntentActivities(probe, 0)) {
+                    packages.add(ri.activityInfo.packageName);
+                }
+            }
+            if (!packages.isEmpty()) {
+                Intent target = new Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(Uri.fromFile(new File(abs)), "resource/folder");
+                if (packages.size() == 1) {
+                    startFolderIntent(target);
+                } else {
+                    startFolderIntent(Intent.createChooser(target, "选择文件管理器"));
+                }
+                return;
+            }
+        } catch (Exception ignored) { }
+        // 3) 系统下载列表（绝大多数 ROM 自带，至少能看到下载的文件）
+        try {
+            startActivity(new Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS));
+            Toast.makeText(this, "已打开系统下载列表", Toast.LENGTH_SHORT).show();
+            return;
+        } catch (Exception ignored) { }
+        // 4) 复制路径兜底
+        copyPathToClipboard(path);
+    }
+
+    /**
+     * 拉起 file:// 目录意图：targetSdk 24+ 会触发 FileUriExposedException，
+     * 临时放宽 VmPolicy（第三方管理器仅支持 file://，无 content:// 替代）。
+     */
+    private void startFolderIntent(Intent intent) {
+        android.os.StrictMode.VmPolicy old = android.os.StrictMode.getVmPolicy();
+        android.os.StrictMode.setVmPolicy(new android.os.StrictMode.VmPolicy.Builder().build());
+        try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
-        } catch (Exception e) {
-            copyPathToClipboard(path);
+        } finally {
+            android.os.StrictMode.setVmPolicy(old);
         }
     }
 
