@@ -7,7 +7,6 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -23,7 +22,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -91,6 +89,8 @@ public final class DownloadManagerActivity extends Activity {
     private LinearLayout activeHost;      // 任务卡列表容器
     private LinearLayout historyHost;     // 历史列表容器
     private TextView historySummary;      // 历史统计
+    private LinearLayout filterHost;      // v3.9.14 任务筛选标签行（全部/下载中/已完成/已暂停）
+    private int taskFilter = 0;           // 当前筛选：0=全部 1=下载中 2=已完成 3=已暂停
 
     private final List<JSONObject> history = new ArrayList<>();
     private BroadcastReceiver receiver;
@@ -200,6 +200,10 @@ public final class DownloadManagerActivity extends Activity {
         TextView section = label("当前任务", 15.5f, TEAL_TITLE);
         section.setTypeface(null, 1);
         content.addView(section, new LinearLayout.LayoutParams(-1, dp(32)));
+        // v3.9.14 筛选标签行（全部 / 下载中 / 已完成 / 已暂停，胶囊带计数，点击切换过滤）
+        filterHost = new LinearLayout(this);
+        filterHost.setOrientation(LinearLayout.HORIZONTAL);
+        content.addView(filterHost, new LinearLayout.LayoutParams(-1, dp(32)));
         activeHost = new LinearLayout(this);
         activeHost.setOrientation(LinearLayout.VERTICAL);
         content.addView(activeHost, new LinearLayout.LayoutParams(-1, -2));
@@ -323,6 +327,9 @@ public final class DownloadManagerActivity extends Activity {
             renderTasks();
             return;
         }
+        // v3.9.14：记录状态类别，类别切换（排队/下载/暂停/完成/失败）时整卡重建
+        // （徽章与按钮样式随状态变色，增量刷新不覆盖 → 此前完成后徽章一直卡在「下载中」）
+        int categoryBefore = categoryOf(s);
         if (state != null) {
             s.message = state;
             if (state.startsWith("已暂停")) s.paused = true;
@@ -348,6 +355,10 @@ public final class DownloadManagerActivity extends Activity {
         if (t >= 0) s.total = t;
         if (sp > 0) s.speed = sp;
         if (e >= 0) s.eta = e;
+        if (categoryOf(s) != categoryBefore) {
+            renderTasks();
+            return;
+        }
         updateCard(taskId);
     }
 
@@ -362,7 +373,62 @@ public final class DownloadManagerActivity extends Activity {
 
     // ---------- 任务卡列表渲染（v3.8.8：每任务一张卡，最多 3 并行 + 待下载队列） ----------
 
+    /** 任务分类：1 下载中（含排队）/ 2 已完成 / 3 已暂停或失败 */
+    private static int categoryOf(TaskState s) {
+        if (s.finished) return 2;
+        if (s.paused || s.failed) return 3;
+        return 1;
+    }
+
+    private static final String[] FILTER_NAMES = {"全部", "下载中", "已完成", "已暂停"};
+
+    /** v3.9.14 筛选标签行：4 个胶囊（带实时计数），选中蓝渐变白字、未选中白玻璃青字 */
+    private void renderFilterTabs() {
+        if (filterHost == null) return;
+        filterHost.removeAllViews();
+        int downloading = 0, finished = 0, paused = 0;
+        for (TaskState s : states.values()) {
+            int cat = categoryOf(s);
+            if (cat == 1) downloading++;
+            else if (cat == 2) finished++;
+            else paused++;
+        }
+        int[] counts = {states.size(), downloading, finished, paused};
+        for (int i = 0; i < FILTER_NAMES.length; i++) {
+            final int index = i;
+            Button tab = new Button(this, null, 0);
+            tab.setText(FILTER_NAMES[i] + " " + counts[i]);
+            tab.setAllCaps(false);
+            tab.setTextSize(11.5f);
+            if (taskFilter == i) tab.setTypeface(Typeface.DEFAULT_BOLD, Typeface.BOLD);
+            tab.setTextColor(taskFilter == i ? Color.WHITE : TEAL_TITLE);
+            tab.setGravity(Gravity.CENTER);
+            tab.setMinWidth(0);
+            tab.setMinHeight(0);
+            tab.setIncludeFontPadding(false);
+            tab.setPadding(0, 0, 0, 0);
+            tab.setStateListAnimator(null);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setOrientation(GradientDrawable.Orientation.TL_BR);
+            if (taskFilter == i) bg.setColors(new int[]{0xFF6C9BF2, 0xFF4472DE});
+            else bg.setColors(new int[]{0xCCFFFFFF, 0x99E2E8F0});
+            bg.setCornerRadius(dp(15));
+            bg.setStroke(Math.max(1, dp(1)), taskFilter == i ? 0x59FFFFFF : 0x66FFFFFF);
+            tab.setBackground(bg);
+            tab.setOnClickListener(v -> {
+                if (taskFilter == index) return;
+                Haptics.perform(v);
+                taskFilter = index;
+                renderTasks();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(30), 1);
+            if (i > 0) lp.leftMargin = dp(8);
+            filterHost.addView(tab, lp);
+        }
+    }
+
     private void renderTasks() {
+        renderFilterTabs();
         activeHost.removeAllViews();
         cards.clear();
         if (states.isEmpty()) {
@@ -383,7 +449,26 @@ public final class DownloadManagerActivity extends Activity {
             activeHost.addView(card, lp);
             return;
         }
+        // v3.9.14：按当前筛选标签过滤（全部 / 下载中 / 已完成 / 已暂停）
+        List<TaskState> shown = new ArrayList<>();
         for (TaskState s : states.values()) {
+            if (taskFilter == 0 || categoryOf(s) == taskFilter) shown.add(s);
+        }
+        if (shown.isEmpty()) {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(18), dp(14), dp(18), dp(14));
+            card.setBackground(enhancedGlass(dp(24)));
+            card.setElevation(dp(8));
+            TextView empty = label("「" + FILTER_NAMES[taskFilter] + "」分类下暂无任务", 13.5f, TEAL_SOFT);
+            empty.setGravity(Gravity.CENTER);
+            card.addView(empty, new LinearLayout.LayoutParams(-1, dp(30)));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+            lp.bottomMargin = dp(12);
+            activeHost.addView(card, lp);
+            return;
+        }
+        for (TaskState s : shown) {
             View cardView = taskCard(s);
             LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
             cardLp.bottomMargin = dp(12);
@@ -483,15 +568,25 @@ public final class DownloadManagerActivity extends Activity {
         pathLp.bottomMargin = dp(4);
         views.card.addView(views.path, pathLp);
 
-        // 操作按钮：暂停/继续 + 取消（每卡独立，指令带任务 ID）
+        // 操作按钮：暂停/继续/安装 + 取消（每卡独立，指令带任务 ID）
+        // v3.9.14：任务完成的 APK → 主按钮变「⚙ 安装 APK」（绿渐变），点击直接免 root 安装
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
+        boolean isApk = s.output != null && s.output.toLowerCase(Locale.CHINA).endsWith(".apk");
+        boolean installable = s.finished && isApk;
         views.pauseButton = actionButton(
-                s.pending ? "◷ 排队中" : s.paused ? "▶ 继续" : s.finished ? "已完成" : "⏸ 暂停",
-                0xFF4472DE, 0xFF6C9BF2);
-        views.pauseButton.setEnabled(!s.pending && !s.finished);
+                s.pending ? "◷ 排队中" : s.paused ? "▶ 继续"
+                        : installable ? "⚙ 安装 APK" : s.finished ? "已完成" : "⏸ 暂停",
+                installable ? 0xFF1E8A60 : 0xFF4472DE,
+                installable ? 0xFF2FB47C : 0xFF6C9BF2);
+        views.pauseButton.setEnabled(!s.pending && (!s.finished || installable));
         views.pauseButton.setOnClickListener(v -> {
             Haptics.perform(v);
+            if (installable) {
+                // v3.9.14：点击直接跳转安装（PackageInstaller 免 root，成功后自动清理安装包）
+                UpdateCenter.installApk(DownloadManagerActivity.this, new File(s.output), false);
+                return;
+            }
             startService(new Intent(this, DownloadService.class)
                     .setAction(s.paused ? DownloadService.ACTION_RESUME : DownloadService.ACTION_PAUSE)
                     .putExtra(DownloadService.EXTRA_TASK_ID, s.id));
@@ -549,8 +644,11 @@ public final class DownloadManagerActivity extends Activity {
         views.progress.setProgress(percentValue(s));
         views.bytes.setText(bytesText(s));
         views.path.setText(s.output.isEmpty() ? "" : "保存到: " + s.output);
-        views.pauseButton.setText(s.pending ? "◷ 排队中" : s.paused ? "▶ 继续" : s.finished ? "已完成" : "⏸ 暂停");
-        views.pauseButton.setEnabled(!s.pending && !s.finished);
+        views.pauseButton.setText(s.pending ? "◷ 排队中" : s.paused ? "▶ 继续"
+                : s.finished && s.output.toLowerCase(Locale.CHINA).endsWith(".apk")
+                        ? "⚙ 安装 APK" : s.finished ? "已完成" : "⏸ 暂停");
+        views.pauseButton.setEnabled(!s.pending && (!s.finished
+                || s.output.toLowerCase(Locale.CHINA).endsWith(".apk")));
         views.cancelButton.setText(s.finished ? "知道了" : "✕ 取消");
     }
 
@@ -718,11 +816,21 @@ public final class DownloadManagerActivity extends Activity {
         detailLp.topMargin = dp(2);
         card.addView(detail, detailLp);
 
-        // 操作：打开文件位置（仅已完成且文件存在）+ 删除记录
+        // 操作：APK 完成且文件存在 → 「📦 安装 APK」；其他文件 → 「📂 打开文件位置」；+ 删除记录
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         boolean fileExists = !path.isEmpty() && new File(path).isFile();
-        if (fileExists) {
+        boolean installable = fileExists && "done".equals(status)
+                && path.toLowerCase(Locale.CHINA).endsWith(".apk");
+        if (installable) {
+            // v3.9.14：下载的 APK 点击直接免 root 安装（成功后自动清理安装包）
+            Button install = actionButton("📦 安装 APK", 0xFF1E8A60, 0xFF2FB47C);
+            install.setOnClickListener(v -> {
+                Haptics.perform(v);
+                UpdateCenter.installApk(DownloadManagerActivity.this, new File(path), false);
+            });
+            actions.addView(install, new LinearLayout.LayoutParams(0, dp(40), 1.6f));
+        } else if (fileExists) {
             Button locate = actionButton("📂 打开文件位置", 0xFF1E8A60, 0xFF2FB47C);
             locate.setOnClickListener(v -> {
                 Haptics.perform(v);
@@ -936,11 +1044,15 @@ public final class DownloadManagerActivity extends Activity {
         return button;
     }
 
-    // ---------- v3.9.13 打开文件位置：文件管理器选择器 ----------
+    // ---------- v3.9.14 打开文件位置：仅文件管理器（系统原生「打开方式」） ----------
 
     /**
-     * 跳转到文件所在目录：查询可处理目录跳转的文件管理器（系统文件管理 / MT 管理器等），
-     * 弹「选择应用」列表（同系统打开方式）；一个都没有时回退 DocumentsUI / 复制路径。
+     * 跳转到文件所在目录（v3.9.14 重做）：
+     *  - 只发 DocumentsUI 目录定位意图（ACTION_VIEW + vnd.android.document/directory），
+     *    该专用 MIME 只有真正的文件管理器（系统文件管理 / MT 管理器等）会注册，
+     *    音乐、网盘类应用不会出现——v3.9.13 的 file:// 宽泛 MIME 把它们也拉了进来；
+     *  - 多个文件管理器时系统自动弹原生「打开方式」选择器（应用图标网格，带「定位所在位置」
+     *    能力描述，与系统体验一致）；单个直接跳转；都没有则复制路径兜底。
      */
     private void openFileLocation(String path) {
         File file = new File(path);
@@ -949,141 +1061,15 @@ public final class DownloadManagerActivity extends Activity {
                 : Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                         + "/DsuManager";
         String docId = "primary:" + abs.replace("/storage/emulated/0/", "");
-
-        // 候选跳转意图：DocumentsUI 目录定位 + file:// 目录（resource/folder 为 MT 管理器等注册的 MIME）
-        List<Intent> candidates = new ArrayList<>();
         try {
             Uri docUri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", docId);
-            candidates.add(new Intent(Intent.ACTION_VIEW)
+            Intent intent = new Intent(Intent.ACTION_VIEW)
                     .setDataAndType(docUri, "vnd.android.document/directory")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
-        } catch (Exception ignored) { }
-        candidates.add(new Intent(Intent.ACTION_VIEW)
-                .setDataAndType(Uri.parse("file://" + abs), "resource/folder"));
-        candidates.add(new Intent(Intent.ACTION_VIEW)
-                .setDataAndType(Uri.parse("file://" + abs), "inode/directory"));
-
-        // 合并去重（同包名保留第一个能处理的意图），保持 DocumentsUI 在前的顺序
-        java.util.LinkedHashMap<String, ResolveInfo> apps = new java.util.LinkedHashMap<>();
-        java.util.HashMap<String, Intent> appIntents = new java.util.HashMap<>();
-        android.content.pm.PackageManager pm = getPackageManager();
-        for (Intent candidate : candidates) {
-            try {
-                for (ResolveInfo info : pm.queryIntentActivities(candidate, 0)) {
-                    String pkg = info.activityInfo.packageName;
-                    if (pkg != null && !apps.containsKey(pkg)) {
-                        apps.put(pkg, info);
-                        appIntents.put(pkg, candidate);
-                    }
-                }
-            } catch (Exception ignored) { }
-        }
-        if (apps.isEmpty()) {
-            // 无任何文件管理器响应 → 老逻辑兜底：直接拉 DocumentsUI，仍失败则复制路径
-            try {
-                Uri docUri = DocumentsContract.buildDocumentUri(
-                        "com.android.externalstorage.documents", docId);
-                startActivity(new Intent(Intent.ACTION_VIEW)
-                        .setDataAndType(docUri, "vnd.android.document/directory")
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
-            } catch (Exception e) {
-                copyPathToClipboard(path);
-            }
-            return;
-        }
-        showFileManagerChooser(apps, appIntents, path);
-    }
-
-    /** 文件管理器选择弹窗：应用图标 + 名称列表，底部固定「复制文件路径」兜底 */
-    private void showFileManagerChooser(java.util.LinkedHashMap<String, ResolveInfo> apps,
-                                        java.util.HashMap<String, Intent> appIntents, String path) {
-        final android.app.Dialog[] dialogRef = new android.app.Dialog[1];
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(20), dp(18), dp(20), dp(12));
-        GradientDrawable bodyBg = new GradientDrawable();
-        bodyBg.setColor(0xFFFFFFFF);
-        bodyBg.setCornerRadius(dp(24));
-        body.setBackground(bodyBg);
-
-        TextView title = label("选择应用打开文件位置", 16.5f, 0xde000000);
-        title.setTypeface(Typeface.DEFAULT_BOLD, Typeface.BOLD);
-        body.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        String parent = new File(path).getParent();
-        TextView pathView = label(new File(path).getName()
-                + (parent == null ? "" : " · " + parent), 11.5f, 0x8a000000);
-        pathView.setMaxLines(1);
-        pathView.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        LinearLayout.LayoutParams pvLp = new LinearLayout.LayoutParams(-1, -2);
-        pvLp.topMargin = dp(4);
-        body.addView(pathView, pvLp);
-
-        LinearLayout list = new LinearLayout(this);
-        list.setOrientation(LinearLayout.VERTICAL);
-        for (java.util.Map.Entry<String, ResolveInfo> entry : apps.entrySet()) {
-            ResolveInfo info = entry.getValue();
-            final Intent launch = appIntents.get(entry.getKey());
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(8), dp(9), dp(8), dp(9));
-            GradientDrawable rowBg = new GradientDrawable();
-            rowBg.setColor(0x0A20375B);
-            rowBg.setCornerRadius(dp(14));
-            row.setBackground(rowBg);
-            try {
-                ImageView icon = new ImageView(this);
-                icon.setImageDrawable(info.loadIcon(getPackageManager()));
-                icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                row.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(34)));
-            } catch (Exception ignored) { }
-            TextView name = label(String.valueOf(info.loadLabel(getPackageManager())), 14.5f, 0xff20375b);
-            name.setGravity(Gravity.CENTER_VERTICAL);
-            LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(0, dp(36), 1);
-            nameLp.leftMargin = dp(12);
-            row.addView(name, nameLp);
-            row.setOnClickListener(v -> {
-                Haptics.perform(v);
-                if (dialogRef[0] != null) dialogRef[0].dismiss();
-                try {
-                    startActivity(launch);
-                } catch (Exception e) {
-                    copyPathToClipboard(path);
-                }
-            });
-            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
-            rowLp.topMargin = dp(6);
-            list.addView(row, rowLp);
-        }
-        ScrollView listScroll = new ScrollView(this);
-        listScroll.setVerticalScrollBarEnabled(false);
-        listScroll.addView(list, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, -2);
-        scrollLp.topMargin = dp(8);
-        body.addView(listScroll, scrollLp);
-        if (apps.size() > 5) scrollLp.height = dp(296);   // 列表过长时限高滚动
-
-        Button copy = dialogPillButton("📋 复制文件路径", 0xFFF1F3F7, 0xFF46536B, false);
-        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(-1, dp(44));
-        copyLp.topMargin = dp(10);
-        body.addView(copy, copyLp);
-        copy.setOnClickListener(v -> {
-            Haptics.perform(v);
-            if (dialogRef[0] != null) dialogRef[0].dismiss();
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(intent);
+        } catch (Exception e) {
             copyPathToClipboard(path);
-        });
-
-        android.app.Dialog dialog = new android.app.Dialog(this);
-        dialogRef[0] = dialog;
-        dialog.setContentView(body);
-        android.view.Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000));
-            window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.92),
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
         }
-        dialog.setCanceledOnTouchOutside(true);
-        dialog.show();
     }
 
     /** 复制完整文件路径到剪贴板（所有跳转失败的最终兜底） */

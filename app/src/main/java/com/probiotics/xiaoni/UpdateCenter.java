@@ -525,9 +525,11 @@ public final class UpdateCenter {
                     while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
                     session.fsync(out);
                 }
-                // 提交安装：结果经 UpdateInstallReceiver 回调（成功提示 / 老系统拉确认页 / 失败原因）
+                // 提交安装：结果经 UpdateInstallReceiver 回调（成功提示并清理安装包 / 老系统拉确认页 / 失败原因）
                 Intent result = new Intent(activity, UpdateInstallReceiver.class)
-                        .setAction(UpdateInstallReceiver.ACTION_INSTALL_RESULT);
+                        .setAction(UpdateInstallReceiver.ACTION_INSTALL_RESULT)
+                        // v3.9.14：携带安装包路径，安装成功后自动清理
+                        .putExtra(UpdateInstallReceiver.EXTRA_APK_PATH, apk.getAbsolutePath());
                 // Android 12+ 必须 MUTABLE（系统要向 PendingIntent 填装安装结果 extras）
                 android.app.PendingIntent pending = android.app.PendingIntent.getBroadcast(
                         activity, sessionId, result,
