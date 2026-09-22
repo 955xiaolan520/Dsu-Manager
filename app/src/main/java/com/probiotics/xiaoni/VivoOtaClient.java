@@ -68,7 +68,8 @@ final class VivoOtaClient {
             kotlinResult.getSecurityPatch(),
             kotlinResult.getUpdateDate(),
             kotlinResult.getChangelogUrl(),
-            kotlinResult.isFullPackage()
+            kotlinResult.isFullPackage(),
+            kotlinResult.getFullFallback()
         );
     }
 
@@ -81,8 +82,11 @@ final class VivoOtaClient {
         final String version, filename, size, md5, downloadUrl, securityPatch, updateTime, changelogUrl;
         /** 服务端实际返回的包类型（ext.isFull）：TRUE=全量 FALSE=增量，null=响应未携带。 */
         final Boolean isFullPackage;
+        /** 请求全量包但服务器无全量（retcode=210），已自动降级查到增量包；UI 需明确提示。 */
+        final boolean fullFallback;
         VivoResult(String version, String filename, String size, String md5, String downloadUrl,
-                   String securityPatch, String updateTime, String changelogUrl, Boolean isFullPackage) {
+                   String securityPatch, String updateTime, String changelogUrl, Boolean isFullPackage,
+                   boolean fullFallback) {
             this.version = version;
             this.filename = filename;
             this.size = size;
@@ -92,6 +96,7 @@ final class VivoOtaClient {
             this.updateTime = updateTime;
             this.changelogUrl = changelogUrl;
             this.isFullPackage = isFullPackage;
+            this.fullFallback = fullFallback;
         }
     }
 }

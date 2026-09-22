@@ -209,6 +209,9 @@ class VivoOtaClient(private val context: Context) {
 
         // 新机型（如 X500）无全量包：isFull=1 返回 retcode=210 时自动降级 isFull=0 查增量包。
         // 降级成功后 redirPost 也会用增量参数集（与实测的 VivoOtaTracker v2 行为一致）。
+        // 实测结论：vivo 仅对"基准=最新版"下发同版本全量重刷包（X200 对照验证），
+        // 新机型全量包通常晚于增量包上架，此处降级后由 UI 提示用户。
+        var fullFallback = false
         if (isFull && !isTaste && !responseHasPackage(updateResponse)) {
             val firstRetCode = extractRetCode(updateResponse)
             Log.d(TAG, "isFull=1 got no package (retcode=$firstRetCode), fallback to isFull=0")
@@ -217,6 +220,7 @@ class VivoOtaClient(private val context: Context) {
             if (!retryResponse.startsWith("[Error]") && responseHasPackage(retryResponse)) {
                 Log.d(TAG, "Fallback query succeeded (retcode=${extractRetCode(retryResponse)})")
                 updateResponse = retryResponse
+                fullFallback = true
             } else {
                 // 增量也查不到：还原 isFull=1 的原始响应与参数集
                 Log.d(TAG, "Fallback query got no package either, keep isFull=1 response")
@@ -224,7 +228,7 @@ class VivoOtaClient(private val context: Context) {
             }
         }
 
-        return parseResult(updateResponse, p, channel, domain)
+        return parseResult(updateResponse, p, channel, domain, fullFallback)
     }
 
     /** 公测/内测共用参数集，与 PC 版 buildBetaBaseParams 对应。 */
@@ -250,7 +254,8 @@ class VivoOtaClient(private val context: Context) {
         updateResponse: String,
         queryParams: Map<String, Any>,
         channel: QueryChannel = QueryChannel.NORMAL,
-        domain: Domain = Domain.CN
+        domain: Domain = Domain.CN,
+        fullFallback: Boolean = false
     ): VivoOtaResult {
         Log.d(TAG, "Raw OTA response: $updateResponse")
 
@@ -321,6 +326,7 @@ class VivoOtaClient(private val context: Context) {
             md5 = md5,
             channel = channel.value,
             isFullPackage = isFullPackage,
+            fullFallback = fullFallback,
             rawResponse = updateResponse
         )
     }

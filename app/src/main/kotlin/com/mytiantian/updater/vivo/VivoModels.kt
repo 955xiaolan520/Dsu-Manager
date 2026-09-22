@@ -28,6 +28,13 @@ data class VivoOtaResult(
      * null = 响应未携带该标志（旧服务器/无更新时），UI 应回退到查询时选择的包类型。
      */
     val isFullPackage: Boolean? = null,
+    /**
+     * 用户请求全量包但服务器无全量（retcode=210），自动降级 isFull=0 查到增量包。
+     * true 时 UI 应明确提示"服务器暂无全量包"，避免用户误以为查询异常。
+     * 实测结论：vivo 仅对"基准=最新版"的请求下发同版本全量重刷包（如 X200），
+     * 新机型全量包通常晚于增量包数天至数周上架。
+     */
+    val fullFallback: Boolean = false,
     val rawResponse: String = ""
 )
 

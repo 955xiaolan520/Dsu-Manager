@@ -1234,13 +1234,25 @@ public final class VivoActivity extends Activity {
         String packageTypeDisplay;
         if (result.isFullPackage != null) {
             packageTypeDisplay = result.isFullPackage ? "完整包" : "增量包";
-            if (result.isFullPackage != isFull) {
+            if (result.fullFallback) {
+                packageTypeDisplay += "（自动降级）";
+            } else if (result.isFullPackage != isFull) {
                 packageTypeDisplay += "（服务端返回）";
             }
         } else {
             packageTypeDisplay = isFull ? "完整包" : "增量包";
         }
         addPairRow(card, "安卓版本", String.valueOf(androidVer), "包类型", packageTypeDisplay);
+
+        // v3.9.18：全量包查询被服务器拒绝（retcode=210）自动降级为增量包时，给出醒目说明。
+        // 实测结论（X200 全链路对照）：vivo 仅对"基准=最新版"的请求下发同版本全量重刷包，
+        // 新机型全量包通常晚于增量包数天至数周上架，届时用"完整包"重查即可。
+        if (result.fullFallback) {
+            TextView fallbackWarn = label("⚠ 未获得完整包：vivo 服务器暂未上架该版本的全量包（新机型常见），已自动改查增量包。全量重刷包通常在增量包发布后数天至数周上架，稍后用\"完整包\"重新查询即可。", 12, 0xffb3541e);
+            fallbackWarn.setLineSpacing(dp(3), 1f);
+            fallbackWarn.setPadding(dp(12), dp(10), dp(12), dp(10));
+            card.addView(fallbackWarn, margins(-1, -2, 10, 0, 0));
+        }
         
         // 两两并排显示：查询模式和服务端目标版本
         String serverVersion = result.version.isEmpty() ? "未获取" : result.version;
