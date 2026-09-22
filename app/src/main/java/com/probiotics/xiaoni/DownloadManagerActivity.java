@@ -861,7 +861,7 @@ public final class DownloadManagerActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD, Typeface.BOLD);
         body.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView hint = label("粘贴任意 http / https 文件直链即可下载，保存到 Download/DsuManager",
+        TextView hint = label("粘贴任意 http / https 文件直链即可下载（GitHub 链接自动加速，无需 VPN），保存到 Download/DsuManager",
                 12.5f, 0x8a000000);
         hint.setLineSpacing(dp(2), 1.1f);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);

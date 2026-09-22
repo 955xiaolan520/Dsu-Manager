@@ -64,10 +64,35 @@ public final class DownloadService extends Service {
     /** 结束通知（完成/失败/取消）ID 基数：50/51/52 */
     private static final int FINAL_BASE = 50;
 
+    /** v3.9.16：GitHub 加速镜像（前缀式，直连失败逐个回退，与 UpdateCenter 自更新同源） */
+    private static final String[] GITHUB_MIRRORS = {
+            "https://gh-proxy.com/",
+            "https://ghfast.top/",
+            "https://ghproxy.net/"
+    };
+
+    /**
+     * v3.9.16：是否 GitHub 系域名（国内直连经常被重置，失败后自动走加速镜像，
+     * 用户不挂 VPN 也能下载 GitHub 上的文件；ROM 官方服务器国内直连，不受影响）。
+     */
+    private static boolean isGithubHost(String url) {
+        if (url == null) return false;
+        String[] hosts = {
+                "https://github.com/", "https://raw.githubusercontent.com/",
+                "https://objects.githubusercontent.com/", "https://release-assets.githubusercontent.com/",
+                "https://gist.githubusercontent.com/", "https://codeload.github.com/",
+                "https://media.githubusercontent.com/", "https://cloud.githubusercontent.com/"
+        };
+        for (String host : hosts) if (url.startsWith(host)) return true;
+        return false;
+    }
+
     /** 单个下载任务：独立的状态、断点、通知槽位与工作线程 */
     private static final class Task {
         final String id;          // 输出文件绝对路径（唯一标识）
-        final String address;
+        final String address;     // 原始下载地址（持久化与镜像回退的基准，不可变）
+        volatile String liveAddress;   // v3.9.16：实际下载地址（GitHub 镜像回退时改写）
+        int mirrorIndex;          // v3.9.16：已尝试的加速镜像数
         final File output;
         final String page;        // 来源页面（RomActivity / VivoActivity / OPlusOtaActivity…）
         final String pkg;         // 包类型文案（卡刷包 / vivo OTA / OPlus OTA…）
@@ -90,6 +115,7 @@ public final class DownloadService extends Service {
         Task(String id, String address, File output, String page, String pkg, int threads, long chunkMB) {
             this.id = id;
             this.address = address;
+            this.liveAddress = address;   // v3.9.16：默认直连，镜像回退时改写
             this.output = output;
             this.page = page;
             this.pkg = pkg;
@@ -352,7 +378,7 @@ public final class DownloadService extends Service {
             final boolean[] completed = {false};
             final boolean[] failed = {false};
             final String[] failMessage = {""};
-            Aria2Downloader engine = new Aria2Downloader(this, task.address, task.output,
+            Aria2Downloader engine = new Aria2Downloader(this, task.liveAddress, task.output,
                     new Aria2Downloader.Listener() {
                 @Override public void onState(String text) { broadcastTask(task, text, -1, -1); }
                 @Override public void onProgress(long done, long total) {
@@ -383,6 +409,22 @@ public final class DownloadService extends Service {
             task.downloader = engine;
             engine.run();
             task.downloader = null;
+            if (task.cancelled) break;
+            // v3.9.16：GitHub 直连失败 → 自动切换加速镜像重试（不挂 VPN 也能下载）。
+            // 注意 onError 会置 paused=true，必须在「暂停等待」分支之前处理，否则卡死。
+            if (failed[0] && !completed[0]
+                    && isGithubHost(task.address) && task.mirrorIndex < GITHUB_MIRRORS.length) {
+                String mirror = GITHUB_MIRRORS[task.mirrorIndex++];
+                // 镜像与直连的分片/ETag 不保证一致 → 清断点从头下载（直连失败通常没下到内容）
+                Aria2Downloader.deleteCancelledDownload(task.output);
+                task.done = -1; task.total = -1; task.speed = -1; task.eta = -1; task.lastPercent = -1;
+                task.liveAddress = mirror + task.address;
+                task.paused = false;
+                broadcastTask(task, "GitHub 直连失败，自动切换加速镜像重试（"
+                        + task.mirrorIndex + "/" + GITHUB_MIRRORS.length + "）...", -1, -1);
+                notifyTaskNow(task);
+                continue;
+            }
             if (task.paused && !task.cancelled) {
                 if (!failed[0] && !task.message.startsWith("已暂停")) {
                     broadcastTask(task, "已暂停，点击继续可断点续传", -1, -1);
