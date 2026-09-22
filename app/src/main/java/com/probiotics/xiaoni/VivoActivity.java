@@ -1247,8 +1247,9 @@ public final class VivoActivity extends Activity {
         // v3.9.18：全量包查询被服务器拒绝（retcode=210）自动降级为增量包时，给出醒目说明。
         // 实测结论（X200 全链路对照）：vivo 仅对"基准=最新版"的请求下发同版本全量重刷包，
         // 新机型全量包通常晚于增量包数天至数周上架，届时用"完整包"重查即可。
+        // v3.9.19：补充官方数据损坏修复通道（recovery 系统修复模式会自动拉取全量修复包）。
         if (result.fullFallback) {
-            TextView fallbackWarn = label("⚠ 未获得完整包：vivo 服务器暂未上架该版本的全量包（新机型常见），已自动改查增量包。全量重刷包通常在增量包发布后数天至数周上架，稍后用\"完整包\"重新查询即可。", 12, 0xffb3541e);
+            TextView fallbackWarn = label("⚠ 未获得完整包：vivo 服务器暂未上架该版本的全量包（新机型常见），已自动改查增量包。全量重刷包通常在增量包发布后数天至数周上架，稍后用\"完整包\"重新查询即可。\n\n如设备系统数据损坏需立即修复，可用官方恢复模式：关机后同时按住\"电源键+音量+键\"进入 FASTBOOT，选择【系统修复模式】>【下载最新版本并安装】，手机将自动从服务器下载全量修复包（该模式仅刷全量包，正好适用数据损坏场景）。", 12, 0xffb3541e);
             fallbackWarn.setLineSpacing(dp(3), 1f);
             fallbackWarn.setPadding(dp(12), dp(10), dp(12), dp(10));
             card.addView(fallbackWarn, margins(-1, -2, 10, 0, 0));
