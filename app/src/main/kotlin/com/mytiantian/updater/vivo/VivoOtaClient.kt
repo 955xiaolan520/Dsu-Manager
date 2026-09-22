@@ -90,7 +90,9 @@ class VivoOtaClient(private val context: Context) {
         val p = LinkedHashMap<String, Any>()
         p["vgcNewActiveVer"] = ""
         p["nt"] = "WIFI"
-        p["vgcSwVer"] = "1.1.1"
+        // vgcSwVer 取自系统属性 ro.vgc.cust.version（镜像 APP VersionUtils.getVgcSoftVersion()），
+        // vivo17 协议为 "17.1.1"；旧的 "1.1.1" 会导致新机型查不到全量包
+        p["vgcSwVer"] = "17.1.1"
         p["fullVer"] = fullVer
         p["emmcid"] = ""
         p["sm1"] = "null"
@@ -128,6 +130,10 @@ class VivoOtaClient(private val context: Context) {
             p["si"] = "null"
             p["dType"] = "phone"
             p["s_n"] = "null"
+            // vivo17 APP 必发参数（新版服务器校验，镜像 y/c.java 拼接顺序）
+            p["logVersionNegotiation"] = 5360
+            p["ram"] = 16
+            p["rom"] = 512
             p["elapsedtime"] = elapsedtime
             p["st1"] = 100000 + random.nextInt(60000)
             p["imei"] = effectiveImei
@@ -196,12 +202,29 @@ class VivoOtaClient(private val context: Context) {
             Log.d(TAG, "${channel.value} state: $stateJson")
         }
 
-        val updateResponse = if (isTaste) sendTasteRequest(rawParams, domain) else sendFreshEncryptedRequest(rawParams, domain)
+        var updateResponse = if (isTaste) sendTasteRequest(rawParams, domain) else sendFreshEncryptedRequest(rawParams, domain)
         if (updateResponse.startsWith("[Error]")) {
             throw RuntimeException(updateResponse)
         }
 
-        return parseResult(updateResponse, isPhone, modelSwVer, codename, swVersion, sn, channel, domain)
+        // 新机型（如 X500）无全量包：isFull=1 返回 retcode=210 时自动降级 isFull=0 查增量包。
+        // 降级成功后 redirPost 也会用增量参数集（与实测的 VivoOtaTracker v2 行为一致）。
+        if (isFull && !isTaste && !responseHasPackage(updateResponse)) {
+            val firstRetCode = extractRetCode(updateResponse)
+            Log.d(TAG, "isFull=1 got no package (retcode=$firstRetCode), fallback to isFull=0")
+            p["isFull"] = 0
+            val retryResponse = sendFreshEncryptedRequest(joinParams(p), domain)
+            if (!retryResponse.startsWith("[Error]") && responseHasPackage(retryResponse)) {
+                Log.d(TAG, "Fallback query succeeded (retcode=${extractRetCode(retryResponse)})")
+                updateResponse = retryResponse
+            } else {
+                // 增量也查不到：还原 isFull=1 的原始响应与参数集
+                Log.d(TAG, "Fallback query got no package either, keep isFull=1 response")
+                p["isFull"] = 1
+            }
+        }
+
+        return parseResult(updateResponse, p, channel, domain)
     }
 
     /** 公测/内测共用参数集，与 PC 版 buildBetaBaseParams 对应。 */
@@ -225,11 +248,7 @@ class VivoOtaClient(private val context: Context) {
 
     private fun parseResult(
         updateResponse: String,
-        isPhone: Boolean,
-        modelSwVer: String,
-        codename: String,
-        swVersion: String,
-        snp: String,
+        queryParams: Map<String, Any>,
         channel: QueryChannel = QueryChannel.NORMAL,
         domain: Domain = Domain.CN
     ): VivoOtaResult {
@@ -263,17 +282,10 @@ class VivoOtaClient(private val context: Context) {
         val pkUrl = extractPkUrl(updateResponse)
         if (pkUrl != null) {
             try {
-                // v3.9.8：同步上游 8bd882a 修复（镜像 APK HttpUtils.getDlRequestParams()）：
-                // redirPost 不再只回传 pk 的查询串，而是 基础设备参数 + pk 查询串 + upversion/timeStamp/nonce 等固定字段
-                val redirParams = buildRedirParams(
-                    codename = codename,
-                    deviceModel = modelSwVer,
-                    swVersion = swVersion,
-                    isPhone = isPhone,
-                    snp = snp,
-                    pkUrl = pkUrl,
-                    updateResponse = updateResponse
-                )
+                // v3.9.17：镜像 vivo17 APP HttpUtils.getDlRequestParams()（实测验证）：
+                // redirPost = 升级查询参数集（去掉 logVersionNegotiation/ram/rom）
+                //           + pk 查询串 + upversion/dlrequest/downloadType/timeStamp/nonce 等固定字段
+                val redirParams = buildRedirParams(queryParams, pkUrl, updateResponse)
                 val redirRes = requestRedirPost(redirParams, domain)
                 Log.d(TAG, "Redir response: $redirRes")
                 val dataIdx = redirRes.indexOf("\"data\":\"")
@@ -339,117 +351,83 @@ class VivoOtaClient(private val context: Context) {
     }
 
     /**
-     * redirPost.do 基础设备参数（同步自上游 build_base_params，镜像 APK HttpUtils.getBaseUrl()）。
-     * 手机与平板的字段差异在末尾统一覆盖。
-     */
-    private fun buildRedirBaseParams(
-        codename: String,
-        deviceModel: String,
-        swVersion: String,
-        isPhone: Boolean,
-        snp: String
-    ): Map<String, Any> {
-        val hwVer = codename + "MA"
-        val fullSwVersion = if (swVersion.contains(".W")) "$swVersion.V000L1" else swVersion
-        val fullVer = if (swVersion.contains(".W")) "${codename}_A_$swVersion.V000L1" else "${codename}_A_$swVersion"
-        val versionLong = if (swVersion.contains(".W")) "${codename}_N_${codename}MA_$swVersion.V000L1" else "${codename}_N_${codename}MA_$swVersion"
-
-        val random = Random()
-        val elapsedtime = if (isPhone) 140000 + random.nextInt(80000) else 2000000 + random.nextInt(500000)
-
-        val p = LinkedHashMap<String, Any>()
-        p["model"] = codename
-        p["dModel"] = codename + "A"
-        p["imei"] = genImei()
-        p["s_n"] = "null"
-        p["dType"] = "phone"
-        p["version"] = versionLong
-        p["public_model"] = deviceModel
-        p["cy"] = "CN-ZH"
-        p["cu"] = "N"
-        p["vgcSwVer"] = "1.1.1"
-        p["vgcCu"] = "V000"
-        p["hasVgc"] = 1
-        p["elapsedtime"] = elapsedtime
-        p["st1"] = if (isPhone) 100000 + random.nextInt(60000) else 0
-        p["st2"] = 0
-        p["emmcid"] = ""
-        p["fullVer"] = fullVer
-        p["si"] = "null"
-        p["ne"] = "null"
-        p["ch"] = "N"
-        p["hwVer"] = hwVer
-        p["swVer"] = fullSwVersion
-        p["language"] = "zh_CN"
-        p["ms"] = "0"
-        p["mtype"] = "no"
-        p["radiotype"] = "L"
-        if (!isPhone) {
-            p["dType"] = "tablet"
-            p["snp"] = snp
-            p["imei"] = ""
-            p["mtype"] = "FULL_SC"
-            p["radiotype"] = "A"
-        }
-        return p
-    }
-
-    /**
-     * redirPost.do 请求参数（同步自上游 build_redir_params，镜像 APK HttpUtils.getDlRequestParams()）：
-     * 基础设备参数 + pk 查询串 + upversion/dlrequest/downloadType/timeStamp/nonce/hwFingerprint。
+     * redirPost.do 请求参数（镜像 vivo17 APP HttpUtils.getDlRequestParams()，实测验证）：
+     * 直接复用升级查询的完整参数集（APP 的 baseUrl 不含 logVersionNegotiation/ram/rom），
+     * 再追加 pk 自带查询串与 upversion/dlrequest/downloadType/timeStamp/nonce/hwFingerprint。
      */
     private fun buildRedirParams(
-        codename: String,
-        deviceModel: String,
-        swVersion: String,
-        isPhone: Boolean,
-        snp: String,
+        queryParams: Map<String, Any>,
         pkUrl: String,
         updateResponse: String
     ): String {
-        val parts = mutableListOf<String>()
-        for ((k, v) in buildRedirBaseParams(codename, deviceModel, swVersion, isPhone, snp)) {
-            parts.add("$k=${pyQuote(v.toString())}")
-        }
-        // pk 自带的查询串（name/fileType/fileLength/packageType 等）
+        val rp = LinkedHashMap<String, Any>(queryParams)
+        // APP 的 redirPost baseUrl 不含 logVersionNegotiation/ram/rom
+        rp.remove("logVersionNegotiation")
+        rp.remove("ram")
+        rp.remove("rom")
+        // name = pk 自带的查询串（name/fileType/fileLength/packageType 等）
         val queryStart = pkUrl.indexOf('?')
-        if (queryStart >= 0) {
-            parts.add(pkUrl.substring(queryStart + 1))
-        }
+        rp["name"] = if (queryStart >= 0) pkUrl.substring(queryStart + 1) else pkUrl
         // upversion = 升级响应里的目标版本
         val targetVersion = extractJsonStr(updateResponse, "version\":\"")
         if (targetVersion != "(Not found)") {
-            parts.add("upversion=${pyQuote(targetVersion)}")
+            rp["upversion"] = targetVersion
         }
-        // 固定请求字段
-        parts += listOf(
-            "dlrequest=0", "downloadType=0", "isPacakgeActive=1", "timeToUptouch=0",
-            "httpsSupport=1", "isTrialVersion=false", "retry=0"
-        )
+        // APP 手动下载固定字段（getDlRequestParams 实测取值，dlrequest=1 才会下发直链）
+        rp["dlrequest"] = "1"
+        rp["downloadType"] = "NORMAL_MANUAL_DOWNLOAD"
+        rp["isPacakgeActive"] = "1"
+        rp["timeToUptouch"] = "3600000"
+        rp["httpsSupport"] = 1
+        rp["isTrialVersion"] = "false"
+        rp["retry"] = 0
         // 安全校验字段：timeStamp 取升级响应 ext 里的值，缺失时为 0
-        val timeStamp = extractJsonStr(updateResponse, "timeStamp\"")
-        parts.add(if (timeStamp != "(Not found)") "timeStamp=$timeStamp" else "timeStamp=0")
-        parts.add("nonce=${UUID.randomUUID().toString().replace("-", "")}")
-        parts.add("hwFingerprint=")
-        return parts.joinToString("&")
+        rp["timeStamp"] = extractJsonValue(updateResponse, "timeStamp") ?: "0"
+        rp["nonce"] = UUID.randomUUID().toString().replace("-", "")
+        rp["hwFingerprint"] = ""
+        return joinParams(rp)
     }
 
-    /** Python urllib.parse.quote 的等价实现：unreserved 字符与 '/' 保留，其余按 UTF-8 百分号编码。 */
-    private fun pyQuote(s: String): String {
-        val sb = StringBuilder(s.length)
-        for (b in s.toByteArray(StandardCharsets.UTF_8)) {
-            val c = b.toInt() and 0xFF
-            val keep = (c in 0x30..0x39) || (c in 0x41..0x5A) || (c in 0x61..0x7A) ||
-                c == 0x2E /* . */ || c == 0x5F /* _ */ || c == 0x2D /* - */ || c == 0x7E /* ~ */ || c == 0x2F /* / */
-            if (keep) {
-                sb.append(c.toChar())
-            } else {
-                sb.append('%')
-                sb.append("0123456789ABCDEF"[c ushr 4])
-                sb.append("0123456789ABCDEF"[c and 0x0F])
+    /**
+     * 响应是否携带可用升级包：retcode=0 且有包名（retcode=210 等表示无可用包，
+     * 见镜像 APP g0/a.java 的 retcode 处理）；旧响应不带 retcode 时退化为只看包名。
+     */
+    private fun responseHasPackage(json: String): Boolean {
+        val hasName = extractJsonStr(json, "pkName\":\"") != "(Not found)"
+        val retCode = extractRetCode(json)
+        return if (retCode != null) retCode == 0 && hasName else hasName
+    }
+
+    /** 解析顶层 retcode；缺失或非数字时返回 null（旧服务器/尝鲜接口可能不带）。 */
+    private fun extractRetCode(json: String): Int? {
+        return extractJsonValue(json, "retcode")?.toIntOrNull()
+    }
+
+    /**
+     * 提取 JSON 字段的原始值，数字与带引号字符串两种格式均兼容：
+     * `"key":123` / `"key":"123"`。找不到（或值为 null）返回 null。
+     */
+    private fun extractJsonValue(json: String, key: String): String? {
+        val needle = "\"$key\":"
+        var idx = json.indexOf(needle)
+        while (idx >= 0) {
+            var s = idx + needle.length
+            while (s < json.length && json[s].isWhitespace()) s++
+            val sb = StringBuilder()
+            val quoted = s < json.length && json[s] == '"'
+            if (quoted) s++
+            while (s < json.length) {
+                val c = json[s]
+                if (quoted && c == '"') break
+                if (!quoted && (c == ',' || c == '}' || c == ']')) break
+                sb.append(c)
+                s++
             }
+            val value = sb.toString().trim()
+            if (value.isNotEmpty() && value != "null") return value
+            idx = json.indexOf(needle, idx + 1)
         }
-        return sb.toString()
+        return null
     }
 
     private fun joinParams(params: Map<String, Any>): String {
