@@ -35,6 +35,14 @@ data class VivoOtaResult(
      * 新机型全量包通常晚于增量包数天至数周上架。
      */
     val fullFallback: Boolean = false,
+    /**
+     * v3.9.20：/beta/queryBetaOrTaste.do（逆向自 vivo17 系统升级 APP PublicBetaOrTrialCheckTask，
+     * 公测/内测/尝鲜的主查询入口）的响应 data.type：
+     * 0 = 未走该接口或无数据；1 = 公测招募信息（无升级包）；2 = 内测/尝鲜更新包（响应结构与普通升级一致）。
+     */
+    val betaOrTasteType: Int = 0,
+    /** type=1 时的公测招募摘要（项目版本/推送计划等），供 UI 展示。 */
+    val betaRecruitHint: String = "",
     val rawResponse: String = ""
 )
 

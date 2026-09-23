@@ -165,6 +165,9 @@ class VivoOtaClient(private val context: Context) {
 
         // 尝鲜/公测/内测通道：去掉正式版专属字段，改用 taste 字段集
         val isTaste = channel != QueryChannel.NORMAL
+        // v3.9.20：留一份 taste 字段改写前的基础参数快照，供 /beta/queryBetaOrTaste.do 使用
+        //（vivo17 APP 的该接口基于 getBaseUrl 基础参数集，与 getTastePk 的 taste 字段集不同）
+        val baseSnapshot = LinkedHashMap(p)
         if (isTaste) {
             p.remove("isMan")
             p.remove("protocalversion")
@@ -202,7 +205,40 @@ class VivoOtaClient(private val context: Context) {
             Log.d(TAG, "${channel.value} state: $stateJson")
         }
 
-        var updateResponse = if (isTaste) sendTasteRequest(rawParams, domain) else sendFreshEncryptedRequest(rawParams, domain)
+        // v3.9.20：镜像 vivo17 系统升级 APP PublicBetaOrTrialCheckTask ——
+        // /beta/queryBetaOrTaste.do 是公测/内测/尝鲜的主查询入口：
+        //   data.type=1 → 公测招募信息（PublicBetaInfo，无升级包）
+        //   data.type=2 → 内测/尝鲜更新包（与普通升级响应同构，retcode/fotaUpdateInfo 含下载信息）
+        // 拿到 type=2 的包则直接采用；否则回落到 getTastePk（尝鲜包查询）。
+        var betaOrTasteType = 0
+        var betaRecruitHint = ""
+        var updateResponse: String
+        if (isTaste) {
+            updateResponse = ""
+            var gotPackage = false
+            try {
+                val botParams = buildBetaOrTasteParams(baseSnapshot, isFull, androidVersion)
+                Log.d(TAG, "queryBetaOrTaste params: $botParams")
+                val botResp = sendBetaOrTasteRequest(botParams, domain)
+                if (!botResp.startsWith("[Error]")) {
+                    betaOrTasteType = extractBetaOrTasteType(botResp)
+                    Log.d(TAG, "queryBetaOrTaste type=$betaOrTasteType, resp=${botResp.take(300)}")
+                    if (betaOrTasteType == 1) {
+                        betaRecruitHint = buildBetaRecruitHint(botResp)
+                    } else if (betaOrTasteType == 2 && responseHasPackage(botResp)) {
+                        updateResponse = botResp
+                        gotPackage = true
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "queryBetaOrTaste failed: ${e.message}")
+            }
+            if (!gotPackage) {
+                updateResponse = sendTasteRequest(rawParams, domain)
+            }
+        } else {
+            updateResponse = sendFreshEncryptedRequest(rawParams, domain)
+        }
         if (updateResponse.startsWith("[Error]")) {
             throw RuntimeException(updateResponse)
         }
@@ -228,7 +264,7 @@ class VivoOtaClient(private val context: Context) {
             }
         }
 
-        return parseResult(updateResponse, p, channel, domain, fullFallback)
+        return parseResult(updateResponse, p, channel, domain, fullFallback, betaOrTasteType, betaRecruitHint)
     }
 
     /** 公测/内测共用参数集，与 PC 版 buildBetaBaseParams 对应。 */
@@ -255,7 +291,9 @@ class VivoOtaClient(private val context: Context) {
         queryParams: Map<String, Any>,
         channel: QueryChannel = QueryChannel.NORMAL,
         domain: Domain = Domain.CN,
-        fullFallback: Boolean = false
+        fullFallback: Boolean = false,
+        betaOrTasteType: Int = 0,
+        betaRecruitHint: String = ""
     ): VivoOtaResult {
         Log.d(TAG, "Raw OTA response: $updateResponse")
 
@@ -327,6 +365,8 @@ class VivoOtaClient(private val context: Context) {
             channel = channel.value,
             isFullPackage = isFullPackage,
             fullFallback = fullFallback,
+            betaOrTasteType = betaOrTasteType,
+            betaRecruitHint = betaRecruitHint,
             rawResponse = updateResponse
         )
     }
@@ -636,6 +676,81 @@ class VivoOtaClient(private val context: Context) {
         } else {
             decryptResponse(response)
         }
+    }
+
+    /**
+     * v3.9.20：/beta/queryBetaOrTaste.do 请求参数（镜像 vivo17 APP PublicBetaOrTrialCheckTask.b()）：
+     * 基础参数集（getBaseUrl，与普通升级检查一致）追加固定字段：
+     * trigger/fingerprint/manual/push/logVersionNegotiation/ram/rom/romVer/action/
+     * isFull/isSupportVgcTaste/isSupportShowNote/isCdma。
+     */
+    private fun buildBetaOrTasteParams(
+        baseParams: Map<String, Any>,
+        isFull: Boolean,
+        androidVersion: Int
+    ): String {
+        val rp = LinkedHashMap<String, Any>(baseParams)
+        // 该接口基于 getBaseUrl 基础参数集：不含 isMan/protocalversion/checkTrige/isstlifeover
+        rp.remove("isMan")
+        rp.remove("protocalversion")
+        rp.remove("checkTrige")
+        rp.remove("isstlifeover")
+        // 手动检查入口（逆向自 APP 字符串 manul_check_public_or_trial_version）
+        rp["trigger"] = "manul_check_public_or_trial_version"
+        // UpgradeSecurityHelper.getFingerprintWithNormal()：空指纹（与 hwFingerprint 一致，实测可过）
+        rp["fingerprint"] = ""
+        rp["manual"] = 1
+        rp["push"] = 0
+        rp["logVersionNegotiation"] = 5360
+        rp["ram"] = 16
+        rp["rom"] = 512
+        // romVer = ro.vivo.os.build.display.id（300 Ultra 实测 "OriginOS 7"）；
+        // OriginOS 版本号 = 安卓版本 - 10（Android 14=OriginOS 4 … Android 17=OriginOS 7），
+        // 更旧系统为 Funtouch 命名
+        rp["romVer"] = if (androidVersion >= 14) "OriginOS ${androidVersion - 10}" else "Funtouch $androidVersion"
+        rp["action"] = "all"
+        rp["isFull"] = if (isFull) 1 else 0
+        rp["isSupportVgcTaste"] = 1
+        rp["isSupportShowNote"] = 1
+        rp["isCdma"] = 0
+        return joinParams(rp)
+    }
+
+    /** v3.9.20：vivo17 系统升级 APP 公测/内测/尝鲜主查询入口。 */
+    private fun sendBetaOrTasteRequest(plaintext: String, domain: Domain): String {
+        val jvqParam = encryptToJvq(plaintext)
+        val response = httpPost(domain.url("/beta/queryBetaOrTaste.do"), "jvq_param=$jvqParam")
+        return if (!response.startsWith("ACw") && !response.startsWith("ACo")) {
+            "[Error] $response"
+        } else {
+            decryptResponse(response)
+        }
+    }
+
+    /** 提取 queryBetaOrTaste 响应的 data.type：1=公测招募 2=内测/尝鲜更新包；缺失返回 0。 */
+    private fun extractBetaOrTasteType(json: String): Int {
+        val dataIdx = json.indexOf("\"data\"")
+        if (dataIdx < 0) return 0
+        val type = extractJsonValue(json.substring(dataIdx), "type")
+        return type?.toIntOrNull() ?: 0
+    }
+
+    /** type=1 时的公测招募摘要（PublicBetaInfo.data.betaInfo：项目版本/推送计划/预计推送时间）。 */
+    private fun buildBetaRecruitHint(json: String): String {
+        val projectVersion = extractJsonValue(json, "projectVersion") ?: ""
+        val pushPlan = extractJsonValue(json, "pushPlan") ?: ""
+        val expectPush = extractJsonValue(json, "expectPushTime")?.toLongOrNull() ?: 0L
+        val sb = StringBuilder()
+        if (projectVersion.isNotEmpty() && projectVersion != "null") sb.append("版本 ").append(projectVersion)
+        if (pushPlan.isNotEmpty() && pushPlan != "null") {
+            if (sb.isNotEmpty()) sb.append("，")
+            sb.append(pushPlan)
+        }
+        if (expectPush > 0) {
+            if (sb.isNotEmpty()) sb.append("，")
+            sb.append("预计推送 ").append(SimpleDateFormat("yyyy-MM-dd").format(Date(expectPush)))
+        }
+        return sb.toString()
     }
 
     private fun httpPost(urlString: String, body: String): String {

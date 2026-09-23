@@ -1258,6 +1258,20 @@ public final class VivoActivity extends Activity {
         // 两两并排显示：查询模式和服务端目标版本
         String serverVersion = result.version.isEmpty() ? "未获取" : result.version;
         addPairRow(card, "查询模式", channel.name().toLowerCase(), "服务端目标版本", serverVersion);
+
+        // v3.9.20：公测/内测通道信息（逆向自 vivo17 系统升级 APP /beta/queryBetaOrTaste.do）
+        if (result.betaOrTasteType == 1) {
+            // 公测招募：该接口只返回招募信息，不含升级包
+            String hint = result.betaRecruitHint.isEmpty()
+                    ? "该机型当前有公测招募（未开放升级包下载）" : result.betaRecruitHint;
+            TextView recruit = label("📢 公测招募中：" + hint
+                    + "\n（来自系统升级 APP 公测/内测查询通道；招募期内可在 手机设置-系统升级 内报名）", 12, 0xff1e6fb3);
+            recruit.setLineSpacing(dp(3), 1f);
+            recruit.setPadding(dp(12), dp(10), dp(12), dp(10));
+            card.addView(recruit, margins(-1, -2, 10, 0, 0));
+        } else if (result.betaOrTasteType == 2) {
+            addPair(card, "查询通道", "queryBetaOrTaste（系统升级 APP 内测/尝鲜入口）");
+        }
         if (!result.filename.isEmpty()) {
             addPair(card, "文件名", result.filename);
         }

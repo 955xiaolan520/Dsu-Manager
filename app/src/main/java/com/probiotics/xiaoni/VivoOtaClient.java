@@ -69,7 +69,9 @@ final class VivoOtaClient {
             kotlinResult.getUpdateDate(),
             kotlinResult.getChangelogUrl(),
             kotlinResult.isFullPackage(),
-            kotlinResult.getFullFallback()
+            kotlinResult.getFullFallback(),
+            kotlinResult.getBetaOrTasteType(),
+            kotlinResult.getBetaRecruitHint()
         );
     }
 
@@ -84,9 +86,13 @@ final class VivoOtaClient {
         final Boolean isFullPackage;
         /** 请求全量包但服务器无全量（retcode=210），已自动降级查到增量包；UI 需明确提示。 */
         final boolean fullFallback;
+        /** v3.9.20：/beta/queryBetaOrTaste.do 响应 data.type：0=未走该接口 1=公测招募 2=内测/尝鲜更新包。 */
+        final int betaOrTasteType;
+        /** type=1 时的公测招募摘要（项目版本/推送计划）。 */
+        final String betaRecruitHint;
         VivoResult(String version, String filename, String size, String md5, String downloadUrl,
                    String securityPatch, String updateTime, String changelogUrl, Boolean isFullPackage,
-                   boolean fullFallback) {
+                   boolean fullFallback, int betaOrTasteType, String betaRecruitHint) {
             this.version = version;
             this.filename = filename;
             this.size = size;
@@ -97,6 +103,8 @@ final class VivoOtaClient {
             this.changelogUrl = changelogUrl;
             this.isFullPackage = isFullPackage;
             this.fullFallback = fullFallback;
+            this.betaOrTasteType = betaOrTasteType;
+            this.betaRecruitHint = betaRecruitHint == null ? "" : betaRecruitHint;
         }
     }
 }
