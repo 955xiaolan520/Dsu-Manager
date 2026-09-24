@@ -6,45 +6,63 @@ import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Shader;
-import android.view.View;
 import android.widget.LinearLayout;
 
-/** Shared static glass surface for the native View screens. */
-final class LiquidGlassPanel extends LinearLayout {
-    private final Paint surface = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint glow = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final RectF box = new RectF();
-    private float cornerRadius = 28f; // 默认 28dp 圆角
+public final class LiquidGlassPanel extends LinearLayout {
+    private final RectF box;
+    private float cornerRadius;
+    private final Paint glow;
+    private final Paint rim;
+    private final Paint surface;
 
-    LiquidGlassPanel(Context context) {
-        this(context, 28f);
+    public LiquidGlassPanel(Context context) {
+        this(context, 28.0f);
     }
-    
-    LiquidGlassPanel(Context context, float radiusDp) {
+
+    public LiquidGlassPanel(Context context, float cornerRadius) {
         super(context);
-        this.cornerRadius = radiusDp;
+        this.surface = new Paint(Paint.ANTI_ALIAS_FLAG);
+        this.rim = new Paint(Paint.ANTI_ALIAS_FLAG);
+        this.glow = new Paint(Paint.ANTI_ALIAS_FLAG);
+        this.box = new RectF();
+        this.cornerRadius = cornerRadius;
         setWillNotDraw(false);
         rim.setStyle(Paint.Style.STROKE);
-        rim.setStrokeWidth(dp(1));
+        rim.setStrokeWidth(dp(1.0f));
         glow.setStyle(Paint.Style.STROKE);
-        glow.setStrokeWidth(dp(1));
+        glow.setStrokeWidth(dp(1.0f));
     }
 
-    private float dp(float value) { return value * getResources().getDisplayMetrics().density; }
+    private float dp(float dp) {
+        return dp * getResources().getDisplayMetrics().density;
+    }
 
-    @Override protected void onDraw(Canvas canvas) {
-        float inset = dp(1);
-        box.set(inset, inset, getWidth() - inset, getHeight() - inset);
-        float radius = Math.min(dp(cornerRadius), box.height() / 2);
-        surface.setShader(new LinearGradient(0, box.top, getWidth(), box.bottom,
-                new int[]{0xd6f3f7fb, 0x9bbcc7d2, 0xb8eef3f7}, null, Shader.TileMode.MIRROR));
-        canvas.drawRoundRect(box, radius, radius, surface);
+    @Override
+    protected void onDraw(Canvas canvas) {
+        float dp = dp(1.0f);
+        box.set(dp, dp, getWidth() - dp, getHeight() - dp);
+        float minRadius = Math.min(dp(cornerRadius), box.height() / 2.0f);
+        
+        surface.setShader(new LinearGradient(
+            0.0f, box.top, 
+            getWidth(), box.bottom,
+            new int[]{0xD6FFFFFF, 0x9AFFFFFF, 0xB8FFFFFF}, 
+            null, 
+            Shader.TileMode.MIRROR
+        ));
+        canvas.drawRoundRect(box, minRadius, minRadius, surface);
         surface.setShader(null);
-        rim.setColor(0x7dffffff);
-        canvas.drawRoundRect(box, radius, radius, rim);
-        glow.setColor(0x68ffffff);
-        box.set(box.left + dp(2), box.top + dp(2), box.right - dp(2), box.top + dp(13));
-        canvas.drawArc(box, 190, 160, false, glow);
+        
+        rim.setColor(0x7DFFFFFF);
+        canvas.drawRoundRect(box, minRadius, minRadius, rim);
+        
+        glow.setColor(0x68FFFFFF);
+        box.set(
+            box.left + dp(2.0f), 
+            box.top + dp(2.0f), 
+            box.right - dp(2.0f), 
+            box.top + dp(13.0f)
+        );
+        canvas.drawArc(box, 190.0f, 160.0f, false, glow);
     }
 }

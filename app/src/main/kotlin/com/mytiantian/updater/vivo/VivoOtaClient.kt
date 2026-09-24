@@ -307,7 +307,7 @@ class VivoOtaClient(private val context: Context) {
         var downloadUrl = ""
 
         val changelogUrl = extractJsonStr(updateResponse, "h5Url\":\"").let {
-            if (it == "(Not found)") "" else it.replace("\\/", "/").let(::changelogDataUrl)
+            if (it == "(Not found)") "" else it.replace("\\/", "/")
         }
         Log.d(TAG, "Changelog URL: '$changelogUrl'")
 
@@ -325,10 +325,8 @@ class VivoOtaClient(private val context: Context) {
         val pkUrl = extractPkUrl(updateResponse)
         if (pkUrl != null) {
             try {
-                // v3.9.17：镜像 vivo17 APP HttpUtils.getDlRequestParams()（实测验证）：
-                // redirPost = 升级查询参数集（去掉 logVersionNegotiation/ram/rom）
-                //           + pk 查询串 + upversion/dlrequest/downloadType/timeStamp/nonce 等固定字段
-                val redirParams = buildRedirParams(queryParams, pkUrl, updateResponse)
+                val queryStart = pkUrl.indexOf("?")
+                val redirParams = if (queryStart >= 0) pkUrl.substring(queryStart + 1) else pkUrl
                 val redirRes = requestRedirPost(redirParams, domain)
                 Log.d(TAG, "Redir response: $redirRes")
                 val dataIdx = redirRes.indexOf("\"data\":\"")
