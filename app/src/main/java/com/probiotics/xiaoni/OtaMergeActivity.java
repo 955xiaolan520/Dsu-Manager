@@ -1,6 +1,7 @@
 package com.probiotics.xiaoni;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -12,7 +13,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewParent;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -27,9 +30,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
@@ -50,6 +50,8 @@ public class OtaMergeActivity extends Activity {
     private ScrollView scrollViewLog;
     private Button btnStart;
     private Button btnCancel;
+    private Button btnClean;
+    private Button btnRefresh;
     private Button btnOpenFolder;
     private Button btnCopyLog;
 
@@ -189,23 +191,45 @@ public class OtaMergeActivity extends Activity {
         LinearLayout buttonRow2 = new LinearLayout(this);
         buttonRow2.setOrientation(LinearLayout.HORIZONTAL);
 
-        btnOpenFolder = createButton("打开文件所在位置", "#4299E1");
-        btnOpenFolder.setOnClickListener(v -> openFolder());
+        btnClean = createButton("清理工作区", "#9F7AEA");
+        btnClean.setOnClickListener(v -> cleanWorkspace());
         LinearLayout.LayoutParams btnParams3 = new LinearLayout.LayoutParams(0, dp(52));
         btnParams3.weight = 1;
         btnParams3.rightMargin = dp(6);
-        buttonRow2.addView(btnOpenFolder, btnParams3);
+        buttonRow2.addView(btnClean, btnParams3);
 
-        btnCopyLog = createButton("复制全部日志", "#4299E1");
-        btnCopyLog.setOnClickListener(v -> copyLog());
+        btnRefresh = createButton("刷新状态", "#ED8936");
+        btnRefresh.setOnClickListener(v -> refreshStatus());
         LinearLayout.LayoutParams btnParams4 = new LinearLayout.LayoutParams(0, dp(52));
         btnParams4.weight = 1;
         btnParams4.leftMargin = dp(6);
-        buttonRow2.addView(btnCopyLog, btnParams4);
+        buttonRow2.addView(btnRefresh, btnParams4);
 
         LinearLayout.LayoutParams rowParams2 = new LinearLayout.LayoutParams(-1, -2);
-        rowParams2.bottomMargin = dp(16);
+        rowParams2.bottomMargin = dp(12);
         mainLayout.addView(buttonRow2, rowParams2);
+
+        // 按钮行3
+        LinearLayout buttonRow3 = new LinearLayout(this);
+        buttonRow3.setOrientation(LinearLayout.HORIZONTAL);
+
+        btnOpenFolder = createButton("打开文件所在位置", "#4299E1");
+        btnOpenFolder.setOnClickListener(v -> openFolder());
+        LinearLayout.LayoutParams btnParams5 = new LinearLayout.LayoutParams(0, dp(52));
+        btnParams5.weight = 1;
+        btnParams5.rightMargin = dp(6);
+        buttonRow3.addView(btnOpenFolder, btnParams5);
+
+        btnCopyLog = createButton("复制全部日志", "#4299E1");
+        btnCopyLog.setOnClickListener(v -> copyLog());
+        LinearLayout.LayoutParams btnParams6 = new LinearLayout.LayoutParams(0, dp(52));
+        btnParams6.weight = 1;
+        btnParams6.leftMargin = dp(6);
+        buttonRow3.addView(btnCopyLog, btnParams6);
+
+        LinearLayout.LayoutParams rowParams3 = new LinearLayout.LayoutParams(-1, -2);
+        rowParams3.bottomMargin = dp(16);
+        mainLayout.addView(buttonRow3, rowParams3);
 
         // 日志卡片
         LinearLayout logCard = createCard();
@@ -217,18 +241,40 @@ public class OtaMergeActivity extends Activity {
         logTitleParams.bottomMargin = dp(12);
         logCard.addView(logTitle, logTitleParams);
 
+        // 使用 PayloadDumper 的日志框实现方式
         scrollViewLog = new ScrollView(this);
+        scrollViewLog.setVerticalScrollBarEnabled(true);
+        scrollViewLog.setScrollbarFadingEnabled(false);
+        scrollViewLog.setFillViewport(false);
         scrollViewLog.setBackgroundColor(Color.parseColor("#F7FAFC"));
         scrollViewLog.setPadding(dp(12), dp(12), dp(12), dp(12));
-        scrollViewLog.setVerticalScrollBarEnabled(true);
+        
+        // 关键：阻止父容器拦截触摸事件，允许滚动
+        scrollViewLog.setOnTouchListener((view, event) -> {
+            ViewParent parent = view.getParent();
+            if (parent != null) {
+                int action = event.getActionMasked();
+                parent.requestDisallowInterceptTouchEvent(
+                    action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL
+                );
+            }
+            return false;
+        });
 
         tvLog = new TextView(this);
         tvLog.setText("等待开始...");
         tvLog.setTextSize(12);
         tvLog.setTextColor(Color.parseColor("#2D3748"));
         tvLog.setTypeface(android.graphics.Typeface.MONOSPACE);
-        scrollViewLog.addView(tvLog);
+        tvLog.setPadding(0, 0, 0, 0);
+        
+        // 长按复制日志
+        tvLog.setOnLongClickListener(v -> {
+            copyLog();
+            return true;
+        });
 
+        scrollViewLog.addView(tvLog, new ScrollView.LayoutParams(-1, -2));
         logCard.addView(scrollViewLog, new LinearLayout.LayoutParams(-1, dp(350)));
         mainLayout.addView(logCard);
 
@@ -340,7 +386,7 @@ public class OtaMergeActivity extends Activity {
 
             } catch (Exception e) {
                 addLog("错误: " + e.getMessage());
-                updateStatus("合并失败", 0);
+                updateStatus("合并失败", progressBar.getProgress());
                 e.printStackTrace();
             } finally {
                 mainHandler.post(() -> {
@@ -512,6 +558,66 @@ public class OtaMergeActivity extends Activity {
         btnStart.setEnabled(true);
         btnCancel.setEnabled(false);
         updateStatus("已取消", progressBar.getProgress());
+    }
+
+    private void cleanWorkspace() {
+        new AlertDialog.Builder(this)
+            .setTitle("清理工作区")
+            .setMessage("确定要删除 work 目录下的所有文件吗？")
+            .setPositiveButton("确定", (dialog, which) -> {
+                executor.execute(() -> {
+                    try {
+                        File workDir = new File(WORK_DIR);
+                        deleteDirectory(workDir);
+                        workDir.mkdirs();
+                        addLog("工作区已清理");
+                        updateStatus("工作区已清理", 0);
+                        mainHandler.post(() -> {
+                            progressBar.setProgress(0);
+                            tvProgress.setText("0%");
+                        });
+                    } catch (Exception e) {
+                        addLog("清理失败: " + e.getMessage());
+                    }
+                });
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void deleteDirectory(File dir) {
+        if (dir.isDirectory()) {
+            File[] files = dir.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    deleteDirectory(file);
+                }
+            }
+        }
+        dir.delete();
+    }
+
+    private void refreshStatus() {
+        addLog("刷新状态...");
+        
+        // 检查输出目录
+        File outputDir = new File(OUTPUT_DIR);
+        File[] outputs = outputDir.listFiles((dir, name) -> name.endsWith("_merged.zip"));
+        
+        if (outputs != null && outputs.length > 0) {
+            addLog("找到合并文件: " + outputs[0].getName());
+            updateStatus("合并完成", 100);
+        } else {
+            // 检查是否有临时文件
+            File mergedDir = new File(WORK_DIR, "merged_images");
+            if (mergedDir.exists() && mergedDir.listFiles() != null && mergedDir.listFiles().length > 0) {
+                addLog("发现未打包的镜像文件");
+                updateStatus("等待打包", 90);
+            } else {
+                addLog("未发现合并结果");
+                updateStatus("等待开始合并", 0);
+            }
+        }
     }
 
     private void openFolder() {
