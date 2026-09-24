@@ -5,8 +5,14 @@ import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.ClipDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -17,11 +23,16 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewParent;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.core.view.GravityCompat;
+
+import org.apache.commons.lang3.StringUtils;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -43,17 +54,15 @@ public class OtaMergeActivity extends Activity {
     private static final String OUTPUT_DIR = BASE_DIR + "/output";
     private static final String WORK_DIR = BASE_DIR + "/work";
 
-    private TextView tvStatus;
+    private TextView statusText;
     private ProgressBar progressBar;
-    private TextView tvProgress;
-    private TextView tvLog;
-    private ScrollView scrollViewLog;
-    private Button btnStart;
-    private Button btnCancel;
-    private Button btnClean;
-    private Button btnRefresh;
-    private Button btnOpenFolder;
-    private Button btnCopyLog;
+    private TextView progressText;
+    private TextView logText;
+    private ScrollView logScroll;
+    private Button startButton;
+    private Button cancelButton;
+    private Button cleanButton;
+    private Button refreshButton;
 
     private ExecutorService executor = Executors.newSingleThreadExecutor();
     private Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -64,65 +73,71 @@ public class OtaMergeActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        buildUI();
+        buildUi();
         initDirectories();
     }
 
-    private void buildUI() {
-        // 主容器
-        ScrollView mainScroll = new ScrollView(this);
-        mainScroll.setBackgroundColor(Color.parseColor("#EDF2F7"));
+    private void buildUi() {
+        int statusBarHeight = getStatusBarHeight();
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackground(createXiaomiGradientBackground());
+        root.setPadding(0, statusBarHeight + dp(12), 0, 0);
         
-        LinearLayout mainLayout = new LinearLayout(this);
-        mainLayout.setOrientation(LinearLayout.VERTICAL);
-        mainLayout.setPadding(dp(16), dp(16), dp(16), dp(16));
-
-        // 返回按钮 + 标题
-        LinearLayout headerLayout = new LinearLayout(this);
-        headerLayout.setOrientation(LinearLayout.HORIZONTAL);
-        headerLayout.setGravity(Gravity.CENTER_VERTICAL);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(0);
         
-        Button btnBack = new Button(this);
-        btnBack.setText("<");
-        btnBack.setTextSize(20);
-        btnBack.setBackgroundColor(Color.TRANSPARENT);
-        btnBack.setOnClickListener(v -> finish());
-        headerLayout.addView(btnBack, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(8), dp(16), dp(16));
 
-        TextView titleText = new TextView(this);
-        titleText.setText("OTA 增量包合并");
-        titleText.setTextSize(22);
-        titleText.setTextColor(Color.parseColor("#1A202C"));
-        titleText.setGravity(Gravity.CENTER);
+        // 标题栏（液态玻璃）
+        LiquidGlassPanel titlePanel = new LiquidGlassPanel(this, 24.0f);
+        titlePanel.setOrientation(LinearLayout.HORIZONTAL);
+        titlePanel.setGravity(Gravity.CENTER_VERTICAL);
+        titlePanel.setPadding(dp(8), 0, dp(8), 0);
+        
+        Button backButton = new Button(this);
+        backButton.setText("<");
+        backButton.setTextSize(24);
+        backButton.setTextColor(Color.WHITE);
+        backButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+        backButton.setPadding(dp(12), 0, dp(12), 0);
+        backButton.setOnClickListener(v -> finish());
+        titlePanel.addView(backButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        TextView title = new TextView(this);
+        title.setText("OTA 增量包合并");
+        title.setTextSize(20);
+        title.setTextColor(0xFF0F1E36);
+        title.setTypeface(null, Typeface.BOLD);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2);
         titleParams.weight = 1;
-        headerLayout.addView(titleText, titleParams);
+        titleParams.leftMargin = dp(12);
+        titlePanel.addView(title, titleParams);
 
-        View spacer = new View(this);
-        headerLayout.addView(spacer, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        content.addView(titlePanel, new LinearLayout.LayoutParams(-1, dp(56)));
 
-        mainLayout.addView(headerLayout);
-
-        // 副标题
         TextView subtitle = new TextView(this);
         subtitle.setText("支持 payload.bin 格式 · 小米 / OPPO / vivo 全机型");
         subtitle.setTextSize(13);
-        subtitle.setTextColor(Color.parseColor("#718096"));
+        subtitle.setTextColor(0xFF2C3E50);
         subtitle.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
         subtitleParams.topMargin = dp(8);
-        subtitleParams.bottomMargin = dp(20);
-        mainLayout.addView(subtitle, subtitleParams);
+        content.addView(subtitle, subtitleParams);
 
-        // 使用步骤卡片
-        LinearLayout stepsCard = createCard();
+        // 使用步骤卡片（液态玻璃）
+        LiquidGlassPanel stepsPanel = new LiquidGlassPanel(this, 16.0f);
+        stepsPanel.setOrientation(LinearLayout.VERTICAL);
+        stepsPanel.setPadding(dp(16), dp(14), dp(16), dp(14));
+        
         TextView stepsTitle = new TextView(this);
         stepsTitle.setText("📋 使用步骤");
         stepsTitle.setTextSize(15);
-        stepsTitle.setTextColor(Color.parseColor("#2D3748"));
-        LinearLayout.LayoutParams stepsTitleParams = new LinearLayout.LayoutParams(-1, -2);
-        stepsTitleParams.bottomMargin = dp(12);
-        stepsCard.addView(stepsTitle, stepsTitleParams);
+        stepsTitle.setTextColor(0xFF0F1E36);
+        stepsTitle.setTypeface(null, Typeface.BOLD);
+        stepsPanel.addView(stepsTitle);
 
         TextView stepsContent = new TextView(this);
         stepsContent.setText("1. 旧版完整包 → /Download/DsuManager/Input/ota/\n" +
@@ -130,127 +145,176 @@ public class OtaMergeActivity extends Activity {
                 "3. 点击「开始合并」等待完成\n" +
                 "4. 合并后镜像 → work/merged_images/");
         stepsContent.setTextSize(13);
-        stepsContent.setTextColor(Color.parseColor("#4A5568"));
+        stepsContent.setTextColor(0xFF2C3E50);
         stepsContent.setLineSpacing(dp(4), 1.0f);
-        stepsCard.addView(stepsContent);
+        LinearLayout.LayoutParams stepsTextParams = new LinearLayout.LayoutParams(-1, -2);
+        stepsTextParams.topMargin = dp(8);
+        stepsPanel.addView(stepsContent, stepsTextParams);
 
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
-        cardParams.bottomMargin = dp(16);
-        mainLayout.addView(stepsCard, cardParams);
+        LinearLayout.LayoutParams stepsPanelParams = new LinearLayout.LayoutParams(-1, -2);
+        stepsPanelParams.topMargin = dp(12);
+        content.addView(stepsPanel, stepsPanelParams);
 
-        // 进度卡片
-        LinearLayout progressCard = createCard();
-        tvStatus = new TextView(this);
-        tvStatus.setText("等待开始合并");
-        tvStatus.setTextSize(15);
-        tvStatus.setTextColor(Color.parseColor("#2D3748"));
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
-        statusParams.bottomMargin = dp(12);
-        progressCard.addView(tvStatus, statusParams);
+        // 进度卡片（液态玻璃）
+        LiquidGlassPanel progressPanel = new LiquidGlassPanel(this, 16.0f);
+        progressPanel.setOrientation(LinearLayout.VERTICAL);
+        progressPanel.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+        statusText = new TextView(this);
+        statusText.setText("等待开始合并");
+        statusText.setTextSize(16);
+        statusText.setTextColor(0xFF0F1E36);
+        statusText.setTypeface(null, Typeface.BOLD);
+        progressPanel.addView(statusText);
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
         progressBar.setProgress(0);
-        LinearLayout.LayoutParams pbParams = new LinearLayout.LayoutParams(-1, dp(8));
-        pbParams.bottomMargin = dp(8);
-        progressCard.addView(progressBar, pbParams);
+        GradientDrawable progressBg = new GradientDrawable();
+        progressBg.setCornerRadius(dp(8));
+        progressBg.setColor(0x33000000);
+        progressBar.setBackground(progressBg);
+        GradientDrawable progressDrawable = new GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[]{0xFF0BA5EC, 0xFF3B82F6}
+        );
+        progressDrawable.setCornerRadius(dp(8));
+        progressBar.setProgressDrawable(new ClipDrawable(progressDrawable, Gravity.LEFT, ClipDrawable.HORIZONTAL));
+        LinearLayout.LayoutParams progressBarParams = new LinearLayout.LayoutParams(-1, dp(10));
+        progressBarParams.topMargin = dp(10);
+        progressPanel.addView(progressBar, progressBarParams);
 
-        tvProgress = new TextView(this);
-        tvProgress.setText("0%");
-        tvProgress.setTextSize(14);
-        tvProgress.setTextColor(Color.parseColor("#718096"));
-        tvProgress.setGravity(Gravity.END);
-        progressCard.addView(tvProgress);
+        progressText = new TextView(this);
+        progressText.setText("0%");
+        progressText.setTextSize(15);
+        progressText.setTextColor(0xFF2C3E50);
+        progressText.setGravity(GravityCompat.END);
+        LinearLayout.LayoutParams progressTextParams = new LinearLayout.LayoutParams(-1, -2);
+        progressTextParams.topMargin = dp(6);
+        progressPanel.addView(progressText, progressTextParams);
 
-        mainLayout.addView(progressCard, cardParams);
+        LinearLayout.LayoutParams progressPanelParams = new LinearLayout.LayoutParams(-1, -2);
+        progressPanelParams.topMargin = dp(12);
+        content.addView(progressPanel, progressPanelParams);
 
-        // 按钮行1
+        // 按钮行1：开始合并 + 取消合并
         LinearLayout buttonRow1 = new LinearLayout(this);
         buttonRow1.setOrientation(LinearLayout.HORIZONTAL);
-        
-        btnStart = createButton("开始合并", "#48BB78");
-        btnStart.setOnClickListener(v -> startMerge());
-        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(0, dp(52));
-        btnParams.weight = 1;
-        btnParams.rightMargin = dp(6);
-        buttonRow1.addView(btnStart, btnParams);
+        LinearLayout.LayoutParams buttonRow1Params = new LinearLayout.LayoutParams(-1, -2);
+        buttonRow1Params.topMargin = dp(12);
 
-        btnCancel = createButton("取消合并", "#F56565");
-        btnCancel.setEnabled(false);
-        btnCancel.setOnClickListener(v -> cancelMerge());
-        LinearLayout.LayoutParams btnParams2 = new LinearLayout.LayoutParams(0, dp(52));
-        btnParams2.weight = 1;
-        btnParams2.leftMargin = dp(6);
-        buttonRow1.addView(btnCancel, btnParams2);
+        startButton = new Button(this);
+        startButton.setText("开始合并");
+        startButton.setTextSize(16);
+        startButton.setTextColor(Color.WHITE);
+        startButton.setTypeface(null, Typeface.BOLD);
+        startButton.setAllCaps(false);
+        startButton.setBackgroundResource(R.drawable.button_teal);
+        startButton.setOnClickListener(v -> startMerge());
+        LinearLayout.LayoutParams startButtonParams = new LinearLayout.LayoutParams(0, dp(50));
+        startButtonParams.weight = 1;
+        buttonRow1.addView(startButton, startButtonParams);
 
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
-        rowParams.bottomMargin = dp(12);
-        mainLayout.addView(buttonRow1, rowParams);
+        cancelButton = new Button(this);
+        cancelButton.setText("取消合并");
+        cancelButton.setTextSize(16);
+        cancelButton.setTextColor(Color.WHITE);
+        cancelButton.setTypeface(null, Typeface.BOLD);
+        cancelButton.setAllCaps(false);
+        cancelButton.setEnabled(false);
+        cancelButton.setBackgroundResource(R.drawable.button_red);
+        cancelButton.setOnClickListener(v -> cancelMerge());
+        LinearLayout.LayoutParams cancelButtonParams = new LinearLayout.LayoutParams(0, dp(50));
+        cancelButtonParams.weight = 1;
+        cancelButtonParams.leftMargin = dp(8);
+        buttonRow1.addView(cancelButton, cancelButtonParams);
 
-        // 按钮行2
+        content.addView(buttonRow1, buttonRow1Params);
+
+        // 按钮行2：清理工作区 + 刷新状态
         LinearLayout buttonRow2 = new LinearLayout(this);
         buttonRow2.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams buttonRow2Params = new LinearLayout.LayoutParams(-1, -2);
+        buttonRow2Params.topMargin = dp(8);
 
-        btnClean = createButton("清理工作区", "#9F7AEA");
-        btnClean.setOnClickListener(v -> cleanWorkspace());
-        LinearLayout.LayoutParams btnParams3 = new LinearLayout.LayoutParams(0, dp(52));
-        btnParams3.weight = 1;
-        btnParams3.rightMargin = dp(6);
-        buttonRow2.addView(btnClean, btnParams3);
+        cleanButton = new Button(this);
+        cleanButton.setText("清理工作区");
+        cleanButton.setTextSize(16);
+        cleanButton.setTextColor(Color.WHITE);
+        cleanButton.setTypeface(null, Typeface.BOLD);
+        cleanButton.setAllCaps(false);
+        cleanButton.setBackgroundResource(R.drawable.button_purple);
+        cleanButton.setOnClickListener(v -> cleanWorkspace());
+        LinearLayout.LayoutParams cleanButtonParams = new LinearLayout.LayoutParams(0, dp(50));
+        cleanButtonParams.weight = 1;
+        buttonRow2.addView(cleanButton, cleanButtonParams);
 
-        btnRefresh = createButton("刷新状态", "#ED8936");
-        btnRefresh.setOnClickListener(v -> refreshStatus());
-        LinearLayout.LayoutParams btnParams4 = new LinearLayout.LayoutParams(0, dp(52));
-        btnParams4.weight = 1;
-        btnParams4.leftMargin = dp(6);
-        buttonRow2.addView(btnRefresh, btnParams4);
+        refreshButton = new Button(this);
+        refreshButton.setText("刷新状态");
+        refreshButton.setTextSize(16);
+        refreshButton.setTextColor(Color.WHITE);
+        refreshButton.setTypeface(null, Typeface.BOLD);
+        refreshButton.setAllCaps(false);
+        refreshButton.setBackgroundResource(R.drawable.button_orange);
+        refreshButton.setOnClickListener(v -> refreshStatus());
+        LinearLayout.LayoutParams refreshButtonParams = new LinearLayout.LayoutParams(0, dp(50));
+        refreshButtonParams.weight = 1;
+        refreshButtonParams.leftMargin = dp(8);
+        buttonRow2.addView(refreshButton, refreshButtonParams);
 
-        LinearLayout.LayoutParams rowParams2 = new LinearLayout.LayoutParams(-1, -2);
-        rowParams2.bottomMargin = dp(12);
-        mainLayout.addView(buttonRow2, rowParams2);
+        content.addView(buttonRow2, buttonRow2Params);
 
-        // 按钮行3
+        // 按钮行3：打开位置 + 复制日志
         LinearLayout buttonRow3 = new LinearLayout(this);
         buttonRow3.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams buttonRow3Params = new LinearLayout.LayoutParams(-1, -2);
+        buttonRow3Params.topMargin = dp(8);
 
-        btnOpenFolder = createButton("打开文件所在位置", "#4299E1");
-        btnOpenFolder.setOnClickListener(v -> openFolder());
-        LinearLayout.LayoutParams btnParams5 = new LinearLayout.LayoutParams(0, dp(52));
-        btnParams5.weight = 1;
-        btnParams5.rightMargin = dp(6);
-        buttonRow3.addView(btnOpenFolder, btnParams5);
+        Button openButton = new Button(this);
+        openButton.setText("打开文件所在位置");
+        openButton.setTextSize(14);
+        openButton.setTextColor(Color.WHITE);
+        openButton.setTypeface(null, Typeface.BOLD);
+        openButton.setAllCaps(false);
+        openButton.setBackgroundResource(R.drawable.button_blue);
+        openButton.setOnClickListener(v -> openFolder());
+        LinearLayout.LayoutParams openButtonParams = new LinearLayout.LayoutParams(0, dp(50));
+        openButtonParams.weight = 1;
+        buttonRow3.addView(openButton, openButtonParams);
 
-        btnCopyLog = createButton("复制全部日志", "#4299E1");
-        btnCopyLog.setOnClickListener(v -> copyLog());
-        LinearLayout.LayoutParams btnParams6 = new LinearLayout.LayoutParams(0, dp(52));
-        btnParams6.weight = 1;
-        btnParams6.leftMargin = dp(6);
-        buttonRow3.addView(btnCopyLog, btnParams6);
+        Button copyButton = new Button(this);
+        copyButton.setText("复制全部日志");
+        copyButton.setTextSize(14);
+        copyButton.setTextColor(Color.WHITE);
+        copyButton.setTypeface(null, Typeface.BOLD);
+        copyButton.setAllCaps(false);
+        copyButton.setBackgroundResource(R.drawable.button_blue);
+        copyButton.setOnClickListener(v -> copyLog());
+        LinearLayout.LayoutParams copyButtonParams = new LinearLayout.LayoutParams(0, dp(50));
+        copyButtonParams.weight = 1;
+        copyButtonParams.leftMargin = dp(8);
+        buttonRow3.addView(copyButton, copyButtonParams);
 
-        LinearLayout.LayoutParams rowParams3 = new LinearLayout.LayoutParams(-1, -2);
-        rowParams3.bottomMargin = dp(16);
-        mainLayout.addView(buttonRow3, rowParams3);
+        content.addView(buttonRow3, buttonRow3Params);
 
-        // 日志卡片
-        LinearLayout logCard = createCard();
+        // 日志卡片（液态玻璃）
+        LiquidGlassPanel logPanel = new LiquidGlassPanel(this, 16.0f);
+        logPanel.setOrientation(LinearLayout.VERTICAL);
+        logPanel.setPadding(dp(16), dp(14), dp(16), dp(14));
+
         TextView logTitle = new TextView(this);
         logTitle.setText("📝 合并日志");
-        logTitle.setTextSize(15);
-        logTitle.setTextColor(Color.parseColor("#2D3748"));
-        LinearLayout.LayoutParams logTitleParams = new LinearLayout.LayoutParams(-1, -2);
-        logTitleParams.bottomMargin = dp(12);
-        logCard.addView(logTitle, logTitleParams);
+        logTitle.setTextSize(14);
+        logTitle.setTextColor(0xFF0BA5EC);
+        logTitle.setTypeface(null, Typeface.BOLD);
+        logPanel.addView(logTitle);
 
-        // 使用 PayloadDumper 的日志框实现方式
-        scrollViewLog = new ScrollView(this);
-        scrollViewLog.setVerticalScrollBarEnabled(true);
-        scrollViewLog.setScrollbarFadingEnabled(false);
-        scrollViewLog.setFillViewport(false);
-        scrollViewLog.setBackgroundColor(Color.parseColor("#F7FAFC"));
-        scrollViewLog.setPadding(dp(12), dp(12), dp(12), dp(12));
-        
-        // 关键：阻止父容器拦截触摸事件，允许滚动
-        scrollViewLog.setOnTouchListener((view, event) -> {
+        logScroll = new ScrollView(this);
+        logScroll.setVerticalScrollBarEnabled(true);
+        logScroll.setScrollbarFadingEnabled(false);
+        logScroll.setBackgroundResource(R.drawable.dark_liquid_glass);
+        logScroll.setFillViewport(false);
+        logScroll.setOnTouchListener((view, event) -> {
             ViewParent parent = view.getParent();
             if (parent != null) {
                 int action = event.getActionMasked();
@@ -261,47 +325,72 @@ public class OtaMergeActivity extends Activity {
             return false;
         });
 
-        tvLog = new TextView(this);
-        tvLog.setText("等待开始...");
-        tvLog.setTextSize(12);
-        tvLog.setTextColor(Color.parseColor("#2D3748"));
-        tvLog.setTypeface(android.graphics.Typeface.MONOSPACE);
-        tvLog.setPadding(0, 0, 0, 0);
-        
-        // 长按复制日志
-        tvLog.setOnLongClickListener(v -> {
+        logText = new TextView(this);
+        logText.setText("等待开始...");
+        logText.setTextSize(12);
+        logText.setTextColor(0xE6FFFFFF);
+        logText.setTypeface(Typeface.MONOSPACE);
+        logText.setPadding(dp(10), dp(10), dp(10), dp(10));
+        logText.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        logText.setOnLongClickListener(v -> {
             copyLog();
             return true;
         });
 
-        scrollViewLog.addView(tvLog, new ScrollView.LayoutParams(-1, -2));
-        logCard.addView(scrollViewLog, new LinearLayout.LayoutParams(-1, dp(350)));
-        mainLayout.addView(logCard);
+        logScroll.addView(logText, new FrameLayout.LayoutParams(-1, -2));
+        
+        LinearLayout.LayoutParams logScrollParams = new LinearLayout.LayoutParams(-1, dp(300));
+        logScrollParams.topMargin = dp(8);
+        logPanel.addView(logScroll, logScrollParams);
 
-        mainScroll.addView(mainLayout);
-        setContentView(mainScroll);
+        LinearLayout.LayoutParams logPanelParams = new LinearLayout.LayoutParams(-1, -2);
+        logPanelParams.topMargin = dp(12);
+        content.addView(logPanel, logPanelParams);
+
+        scroll.addView(content);
+        root.addView(scroll);
+        setContentView(root);
     }
 
-    private LinearLayout createCard() {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackgroundColor(Color.WHITE);
-        card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        return card;
+    private Drawable createXiaomiGradientBackground() {
+        return new LayerDrawable(new Drawable[]{
+            createRadialGradient(0xFFB8D4F8, 0, 0.5f, 0.0f),
+            createRadialGradient(0xFF98C1E9, 0, 0.25f, 0.25f),
+            createRadialGradient(0xFFA8CBE9, 0, 0.75f, 0.25f),
+            createLinearGradient(0xFFC8D8E8, 0xFF697588, true),
+            createRadialGradient(0xFF5A7A94, 0, 0.5f, 0.8f)
+        });
     }
 
-    private Button createButton(String text, String color) {
-        Button btn = new Button(this);
-        btn.setText(text);
-        btn.setTextColor(Color.WHITE);
-        btn.setBackgroundColor(Color.parseColor(color));
-        btn.setTextSize(15);
-        btn.setAllCaps(false);
-        return btn;
+    private GradientDrawable createLinearGradient(int startColor, int endColor, boolean vertical) {
+        GradientDrawable drawable = new GradientDrawable(
+            vertical ? GradientDrawable.Orientation.TOP_BOTTOM : GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[]{startColor, endColor}
+        );
+        drawable.setDither(true);
+        return drawable;
+    }
+
+    private GradientDrawable createRadialGradient(int centerColor, int edgeColor, float centerX, float centerY) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setShape(GradientDrawable.RADIAL_GRADIENT);
+        drawable.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        drawable.setColors(new int[]{centerColor, edgeColor});
+        drawable.setGradientCenter(centerX, centerY);
+        drawable.setGradientRadius(1000);
+        return drawable;
     }
 
     private int dp(int dp) {
-        return (int) (dp * getResources().getDisplayMetrics().density);
+        return (int) ((dp * getResources().getDisplayMetrics().density) + 0.5f);
+    }
+
+    private int getStatusBarHeight() {
+        int identifier = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        if (identifier > 0) {
+            return getResources().getDimensionPixelSize(identifier);
+        }
+        return 0;
     }
 
     private void initDirectories() {
@@ -309,21 +398,21 @@ public class OtaMergeActivity extends Activity {
         new File(PATCH_DIR).mkdirs();
         new File(OUTPUT_DIR).mkdirs();
         new File(WORK_DIR).mkdirs();
-        addLog("已创建必要目录:\n- " + OTA_DIR + "\n- " + PATCH_DIR + "\n- " + OUTPUT_DIR + "\n- " + WORK_DIR);
+        appendLog("已创建必要目录:\n- " + OTA_DIR + "\n- " + PATCH_DIR + "\n- " + OUTPUT_DIR + "\n- " + WORK_DIR);
     }
 
     private void startMerge() {
         if (isRunning) return;
 
-        btnStart.setEnabled(false);
-        btnCancel.setEnabled(true);
+        startButton.setEnabled(false);
+        cancelButton.setEnabled(true);
         isRunning = true;
         logBuilder.setLength(0);
+        logText.setText("");
         updateStatus("开始合并...", 0);
 
         executor.execute(() -> {
             try {
-                // 检查文件
                 File otaDir = new File(OTA_DIR);
                 File patchDir = new File(PATCH_DIR);
                 
@@ -333,65 +422,65 @@ public class OtaMergeActivity extends Activity {
                     name.endsWith(".zip") || name.endsWith(".bin") || name.endsWith(".img"));
 
                 if (otaFiles == null || otaFiles.length == 0) {
-                    addLog("错误: ota 目录为空");
+                    appendLog("错误: ota 目录为空");
                     updateStatus("合并失败: 找不到旧版完整包", 0);
                     return;
                 }
 
                 if (patchFiles == null || patchFiles.length == 0) {
-                    addLog("错误: patch 目录为空");
+                    appendLog("错误: patch 目录为空");
                     updateStatus("合并失败: 找不到增量包", 0);
                     return;
                 }
 
-                addLog("找到旧版包: " + otaFiles[0].getName());
-                addLog("找到增量包: " + patchFiles[0].getName());
+                appendLog("找到旧版包: " + otaFiles[0].getName());
+                appendLog("找到增量包: " + patchFiles[0].getName());
 
-                // 解压旧版包
                 updateStatus("解压旧版完整包...", 10);
                 File otaWorkDir = new File(WORK_DIR, "ota");
                 extractPackage(otaFiles[0], otaWorkDir);
 
-                // 解压增量包
                 updateStatus("解压增量包...", 30);
                 File patchWorkDir = new File(WORK_DIR, "patch");
                 extractPackage(patchFiles[0], patchWorkDir);
 
-                // 提取 payload.bin
                 updateStatus("提取 payload.bin...", 50);
                 File otaPayload = findPayload(otaWorkDir);
                 File patchPayload = findPayload(patchWorkDir);
 
                 if (otaPayload == null || patchPayload == null) {
-                    addLog("错误: 找不到 payload.bin");
+                    appendLog("错误: 找不到 payload.bin");
                     updateStatus("合并失败: 缺少 payload.bin", 0);
                     return;
                 }
 
-                // 使用 payload_dumper 合并
                 updateStatus("正在合并镜像...", 60);
                 File mergedDir = new File(WORK_DIR, "merged_images");
                 mergedDir.mkdirs();
-                
                 mergePayload(otaPayload, patchPayload, mergedDir);
 
-                // 打包输出
                 updateStatus("打包输出文件...", 90);
                 String outputName = patchFiles[0].getName().replace(".zip", "_merged.zip");
                 File outputFile = new File(OUTPUT_DIR, outputName);
                 packImages(mergedDir, outputFile);
 
-                updateStatus("合并完成!", 100);
-                addLog("输出文件: " + outputFile.getAbsolutePath());
+                updateStatus("✓ 合并完成！", 100);
+                appendLog("\n━━━━━━━━━━━━━━━━━━━━");
+                appendLog("✓ 合并完成！");
+                appendLog("输出文件: " + outputFile.getAbsolutePath());
+                appendLog("文件大小: " + (outputFile.length() / 1024 / 1024) + " MB");
+                appendLog("\n✓ 所有 img 仅存储 ZIP 已完成，在 output 文件夹");
 
             } catch (Exception e) {
-                addLog("错误: " + e.getMessage());
-                updateStatus("合并失败", progressBar.getProgress());
+                appendLog("\n━━━━━━━━━━━━━━━━━━━━");
+                appendLog("✗ 错误: " + e.getMessage());
+                updateStatus("✗ 合并失败", progressBar.getProgress());
                 e.printStackTrace();
             } finally {
                 mainHandler.post(() -> {
-                    btnStart.setEnabled(true);
-                    btnCancel.setEnabled(false);
+                    startButton.setEnabled(true);
+                    startButton.setText(progressBar.getProgress() == 100 ? "重新合并" : "重试合并");
+                    cancelButton.setEnabled(false);
                     isRunning = false;
                 });
             }
@@ -400,7 +489,7 @@ public class OtaMergeActivity extends Activity {
 
     private void extractPackage(File packageFile, File targetDir) throws Exception {
         targetDir.mkdirs();
-        addLog("解压: " + packageFile.getName());
+        appendLog("解压: " + packageFile.getName());
 
         if (packageFile.getName().endsWith(".zip")) {
             try (ZipInputStream zis = new ZipInputStream(new FileInputStream(packageFile))) {
@@ -423,7 +512,6 @@ public class OtaMergeActivity extends Activity {
                 }
             }
         } else {
-            // 直接复制 .bin 或 .img
             File dest = new File(targetDir, packageFile.getName());
             copyFile(packageFile, dest);
         }
@@ -433,7 +521,6 @@ public class OtaMergeActivity extends Activity {
         File payload = new File(dir, "payload.bin");
         if (payload.exists()) return payload;
 
-        // 递归查找
         File[] files = dir.listFiles();
         if (files != null) {
             for (File f : files) {
@@ -449,12 +536,10 @@ public class OtaMergeActivity extends Activity {
     }
 
     private void mergePayload(File otaPayload, File patchPayload, File outputDir) throws Exception {
-        addLog("使用 payload_dumper 合并...");
+        appendLog("使用 payload_dumper 合并...");
         
-        // 从 assets 复制 payload_dumper
         File dumper = copyPayloadDumper();
         
-        // 执行合并命令
         ProcessBuilder pb = new ProcessBuilder(
             dumper.getAbsolutePath(),
             "--base", otaPayload.getAbsolutePath(),
@@ -467,7 +552,7 @@ public class OtaMergeActivity extends Activity {
         BufferedReader reader = new BufferedReader(new InputStreamReader(currentProcess.getInputStream()));
         String line;
         while ((line = reader.readLine()) != null) {
-            addLog(line);
+            appendLog(line);
         }
 
         int exitCode = currentProcess.waitFor();
@@ -497,10 +582,10 @@ public class OtaMergeActivity extends Activity {
     }
 
     private void packImages(File sourceDir, File outputFile) throws Exception {
-        addLog("打包镜像到: " + outputFile.getName());
+        appendLog("打包镜像到: " + outputFile.getName());
         
         try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(outputFile))) {
-            zos.setLevel(ZipOutputStream.STORED); // 仅存储,不压缩
+            zos.setLevel(ZipOutputStream.STORED);
             
             File[] files = sourceDir.listFiles();
             if (files != null) {
@@ -552,36 +637,41 @@ public class OtaMergeActivity extends Activity {
     private void cancelMerge() {
         if (currentProcess != null) {
             currentProcess.destroy();
-            addLog("已取消合并");
+            appendLog("\n━━━━━━━━━━━━━━━━━━━━");
+            appendLog("已取消合并");
         }
         isRunning = false;
-        btnStart.setEnabled(true);
-        btnCancel.setEnabled(false);
+        startButton.setEnabled(true);
+        cancelButton.setEnabled(false);
         updateStatus("已取消", progressBar.getProgress());
     }
 
     private void cleanWorkspace() {
         new AlertDialog.Builder(this)
             .setTitle("清理工作区")
-            .setMessage("确定要删除 work 目录下的所有文件吗？")
-            .setPositiveButton("确定", (dialog, which) -> {
+            .setMessage("确定要清理 work/ 目录吗？\n\n将删除：\n- 基础镜像 (base_images/)\n- 旧镜像副本 (old/)\n- 所有合并后的镜像文件\n\n注意：output/ 目录的 ZIP 文件不会被删除")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确定清理", (dialog, which) -> {
                 executor.execute(() -> {
                     try {
                         File workDir = new File(WORK_DIR);
-                        deleteDirectory(workDir);
-                        workDir.mkdirs();
-                        addLog("工作区已清理");
-                        updateStatus("工作区已清理", 0);
+                        if (workDir.exists()) {
+                            deleteDirectory(workDir);
+                            workDir.mkdirs();
+                        }
+                        appendLog("\n━━━━━━━━━━━━━━━━━━━━");
+                        appendLog("✓ 工作区已清理");
                         mainHandler.post(() -> {
                             progressBar.setProgress(0);
-                            tvProgress.setText("0%");
+                            progressText.setText("0%");
+                            statusText.setText("等待开始合并");
+                            new AlertDialog.Builder(this).setTitle("清理完成").setMessage("work/ 目录已清空").setPositiveButton("确定", null).show();
                         });
                     } catch (Exception e) {
-                        addLog("清理失败: " + e.getMessage());
+                        appendLog("\n✗ 清理失败：" + e.getMessage());
                     }
                 });
             })
-            .setNegativeButton("取消", null)
             .show();
     }
 
@@ -598,34 +688,37 @@ public class OtaMergeActivity extends Activity {
     }
 
     private void refreshStatus() {
-        addLog("刷新状态...");
+        appendLog("\n━━━━━━━━━━━━━━━━━━━━");
+        appendLog("🔄 刷新状态中...");
         
-        // 检查输出目录
         File outputDir = new File(OUTPUT_DIR);
-        File[] outputs = outputDir.listFiles((dir, name) -> name.endsWith("_merged.zip"));
+        File[] outputs = outputDir.listFiles();
         
         if (outputs != null && outputs.length > 0) {
-            addLog("找到合并文件: " + outputs[0].getName());
-            updateStatus("合并完成", 100);
+            appendLog("✓ 找到合并文件：" + outputs[0].getName());
+            updateStatus("✓ 合并完成", 100);
         } else {
-            // 检查是否有临时文件
             File mergedDir = new File(WORK_DIR, "merged_images");
             if (mergedDir.exists() && mergedDir.listFiles() != null && mergedDir.listFiles().length > 0) {
-                addLog("发现未打包的镜像文件");
+                appendLog("✓ 发现未打包的镜像文件");
                 updateStatus("等待打包", 90);
             } else {
-                addLog("未发现合并结果");
+                appendLog("✗ 未发现合并结果");
                 updateStatus("等待开始合并", 0);
             }
         }
     }
 
     private void openFolder() {
+        Uri uri = DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents",
+            "primary:" + new File(WORK_DIR + "/merged_images").getAbsolutePath().replace("/storage/emulated/0/", "")
+        );
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(uri, "vnd.android.document/directory");
+        intent.addCategory(Intent.CATEGORY_DEFAULT);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
-            File folder = new File(WORK_DIR, "merged_images");
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            Uri uri = Uri.parse("content://com.android.externalstorage.documents/document/primary:Download/DsuManager/Input/work/merged_images");
-            intent.setDataAndType(uri, DocumentsContract.Document.MIME_TYPE_DIR);
             startActivity(intent);
         } catch (Exception e) {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -635,24 +728,36 @@ public class OtaMergeActivity extends Activity {
     }
 
     private void copyLog() {
-        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(ClipData.newPlainText("log", logBuilder.toString()));
-        Toast.makeText(this, "已复制日志", Toast.LENGTH_SHORT).show();
+        String log = logText.getText().toString();
+        if (log.isEmpty()) {
+            Toast.makeText(this, "日志为空", Toast.LENGTH_SHORT).show();
+        } else {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("merge_log", log));
+            Toast.makeText(this, "已复制全部日志", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void updateStatus(String status, int progress) {
         mainHandler.post(() -> {
-            tvStatus.setText(status);
+            statusText.setText(status);
             progressBar.setProgress(progress);
-            tvProgress.setText(progress + "%");
+            progressText.setText(progress + "%");
+            if (progress == 100) {
+                statusText.setTextColor(0xFF48BB78);
+            } else if (status.contains("失败") || status.contains("✗")) {
+                statusText.setTextColor(0xFFF56565);
+            } else {
+                statusText.setTextColor(0xFF0F1E36);
+            }
         });
     }
 
-    private void addLog(String message) {
-        logBuilder.append(message).append("\n");
+    private void appendLog(String message) {
+        logBuilder.append(message).append(StringUtils.LF);
         mainHandler.post(() -> {
-            tvLog.setText(logBuilder.toString());
-            scrollViewLog.post(() -> scrollViewLog.fullScroll(View.FOCUS_DOWN));
+            logText.append(message + StringUtils.LF);
+            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         });
     }
 
