@@ -69,12 +69,102 @@ public class OtaMergeActivity extends Activity {
     private StringBuilder logBuilder = new StringBuilder();
     private boolean isRunning = false;
     private Process currentProcess;
+    private int lastProgress = -1;  // 记录上次的进度，避免重复更新
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
         initDirectories();
+        restoreState(); // 在 UI 构建后恢复状态
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 恢复状态和日志
+        android.content.SharedPreferences prefs = getSharedPreferences("OtaMerge", MODE_PRIVATE);
+        int progress = prefs.getInt("progress", 0);
+        String status = prefs.getString("status", "等待开始合并");
+        String savedLog = prefs.getString("log", "");
+        boolean wasRunning = prefs.getBoolean("isRunning", false);
+        
+        // 恢复进度条和状态
+        progressBar.setProgress(progress);
+        progressText.setText(progress + "%");
+        statusText.setText(status);
+        
+        // 恢复日志（每次都恢复，因为 UI 是重新创建的）
+        if (!savedLog.isEmpty()) {
+            logBuilder = new StringBuilder(savedLog);
+            logText.setText(savedLog);
+        }
+        
+        // 恢复按钮状态
+        if (wasRunning && progress < 100) {
+            isRunning = true;
+            startButton.setEnabled(false);
+            startButton.setText("合并中...");
+            cancelButton.setEnabled(true);
+        } else {
+            isRunning = false;
+            startButton.setEnabled(true);
+            startButton.setText(progress == 100 ? "重新合并" : "开始合并");
+            cancelButton.setEnabled(false);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        saveState();
+    }
+
+    private void saveState() {
+        getSharedPreferences("OtaMerge", MODE_PRIVATE)
+            .edit()
+            .putBoolean("isRunning", isRunning)
+            .putInt("progress", progressBar.getProgress())
+            .putString("status", statusText.getText().toString())
+            .putString("log", logBuilder.toString())
+            .apply();
+    }
+
+    private void restoreState() {
+        android.content.SharedPreferences prefs = getSharedPreferences("OtaMerge", MODE_PRIVATE);
+        boolean wasRunning = prefs.getBoolean("isRunning", false);
+        int progress = prefs.getInt("progress", 0);
+        String status = prefs.getString("status", "等待开始合并");
+        String log = prefs.getString("log", "");
+        
+        // 恢复显示
+        progressBar.setProgress(progress);
+        progressText.setText(progress + "%");
+        statusText.setText(status);
+        
+        // 只在日志为空时才恢复（避免覆盖正在运行的日志）
+        if (!log.isEmpty() && logText.getText().toString().isEmpty()) {
+            logBuilder = new StringBuilder(log);
+            logText.setText(log);
+        }
+        
+        // 只在真正运行时恢复按钮状态
+        if (wasRunning && progress < 100) {
+            isRunning = true;
+            startButton.setEnabled(false);
+            startButton.setText("合并中...");
+            cancelButton.setEnabled(true);
+        } else {
+            // 已完成或失败，清除运行状态
+            isRunning = false;
+            startButton.setEnabled(true);
+            startButton.setText(progress == 100 ? "重新合并" : "开始合并");
+            cancelButton.setEnabled(false);
+            if (progress >= 100 || status.contains("失败")) {
+                // 清除保存的运行状态
+                getSharedPreferences("OtaMerge", MODE_PRIVATE).edit().putBoolean("isRunning", false).apply();
+            }
+        }
     }
 
     private void buildUi() {
@@ -314,13 +404,12 @@ public class OtaMergeActivity extends Activity {
         logScroll.setScrollbarFadingEnabled(false);
         logScroll.setBackgroundResource(R.drawable.dark_liquid_glass);
         logScroll.setFillViewport(false);
+        // 关键：阻止父容器拦截触摸事件
         logScroll.setOnTouchListener((view, event) -> {
             ViewParent parent = view.getParent();
             if (parent != null) {
                 int action = event.getActionMasked();
-                parent.requestDisallowInterceptTouchEvent(
-                    action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL
-                );
+                parent.requestDisallowInterceptTouchEvent(action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
             }
             return false;
         });
@@ -331,13 +420,10 @@ public class OtaMergeActivity extends Activity {
         logText.setTextColor(0xE6FFFFFF);
         logText.setTypeface(Typeface.MONOSPACE);
         logText.setPadding(dp(10), dp(10), dp(10), dp(10));
-        logText.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
-        logText.setOnLongClickListener(v -> {
-            copyLog();
-            return true;
-        });
-
-        logScroll.addView(logText, new FrameLayout.LayoutParams(-1, -2));
+        // 水平滚动支持
+        logText.setHorizontallyScrolling(true);
+        
+        logScroll.addView(logText, new ScrollView.LayoutParams(-1, -2));
         
         LinearLayout.LayoutParams logScrollParams = new LinearLayout.LayoutParams(-1, dp(300));
         logScrollParams.topMargin = dp(8);
@@ -398,7 +484,6 @@ public class OtaMergeActivity extends Activity {
         new File(PATCH_DIR).mkdirs();
         new File(OUTPUT_DIR).mkdirs();
         new File(WORK_DIR).mkdirs();
-        appendLog("已创建必要目录:\n- " + OTA_DIR + "\n- " + PATCH_DIR + "\n- " + OUTPUT_DIR + "\n- " + WORK_DIR);
     }
 
     private void startMerge() {
@@ -409,16 +494,19 @@ public class OtaMergeActivity extends Activity {
         isRunning = true;
         logBuilder.setLength(0);
         logText.setText("");
-        updateStatus("开始合并...", 0);
 
         executor.execute(() -> {
             try {
                 File otaDir = new File(OTA_DIR);
                 File patchDir = new File(PATCH_DIR);
                 
+                appendLogWithProgress(0, "初始化环境");
+                appendLogWithProgress(5, "查找包文件");
+                updateStatus("查找包文件", 5);
+                
                 File[] otaFiles = otaDir.listFiles((dir, name) -> 
                     name.endsWith(".zip") || name.endsWith(".bin") || name.endsWith(".img"));
-                File[] patchFiles = patchDir.listFiles((dir, name) ->
+                File[] patchFiles = patchDir.listFiles((dir, name) -> 
                     name.endsWith(".zip") || name.endsWith(".bin") || name.endsWith(".img"));
 
                 if (otaFiles == null || otaFiles.length == 0) {
@@ -433,42 +521,99 @@ public class OtaMergeActivity extends Activity {
                     return;
                 }
 
-                appendLog("找到旧版包: " + otaFiles[0].getName());
-                appendLog("找到增量包: " + patchFiles[0].getName());
-
-                updateStatus("解压旧版完整包...", 10);
-                File otaWorkDir = new File(WORK_DIR, "ota");
-                extractPackage(otaFiles[0], otaWorkDir);
-
-                updateStatus("解压增量包...", 30);
-                File patchWorkDir = new File(WORK_DIR, "patch");
-                extractPackage(patchFiles[0], patchWorkDir);
-
-                updateStatus("提取 payload.bin...", 50);
-                File otaPayload = findPayload(otaWorkDir);
-                File patchPayload = findPayload(patchWorkDir);
-
-                if (otaPayload == null || patchPayload == null) {
-                    appendLog("错误: 找不到 payload.bin");
-                    updateStatus("合并失败: 缺少 payload.bin", 0);
+                File fullOta = otaFiles[0];
+                File patchZip = patchFiles[0];
+                
+                // 判断完整包类型
+                String fullPackageDesc;
+                if (fullOta.getName().endsWith(".img")) {
+                    File[] allImgs = otaDir.listFiles((dir, name) -> name.endsWith(".img"));
+                    fullPackageDesc = allImgs != null ? allImgs.length + " 个镜像文件" : "镜像文件";
+                } else {
+                    fullPackageDesc = fullOta.getName();
+                }
+                
+                appendLogWithProgress(10, "提取完整包: " + fullPackageDesc);
+                appendLogWithProgress(11, "输出到: base_images/");
+                appendLogWithProgress(15, "正在提取完整包...");
+                updateStatus("提取完整包", 15);
+                
+                // 步骤1: 提取完整包
+                File baseImagesDir = new File(WORK_DIR, "base_images");
+                deleteDirectory(baseImagesDir);
+                baseImagesDir.mkdirs();
+                
+                extractFullOtaWithProgress(fullOta, baseImagesDir);
+                
+                File[] baseImages = baseImagesDir.listFiles((dir, name) -> name.endsWith(".img"));
+                if (baseImages == null || baseImages.length == 0) {
+                    appendLog("错误: 未能提取任何镜像");
+                    updateStatus("合并失败", 0);
                     return;
                 }
+                
+                long totalSize = 0;
+                for (File img : baseImages) {
+                    totalSize += img.length();
+                }
+                appendLogWithProgress(45, String.format("✓ 已提取 %d 个镜像 (%dMB)", baseImages.length, totalSize / 1024 / 1024));
 
-                updateStatus("正在合并镜像...", 60);
-                File mergedDir = new File(WORK_DIR, "merged_images");
-                mergedDir.mkdirs();
-                mergePayload(otaPayload, patchPayload, mergedDir);
+                // 步骤2: 创建增量包输出目录
+                appendLogWithProgress(50, "准备增量合并环境");
+                updateStatus("准备增量合并环境", 50);
+                
+                String patchName = patchZip.getName().replaceAll("\\.(zip|bin)$", "");
+                File patchOutputDir = new File(WORK_DIR, patchName);
+                deleteDirectory(patchOutputDir);
+                patchOutputDir.mkdirs();
+                
+                // 步骤3: 移动旧镜像（不需要复制，直接移动节省时间）
+                File oldDir = new File(patchOutputDir, "old");
+                oldDir.mkdirs();
+                
+                appendLogWithProgress(51, "移动基础镜像到 " + patchName + "/old/");
+                moveFilesWithProgress(baseImages, oldDir, 51, 59);
+                appendLogWithProgress(59, "✓ 基础镜像已移动");
+                
+                // 步骤4: 应用增量包
+                appendLogWithProgress(60, "应用增量包: " + patchZip.getName());
+                appendLogWithProgress(61, "输出到: " + patchName + "/");
+                appendLogWithProgress(65, "正在应用增量包...");
+                updateStatus("应用增量包", 65);
+                
+                applyIncrementalPatch(patchZip, oldDir, patchOutputDir);
+                
+                // 步骤5: 验证结果
+                File[] mergedImages = patchOutputDir.listFiles((dir, name) -> name.endsWith(".img"));
+                if (mergedImages == null || mergedImages.length == 0) {
+                    appendLog("错误: 增量合并失败");
+                    updateStatus("合并失败", 0);
+                    return;
+                }
+                
+                long mergedSize = 0;
+                for (File img : mergedImages) {
+                    mergedSize += img.length();
+                }
+                appendLogWithProgress(80, String.format("✓ 增量应用完成 %d 个镜像 (%dMB)", mergedImages.length, mergedSize / 1024 / 1024));
+                
+                appendLogWithProgress(82, "验证合并结果");
+                updateStatus("验证合并结果", 82);
+                appendLogWithProgress(84, String.format("✓ 合并完成！共 %d 个镜像，总大小 %dMB", mergedImages.length, mergedSize / 1024 / 1024));
 
-                updateStatus("打包输出文件...", 90);
-                String outputName = patchFiles[0].getName().replace(".zip", "_merged.zip");
+                // 步骤6: 打包
+                appendLogWithProgress(85, "正在打包 ZIP（仅存储模式）...");
+                updateStatus("打包 ZIP", 85);
+                
+                String outputName = patchZip.getName().replace(".zip", "_merged.zip").replace(".bin", "_merged.zip");
                 File outputFile = new File(OUTPUT_DIR, outputName);
-                packImages(mergedDir, outputFile);
+                packImagesWithProgress(patchOutputDir, outputFile, mergedImages.length);
 
                 updateStatus("✓ 合并完成！", 100);
                 appendLog("\n━━━━━━━━━━━━━━━━━━━━");
                 appendLog("✓ 合并完成！");
-                appendLog("输出文件: " + outputFile.getAbsolutePath());
-                appendLog("文件大小: " + (outputFile.length() / 1024 / 1024) + " MB");
+                appendLog("输出路径：" + outputFile.getAbsolutePath());
+                appendLog(String.format("文件大小：%d MB", outputFile.length() / 1024 / 1024));
                 appendLog("\n✓ 所有 img 仅存储 ZIP 已完成，在 output 文件夹");
 
             } catch (Exception e) {
@@ -482,82 +627,42 @@ public class OtaMergeActivity extends Activity {
                     startButton.setText(progressBar.getProgress() == 100 ? "重新合并" : "重试合并");
                     cancelButton.setEnabled(false);
                     isRunning = false;
+                    saveState();
                 });
             }
         });
     }
 
-    private void extractPackage(File packageFile, File targetDir) throws Exception {
-        targetDir.mkdirs();
-        appendLog("解压: " + packageFile.getName());
-
-        if (packageFile.getName().endsWith(".zip")) {
-            try (ZipInputStream zis = new ZipInputStream(new FileInputStream(packageFile))) {
-                ZipEntry entry;
-                while ((entry = zis.getNextEntry()) != null) {
-                    File file = new File(targetDir, entry.getName());
-                    if (entry.isDirectory()) {
-                        file.mkdirs();
-                    } else {
-                        file.getParentFile().mkdirs();
-                        try (FileOutputStream fos = new FileOutputStream(file)) {
-                            byte[] buffer = new byte[8192];
-                            int len;
-                            while ((len = zis.read(buffer)) > 0) {
-                                fos.write(buffer, 0, len);
-                            }
-                        }
-                    }
-                    zis.closeEntry();
-                }
-            }
-        } else {
-            File dest = new File(targetDir, packageFile.getName());
-            copyFile(packageFile, dest);
-        }
-    }
-
-    private File findPayload(File dir) {
-        File payload = new File(dir, "payload.bin");
-        if (payload.exists()) return payload;
-
-        File[] files = dir.listFiles();
-        if (files != null) {
-            for (File f : files) {
-                if (f.isDirectory()) {
-                    File found = findPayload(f);
-                    if (found != null) return found;
-                } else if (f.getName().equals("payload.bin")) {
-                    return f;
-                }
-            }
-        }
-        return null;
-    }
-
-    private void mergePayload(File otaPayload, File patchPayload, File outputDir) throws Exception {
-        appendLog("使用 payload_dumper 合并...");
-        
+    private void applyIncrementalPatch(File patchFile, File oldDir, File outputDir) throws Exception {
         File dumper = copyPayloadDumper();
         
-        ProcessBuilder pb = new ProcessBuilder(
-            dumper.getAbsolutePath(),
-            "--base", otaPayload.getAbsolutePath(),
-            "--patch", patchPayload.getAbsolutePath(),
-            "--out", outputDir.getAbsolutePath()
-        );
+        ProcessBuilder pb;
+        if (patchFile.getName().endsWith(".zip") || patchFile.getName().endsWith(".bin")) {
+            // payload_dumper 会读取 patch.zip，从 oldDir 找旧镜像，输出到 outputDir
+            pb = new ProcessBuilder(
+                dumper.getAbsolutePath(),
+                patchFile.getAbsolutePath(),
+                "--source-dir", oldDir.getAbsolutePath(),
+                "--out", outputDir.getAbsolutePath()
+            );
+        } else {
+            throw new Exception("增量包格式错误: " + patchFile.getName());
+        }
+        
         pb.redirectErrorStream(true);
         currentProcess = pb.start();
 
         BufferedReader reader = new BufferedReader(new InputStreamReader(currentProcess.getInputStream()));
         String line;
         while ((line = reader.readLine()) != null) {
-            appendLog(line);
+            if (!line.trim().isEmpty()) {
+                appendLog(line);
+            }
         }
 
         int exitCode = currentProcess.waitFor();
         if (exitCode != 0) {
-            throw new Exception("payload_dumper 执行失败: " + exitCode);
+            throw new Exception("应用增量包失败: exit code " + exitCode);
         }
     }
 
@@ -581,36 +686,6 @@ public class OtaMergeActivity extends Activity {
         return dumper;
     }
 
-    private void packImages(File sourceDir, File outputFile) throws Exception {
-        appendLog("打包镜像到: " + outputFile.getName());
-        
-        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(outputFile))) {
-            zos.setLevel(ZipOutputStream.STORED);
-            
-            File[] files = sourceDir.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    if (file.isFile()) {
-                        ZipEntry entry = new ZipEntry(file.getName());
-                        entry.setMethod(ZipEntry.STORED);
-                        entry.setSize(file.length());
-                        entry.setCrc(calculateCRC32(file));
-                        zos.putNextEntry(entry);
-                        
-                        try (FileInputStream fis = new FileInputStream(file)) {
-                            byte[] buffer = new byte[8192];
-                            int len;
-                            while ((len = fis.read(buffer)) > 0) {
-                                zos.write(buffer, 0, len);
-                            }
-                        }
-                        zos.closeEntry();
-                    }
-                }
-            }
-        }
-    }
-
     private long calculateCRC32(File file) throws Exception {
         java.util.zip.CRC32 crc = new java.util.zip.CRC32();
         try (FileInputStream fis = new FileInputStream(file)) {
@@ -626,7 +701,7 @@ public class OtaMergeActivity extends Activity {
     private void copyFile(File src, File dest) throws Exception {
         try (FileInputStream fis = new FileInputStream(src);
              FileOutputStream fos = new FileOutputStream(dest)) {
-            byte[] buffer = new byte[8192];
+            byte[] buffer = new byte[1024 * 1024]; // 1MB 缓冲区，提升复制速度
             int len;
             while ((len = fis.read(buffer)) > 0) {
                 fos.write(buffer, 0, len);
@@ -688,24 +763,32 @@ public class OtaMergeActivity extends Activity {
     }
 
     private void refreshStatus() {
-        appendLog("\n━━━━━━━━━━━━━━━━━━━━");
-        appendLog("🔄 刷新状态中...");
+        // 重置所有状态到初始
+        logText.setText("等待开始...");
+        progressBar.setProgress(0);
+        statusText.setText("等待开始合并");
+        startButton.setEnabled(true);
+        startButton.setText("开始合并");
+        cancelButton.setEnabled(false);
+        isRunning = false;
         
+        // 如果有进程在运行，先终止
+        if (currentProcess != null && currentProcess.isAlive()) {
+            currentProcess.destroy();
+            currentProcess = null;
+        }
+        
+        appendLog("\n━━━━━━━━━━━━━━━━━━━━");
+        appendLog("🔄 已重置状态");
+        
+        // 检查现有文件
         File outputDir = new File(OUTPUT_DIR);
         File[] outputs = outputDir.listFiles();
         
         if (outputs != null && outputs.length > 0) {
-            appendLog("✓ 找到合并文件：" + outputs[0].getName());
-            updateStatus("✓ 合并完成", 100);
+            appendLog("✓ 发现已完成的合并文件：" + outputs[0].getName());
         } else {
-            File mergedDir = new File(WORK_DIR, "merged_images");
-            if (mergedDir.exists() && mergedDir.listFiles() != null && mergedDir.listFiles().length > 0) {
-                appendLog("✓ 发现未打包的镜像文件");
-                updateStatus("等待打包", 90);
-            } else {
-                appendLog("✗ 未发现合并结果");
-                updateStatus("等待开始合并", 0);
-            }
+            appendLog("📁 output 目录为空，可以开始新的合并");
         }
     }
 
@@ -750,16 +833,131 @@ public class OtaMergeActivity extends Activity {
             } else {
                 statusText.setTextColor(0xFF0F1E36);
             }
+            // 每次更新都保存状态
+            saveState();
         });
+    }
+
+    private void appendLogWithProgress(int progress, String message) {
+        String logLine = String.format("[%d%%] %s", progress, message);
+        logBuilder.append(logLine).append(StringUtils.LF);
+        mainHandler.post(() -> {
+            logText.append(logLine + StringUtils.LF);
+        });
+        // 只在进度真正变化时才更新状态（避免频繁UI更新）
+        if (progress != lastProgress) {
+            updateStatus(message, progress);
+            lastProgress = progress;
+        }
     }
 
     private void appendLog(String message) {
         logBuilder.append(message).append(StringUtils.LF);
         mainHandler.post(() -> {
             logText.append(message + StringUtils.LF);
-            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         });
     }
+
+    private void extractFullOtaWithProgress(File fullPackage, File outputDir) throws Exception {
+        if (fullPackage.getName().endsWith(".img")) {
+            File otaDir = new File(OTA_DIR);
+            File[] allImgs = otaDir.listFiles((dir, name) -> name.endsWith(".img"));
+            
+            if (allImgs == null || allImgs.length == 0) {
+                throw new Exception("ota 目录没有找到 img 文件");
+            }
+            
+            for (File img : allImgs) {
+                copyFile(img, new File(outputDir, img.getName()));
+            }
+            return;
+        }
+        
+        // ZIP/BIN: 使用 payload_dumper
+        File dumper = copyPayloadDumper();
+        ProcessBuilder pb = new ProcessBuilder(
+            dumper.getAbsolutePath(),
+            fullPackage.getAbsolutePath(),
+            "--out", outputDir.getAbsolutePath()
+        );
+        
+        pb.redirectErrorStream(true);
+        currentProcess = pb.start();
+
+        BufferedReader reader = new BufferedReader(new InputStreamReader(currentProcess.getInputStream()));
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (!line.trim().isEmpty()) {
+                appendLog(line);
+            }
+        }
+
+        int exitCode = currentProcess.waitFor();
+        if (exitCode != 0) {
+            throw new Exception("提取完整包失败: exit code " + exitCode);
+        }
+    }
+
+    private void moveFilesWithProgress(File[] files, File destDir, int startProgress, int endProgress) throws Exception {
+        int total = files.length;
+        int lastReportedProgress = -1;
+        for (int i = 0; i < total; i++) {
+            File src = files[i];
+            File dest = new File(destDir, src.getName());
+            int progress = startProgress + (endProgress - startProgress) * i / total;
+            
+            // 每个文件都输出日志
+            appendLogWithProgress(progress, "复制 " + src.getName());
+            
+            // 移动文件（重命名）
+            if (!src.renameTo(dest)) {
+                // 如果移动失败（可能跨分区），则复制后删除
+                copyFile(src, dest);
+                src.delete();
+            }
+        }
+    }
+
+    private void copyFilesWithProgress(File[] files, File destDir, int startProgress, int endProgress) throws Exception {
+        int total = files.length;
+        for (int i = 0; i < total; i++) {
+            File src = files[i];
+            int progress = startProgress + (endProgress - startProgress) * i / total;
+            appendLogWithProgress(progress, "复制 " + src.getName());
+            copyFile(src, new File(destDir, src.getName()));
+        }
+    }
+
+    private void packImagesWithProgress(File sourceDir, File outputFile, int totalFiles) throws Exception {
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(outputFile))) {
+            zos.setLevel(ZipOutputStream.STORED);
+            
+            File[] files = sourceDir.listFiles((dir, name) -> name.endsWith(".img"));
+            if (files != null) {
+                for (int i = 0; i < files.length; i++) {
+                    File file = files[i];
+                    int progress = 85 + (11 * (i + 1) / files.length);
+                    appendLogWithProgress(progress, String.format("打包 %s (%d/%d)", file.getName(), i + 1, files.length));
+                    
+                    ZipEntry entry = new ZipEntry(file.getName());
+                    entry.setMethod(ZipEntry.STORED);
+                    entry.setSize(file.length());
+                    entry.setCrc(calculateCRC32(file));
+                    zos.putNextEntry(entry);
+                    
+                    try (FileInputStream fis = new FileInputStream(file)) {
+                        byte[] buffer = new byte[1024 * 1024];
+                        int len;
+                        while ((len = fis.read(buffer)) > 0) {
+                            zos.write(buffer, 0, len);
+                        }
+                    }
+                    zos.closeEntry();
+                }
+            }
+        }
+    }
+
 
     @Override
     protected void onDestroy() {
