@@ -17,6 +17,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -66,6 +67,9 @@ public class OtaMergeActivity extends Activity {
     private Button cancelButton;
     private Button cleanButton;
     private Button refreshButton;
+    
+    // WakeLock 防止 CPU 休眠
+    private PowerManager.WakeLock wakeLock;
 
     /**
      * 进程级合并会话：任务状态与 Activity 生命周期解耦。
@@ -195,6 +199,15 @@ public class OtaMergeActivity extends Activity {
             MergeSession.ui = null;
         }
         saveState();
+        // 注意：不在这里释放 WakeLock，因为任务可能还在后台运行
+        // WakeLock 只在任务完成/取消/失败时由 finally 块释放
+    }
+    
+    private void releaseWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+            wakeLock = null;
+        }
     }
 
     private void saveState() {
@@ -601,6 +614,11 @@ public class OtaMergeActivity extends Activity {
     private void startMerge() {
         if (MergeSession.running) return;
 
+        // 获取 WakeLock 防止 CPU 休眠
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "XiaoniOTA:MergeWakeLock");
+        wakeLock.acquire(2 * 60 * 60 * 1000L); // 最长持有 2 小时
+        
         MergeSession.running = true;
         MergeSession.cancelRequested = false;
         MergeSession.lastProgress = -1;
@@ -616,25 +634,26 @@ public class OtaMergeActivity extends Activity {
 
         MergeSession.EXECUTOR.execute(() -> {
             try {
-                // 预先复制并设置 payload_dumper 权限，避免后续权限错误
+                // 检查 payload_dumper 工具是否可用
                 try {
                     copyPayloadDumper();
-                    MergeSession.appendLog("✓ payload_dumper 已准备就绪");
+                    MergeSession.appendLog("✓ payload_dumper 工具已加载");
                 } catch (Exception e) {
                     MergeSession.appendLog("✗ 错误: " + e.getMessage());
                     MergeSession.appendLog("\n━━━━━━━━━━━━━━━━━━━━");
                     MergeSession.appendLog("合并终止");
-                    MergeSession.postStatus("payload_dumper 权限错误", 0);
+                    MergeSession.postStatus("payload_dumper 加载失败", 0);
                     // 强制更新通知栏
                     MergeSession.MAIN.post(() -> {
                         if (MergeSession.ui != null) {
-                            MergeSession.ui.updateNotification("payload_dumper 权限错误", 0);
+                            MergeSession.ui.updateNotification("payload_dumper 加载失败", 0);
                         }
                     });
                     MergeSession.running = false;
                     if (MergeSession.ui != null) {
                         MergeSession.MAIN.post(() -> {
                             if (MergeSession.ui != null) {
+                                MergeSession.ui.releaseWakeLock();
                                 MergeSession.ui.applyButtons();
                             }
                         });
@@ -774,10 +793,13 @@ public class OtaMergeActivity extends Activity {
             } finally {
                 MergeSession.running = false;
                 saveState();
+                
+                // 释放 WakeLock
                 if (MergeSession.ui != null) {
                     MergeSession.MAIN.post(() -> {
                         OtaMergeActivity activity = MergeSession.ui;
                         if (activity != null) {
+                            activity.releaseWakeLock();
                             activity.applyButtons();
                             // 更新通知为最终状态（完成/取消/失败），允许用户清除
                             activity.updateNotification(MergeSession.status, MergeSession.progress);
@@ -897,73 +919,33 @@ public class OtaMergeActivity extends Activity {
     }
 
     private File copyPayloadDumper() throws Exception {
-        File dumper = new File(getFilesDir(), "payload_dumper");
+        // 直接从 native library 目录获取 payload_dumper
+        // 这个目录默认可执行，避免 SELinux 和 noexec 问题
+        String nativeLibDir = getApplicationInfo().nativeLibraryDir;
+        File dumper = new File(nativeLibDir, "libpayload_dumper.so");
+        
         if (!dumper.exists()) {
-            String arch = android.os.Build.SUPPORTED_ABIS[0];
-            String assetName = arch.contains("arm64") || arch.contains("aarch64") ? 
-                "payload_dumper_arm64" : "payload_dumper";
-            
-            try (BufferedInputStream in = new BufferedInputStream(getAssets().open("otatools/" + assetName));
-                 BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(dumper))) {
-                byte[] buffer = new byte[8192];
-                int len;
-                while ((len = in.read(buffer)) > 0) {
-                    out.write(buffer, 0, len);
-                }
-            }
+            throw new Exception(String.format(
+                "找不到 payload_dumper 工具\n" +
+                "路径: %s\n" +
+                "架构: %s\n\n" +
+                "请重新安装 APP",
+                dumper.getAbsolutePath(),
+                android.os.Build.SUPPORTED_ABIS[0]
+            ));
         }
         
-        // 每次都检查并设置执行权限（某些系统可能权限丢失）
         if (!dumper.canExecute()) {
-            boolean success = dumper.setExecutable(true, false);
-            if (!success || !dumper.canExecute()) {
-                // 如果 Java API 失败，尝试用 chmod 命令
-                try {
-                    Process p = Runtime.getRuntime().exec(new String[]{"chmod", "755", dumper.getAbsolutePath()});
-                    int exitCode = p.waitFor();
-                    if (exitCode != 0) {
-                        throw new Exception("chmod 命令执行失败，exit code: " + exitCode);
-                    }
-                } catch (Exception e) {
-                    String detailMsg = String.format(
-                        "无法设置 payload_dumper 执行权限\n" +
-                        "路径: %s\n" +
-                        "架构: %s\n" +
-                        "文件存在: %s\n" +
-                        "文件大小: %d bytes\n" +
-                        "错误: %s\n\n" +
-                        "建议:\n" +
-                        "1. 检查 SELinux 设置\n" +
-                        "2. 尝试重启 APP\n" +
-                        "3. 检查存储权限",
-                        dumper.getAbsolutePath(),
-                        android.os.Build.SUPPORTED_ABIS[0],
-                        dumper.exists(),
-                        dumper.length(),
-                        e.getMessage()
-                    );
-                    throw new Exception(detailMsg);
-                }
-                
-                // 再次检查
-                if (!dumper.canExecute()) {
-                    String detailMsg = String.format(
-                        "payload_dumper 无法获得执行权限\n" +
-                        "路径: %s\n" +
-                        "架构: %s\n" +
-                        "setExecutable: 失败\n" +
-                        "chmod 755: 已执行但无效\n\n" +
-                        "可能原因:\n" +
-                        "1. SELinux 阻止执行\n" +
-                        "2. 存储分区挂载为 noexec\n" +
-                        "3. 系统权限限制\n\n" +
-                        "建议重启 APP 或联系开发者",
-                        dumper.getAbsolutePath(),
-                        android.os.Build.SUPPORTED_ABIS[0]
-                    );
-                    throw new Exception(detailMsg);
-                }
-            }
+            throw new Exception(String.format(
+                "payload_dumper 不可执行\n" +
+                "路径: %s\n" +
+                "架构: %s\n" +
+                "文件大小: %d bytes\n\n" +
+                "这是一个严重的系统问题，请联系开发者",
+                dumper.getAbsolutePath(),
+                android.os.Build.SUPPORTED_ABIS[0],
+                dumper.length()
+            ));
         }
         
         return dumper;
