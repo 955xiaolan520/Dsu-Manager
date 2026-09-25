@@ -878,7 +878,16 @@ public class OtaMergeActivity extends Activity {
         stdoutReader.start();
         stderrReader.start();
 
-        int exitCode = MergeSession.currentProcess.waitFor();
+        // 使用带超时的 waitFor，避免无限阻塞
+        boolean finished = MergeSession.currentProcess.waitFor(300, java.util.concurrent.TimeUnit.SECONDS);
+        if (!finished) {
+            MergeSession.appendLog("[ERROR] payload_dumper 执行超时（300秒），强制终止");
+            MergeSession.currentProcess.destroyForcibly();
+            MergeSession.currentProcess.waitFor();
+            throw new Exception("应用增量包超时");
+        }
+        
+        int exitCode = MergeSession.currentProcess.exitValue();
         stdoutReader.join(5000);
         stderrReader.join(5000);
         
@@ -1218,8 +1227,16 @@ public class OtaMergeActivity extends Activity {
         stderrReader.start();
         MergeSession.appendLog("输出读取线程已启动，等待进程结束...");
 
-
-        int exitCode = MergeSession.currentProcess.waitFor();
+        // 使用带超时的 waitFor，避免无限阻塞
+        boolean finished = MergeSession.currentProcess.waitFor(300, java.util.concurrent.TimeUnit.SECONDS);
+        if (!finished) {
+            MergeSession.appendLog("[ERROR] payload_dumper 执行超时（300秒），强制终止");
+            MergeSession.currentProcess.destroyForcibly();
+            MergeSession.currentProcess.waitFor();
+            throw new Exception("提取完整包超时");
+        }
+        
+        int exitCode = MergeSession.currentProcess.exitValue();
         stdoutReader.join(5000);
         stderrReader.join(5000);
         
