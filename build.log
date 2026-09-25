@@ -1,0 +1,305 @@
+> Task :app:copyVivoCatalog UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :app:mergeReleaseNativeLibs UP-TO-DATE
+> Task :app:stripReleaseDebugSymbols UP-TO-DATE
+> Task :app:extractReleaseNativeSymbolTables UP-TO-DATE
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:checkReleaseDuplicateClasses UP-TO-DATE
+> Task :app:buildKotlinToolingMetadata UP-TO-DATE
+> Task :app:compileReleaseAidl UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:generateReleaseBuildConfig UP-TO-DATE
+> Task :app:checkReleaseAarMetadata UP-TO-DATE
+> Task :app:generateReleaseResValues UP-TO-DATE
+> Task :app:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :app:generateReleaseResources UP-TO-DATE
+> Task :app:mergeReleaseResources UP-TO-DATE
+> Task :app:packageReleaseResources UP-TO-DATE
+> Task :app:parseReleaseLocalResources UP-TO-DATE
+> Task :app:createReleaseCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksRelease UP-TO-DATE
+> Task :app:processReleaseMainManifest UP-TO-DATE
+> Task :app:processReleaseManifest UP-TO-DATE
+> Task :app:processReleaseManifestForPackage UP-TO-DATE
+> Task :app:processReleaseResources UP-TO-DATE
+> Task :app:compileReleaseKotlin
+> Task :app:javaPreCompileRelease UP-TO-DATE
+
+> Task :app:compileReleaseJavaWithJavac FAILED
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1090: error: illegal start of type
+        try {
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1100: error: illegal start of type
+        } catch (Exception ignored) { }
+          ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1100: error: ';' expected
+        } catch (Exception ignored) { }
+                                  ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1102: error: illegal start of type
+        try {
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1123: error: illegal start of type
+        } catch (Exception ignored) { }
+          ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1123: error: ';' expected
+        } catch (Exception ignored) { }
+                                  ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1125: error: illegal start of type
+        try {
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1129: error: illegal start of type
+        } catch (Exception ignored) { }
+          ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1129: error: ';' expected
+        } catch (Exception ignored) { }
+                                  ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1131: error: invalid method declaration; return type required
+        copyPathToClipboard(path);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1131: error: <identifier> expected
+        copyPathToClipboard(path);
+                                ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1138: error: class, interface, enum, or record expected
+    private void startFolderIntent(Intent intent) {
+            ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1140: error: class, interface, enum, or record expected
+        android.os.StrictMode.setVmPolicy(new android.os.StrictMode.VmPolicy.Builder().build());
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1141: error: class, interface, enum, or record expected
+        try {
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1143: error: class, interface, enum, or record expected
+            startActivity(intent);
+            ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1144: error: class, interface, enum, or record expected
+        } finally {
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1146: error: class, interface, enum, or record expected
+        }
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1153: error: class, interface, enum, or record expected
+            cm.setPrimaryClip(ClipData.newPlainText("file_path", path));
+            ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1154: error: class, interface, enum, or record expected
+            Toast.makeText(this, "已复制文件路径: " + path, Toast.LENGTH_LONG).show();
+            ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1155: error: class, interface, enum, or record expected
+        } catch (Exception e) {
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1157: error: class, interface, enum, or record expected
+        }
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1164: error: class, interface, enum, or record expected
+        return panel;
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1165: error: class, interface, enum, or record expected
+    }
+    ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1175: error: class, interface, enum, or record expected
+        base.setOrientation(GradientDrawable.Orientation.TL_BR);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1176: error: class, interface, enum, or record expected
+        base.setColors(new int[]{0xF2FFFFFF, 0xE6E3F6FA, 0xD9D8ECF4});
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1177: error: class, interface, enum, or record expected
+        base.setCornerRadius(radiusPx);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1179: error: class, interface, enum, or record expected
+        GradientDrawable strokeLayer = new GradientDrawable();
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1180: error: class, interface, enum, or record expected
+        strokeLayer.setColor(0x00000000);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1181: error: class, interface, enum, or record expected
+        strokeLayer.setStroke(Math.max(1, dp(2)), 0xFFFFFFFF);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1182: error: class, interface, enum, or record expected
+        strokeLayer.setCornerRadius(Math.max(0, radiusPx - Math.max(1, dp(1))));
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1184: error: class, interface, enum, or record expected
+        GradientDrawable highlight = new GradientDrawable();
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1185: error: class, interface, enum, or record expected
+        highlight.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1186: error: class, interface, enum, or record expected
+        highlight.setColors(new int[]{0x00FFFFFF, 0x73FFFFFF, 0x00FFFFFF});
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1187: error: class, interface, enum, or record expected
+        highlight.setCornerRadius(Math.max(0, radiusPx - dp(4)));
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1189: error: class, interface, enum, or record expected
+        android.graphics.drawable.LayerDrawable layer =
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1192: error: class, interface, enum, or record expected
+        layer.setLayerInset(1, 1, 1, 1, 1);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1193: error: class, interface, enum, or record expected
+        layer.setLayerInset(2, dp(3), dp(2), dp(3), (int) (radiusPx * 1.35f));
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1194: error: class, interface, enum, or record expected
+        return layer;
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1195: error: class, interface, enum, or record expected
+    }
+    ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1199: error: class, interface, enum, or record expected
+        view.setText(text);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1200: error: class, interface, enum, or record expected
+        view.setTextSize(size);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1201: error: class, interface, enum, or record expected
+        view.setTextColor(color);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1202: error: class, interface, enum, or record expected
+        view.setLineSpacing(0, 1.05f);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1203: error: class, interface, enum, or record expected
+        return view;
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1204: error: class, interface, enum, or record expected
+    }
+    ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1208: error: class, interface, enum, or record expected
+        button.setText(text);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1209: error: class, interface, enum, or record expected
+        button.setAllCaps(false);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1210: error: class, interface, enum, or record expected
+        button.setTextSize(size);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1211: error: class, interface, enum, or record expected
+        button.setTextColor(TEAL_TITLE);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1212: error: class, interface, enum, or record expected
+        button.setGravity(Gravity.CENTER);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1213: error: class, interface, enum, or record expected
+        button.setMinWidth(0);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1214: error: class, interface, enum, or record expected
+        button.setMinHeight(0);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1215: error: class, interface, enum, or record expected
+        button.setIncludeFontPadding(false);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1216: error: class, interface, enum, or record expected
+        button.setPadding(0, 0, 0, 0);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1217: error: class, interface, enum, or record expected
+        button.setBackgroundResource(R.drawable.liquid_glass_back_button);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1218: error: class, interface, enum, or record expected
+        button.setStateListAnimator(null);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1219: error: class, interface, enum, or record expected
+        return button;
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1220: error: class, interface, enum, or record expected
+    }
+    ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1224: error: class, interface, enum, or record expected
+        GradientDrawable bg = new GradientDrawable();
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1225: error: class, interface, enum, or record expected
+        bg.setOrientation(GradientDrawable.Orientation.TL_BR);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1226: error: class, interface, enum, or record expected
+        bg.setColors(new int[]{0xCCFFFFFF, 0x99E2E8F0});
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1227: error: class, interface, enum, or record expected
+        bg.setCornerRadius(dp(16));
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1228: error: class, interface, enum, or record expected
+        bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1229: error: class, interface, enum, or record expected
+        button.setBackground(bg);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1230: error: class, interface, enum, or record expected
+        return button;
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1231: error: class, interface, enum, or record expected
+    }
+    ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1236: error: class, interface, enum, or record expected
+        button.setText(text);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1237: error: class, interface, enum, or record expected
+        button.setAllCaps(false);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1238: error: class, interface, enum, or record expected
+        button.setTextSize(13.5f);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1239: error: class, interface, enum, or record expected
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1240: error: class, interface, enum, or record expected
+        button.setTextColor(Color.WHITE);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1241: error: class, interface, enum, or record expected
+        button.setGravity(Gravity.CENTER);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1242: error: class, interface, enum, or record expected
+        button.setMinWidth(0);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1243: error: class, interface, enum, or record expected
+        button.setMinHeight(0);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1244: error: class, interface, enum, or record expected
+        button.setIncludeFontPadding(false);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1245: error: class, interface, enum, or record expected
+        button.setPadding(0, 0, 0, 0);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1246: error: class, interface, enum, or record expected
+        button.setStateListAnimator(null);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1247: error: class, interface, enum, or record expected
+        GradientDrawable bg = new GradientDrawable();
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1248: error: class, interface, enum, or record expected
+        bg.setOrientation(GradientDrawable.Orientation.TL_BR);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1249: error: class, interface, enum, or record expected
+        bg.setColors(new int[]{c2, c1});
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1250: error: class, interface, enum, or record expected
+        bg.setCornerRadius(dp(20));
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1251: error: class, interface, enum, or record expected
+        bg.setStroke(Math.max(1, dp(1)), 0x59FFFFFF);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1252: error: class, interface, enum, or record expected
+        button.setBackground(bg);
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1253: error: class, interface, enum, or record expected
+        button.setElevation(dp(4));
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1254: error: class, interface, enum, or record expected
+        return button;
+        ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1255: error: class, interface, enum, or record expected
+    }
+    ^
+/workspace/app/src/main/java/com/probiotics/xiaoni/DownloadManagerActivity.java:1259: error: class, interface, enum, or record expected
+    }
+    ^
+87 errors
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileReleaseJavaWithJavac'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --info option to get more log output.
+> Run with --scan to get full insights.
+
+BUILD FAILED in 2s
+26 actionable tasks: 3 executed, 23 up-to-date

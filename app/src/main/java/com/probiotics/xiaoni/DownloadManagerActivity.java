@@ -1038,14 +1038,13 @@ public final class DownloadManagerActivity extends Activity {
     // ---------- v3.9.15 打开文件位置：四级回退（修复 vivo 等设备上只复制路径不跳转） ----------
 
     /**
-     * v3.9.44 使用 FileProvider + createChooser 打开文件本身（而不是目录）
+     * v3.9.44 实现：使用文件触发系统选择器
      */
     private void openFileLocation(String path) {
         File file = new File(path);
         
-        // 检查文件是否存在
         if (!file.exists()) {
-            Toast.makeText(this, "文件不存在: " + path, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "文件不存在", Toast.LENGTH_SHORT).show();
             return;
         }
         
@@ -1056,33 +1055,29 @@ public final class DownloadManagerActivity extends Activity {
                 file
             );
             
+            String mimeType;
+            String name = file.getName();
+            if (name.endsWith(".zip")) {
+                mimeType = "application/zip";
+            } else if (name.endsWith(".img") || name.endsWith(".bin")) {
+                mimeType = "application/octet-stream";
+            } else {
+                mimeType = "*/*";
+            }
+            
             Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(uri, getMimeType(file.getName()));
+            intent.setDataAndType(uri, mimeType);
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             
-            // 使用 createChooser 强制显示选择器
-            startActivity(Intent.createChooser(intent, "用其他应用打开"));
+            try {
+                startActivity(Intent.createChooser(intent, "打开方式"));
+            } catch (Exception e) {
+                Toast.makeText(this, "没有可用的应用", Toast.LENGTH_SHORT).show();
+            }
         } catch (Exception e) {
-            Toast.makeText(this, "打开失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "无法访问文件", Toast.LENGTH_SHORT).show();
         }
-    }
-    
-    private String getMimeType(String filename) {
-        if (filename.endsWith(".zip")) {
-            return "application/zip";
-        } else if (filename.endsWith(".img")) {
-            return "application/octet-stream";
-        } else if (filename.endsWith(".bin")) {
-            return "application/octet-stream";
-        } else if (filename.endsWith(".apk")) {
-            return "application/vnd.android.package-archive";
-        } else if (filename.endsWith(".txt")) {
-            return "text/plain";
-        } else if (filename.endsWith(".log")) {
-            return "text/plain";
-        }
-        return "*/*";
     }
 
     // ---------- 绘制工具 ----------
