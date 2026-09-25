@@ -1038,92 +1038,51 @@ public final class DownloadManagerActivity extends Activity {
     // ---------- v3.9.15 打开文件位置：四级回退（修复 vivo 等设备上只复制路径不跳转） ----------
 
     /**
-     * 跳转到文件所在目录（v3.9.15 重做为四级回退链，层层保底）：
-     *  1. DocumentsUI 精确定位（ACTION_VIEW + vnd.android.document/directory，
-     *     Google Files / AOSP 文件响应，直达文件所在目录）；
-     *  2. 第三方文件管理器（file:// 目录 + resource/folder / inode/directory 专用 MIME，
-     *     MT 管理器 / RE / ES 等注册，音乐网盘类不会出现；单个直接拉起，多个弹系统选择器）；
-     *  3. 系统下载列表（DownloadManager.ACTION_VIEW_DOWNLOADS，几乎所有 ROM 都有，
-     *     打开系统「下载」页可看到 Download/DsuManager 下的文件）；
-     *  4. 复制文件路径（最终兜底）。
-     * v3.9.14 只发第 1 路意图，无应用注册时 startActivity 直接抛异常 → 永远走复制路径。
+     * v3.9.44 使用 FileProvider + createChooser 打开文件本身（而不是目录）
      */
     private void openFileLocation(String path) {
         File file = new File(path);
-        File dir = file.getParentFile();
-        String abs = dir != null && dir.isDirectory()
-                ? dir.getAbsolutePath()
-                : Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                        + "/DsuManager";
-        // 1) DocumentsUI 精确定位（先 query 再启动，避免直接抛 ActivityNotFoundException）
-        try {
-            String docId = "primary:" + abs.replace("/storage/emulated/0/", "");
-            Uri docUri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", docId);
-            Intent doc = new Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(docUri, "vnd.android.document/directory")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            if (doc.resolveActivity(getPackageManager()) != null) {
-                startActivity(doc);
-                return;
-            }
-        } catch (Exception ignored) { }
-        // 2) 第三方文件管理器（resource/folder 是目录专用 MIME，只有管理器注册）
-        try {
-            java.util.LinkedHashSet<String> packages = new java.util.LinkedHashSet<>();
-            String[] folderMimes = {"resource/folder", "inode/directory"};
-            for (String mime : folderMimes) {
-                Intent probe = new Intent(Intent.ACTION_VIEW)
-                        .setDataAndType(Uri.fromFile(new File(abs)), mime);
-                for (android.content.pm.ResolveInfo ri
-                        : getPackageManager().queryIntentActivities(probe, 0)) {
-                    packages.add(ri.activityInfo.packageName);
-                }
-            }
-            if (!packages.isEmpty()) {
-                Intent target = new Intent(Intent.ACTION_VIEW)
-                        .setDataAndType(Uri.fromFile(new File(abs)), "resource/folder");
-                if (packages.size() == 1) {
-                    startFolderIntent(target);
-                } else {
-                    startFolderIntent(Intent.createChooser(target, "选择文件管理器"));
-                }
-                return;
-            }
-        } catch (Exception ignored) { }
-        // 3) 系统下载列表（绝大多数 ROM 自带，至少能看到下载的文件）
-        try {
-            startActivity(new Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS));
-            Toast.makeText(this, "已打开系统下载列表", Toast.LENGTH_SHORT).show();
+        
+        // 检查文件是否存在
+        if (!file.exists()) {
+            Toast.makeText(this, "文件不存在: " + path, Toast.LENGTH_LONG).show();
             return;
-        } catch (Exception ignored) { }
-        // 4) 复制路径兜底
-        copyPathToClipboard(path);
-    }
-
-    /**
-     * 拉起 file:// 目录意图：targetSdk 24+ 会触发 FileUriExposedException，
-     * 临时放宽 VmPolicy（第三方管理器仅支持 file://，无 content:// 替代）。
-     */
-    private void startFolderIntent(Intent intent) {
-        android.os.StrictMode.VmPolicy old = android.os.StrictMode.getVmPolicy();
-        android.os.StrictMode.setVmPolicy(new android.os.StrictMode.VmPolicy.Builder().build());
+        }
+        
         try {
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                this,
+                getPackageName() + ".fileprovider",
+                file
+            );
+            
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, getMimeType(file.getName()));
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-        } finally {
-            android.os.StrictMode.setVmPolicy(old);
+            
+            // 使用 createChooser 强制显示选择器
+            startActivity(Intent.createChooser(intent, "用其他应用打开"));
+        } catch (Exception e) {
+            Toast.makeText(this, "打开失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
-
-    /** 复制完整文件路径到剪贴板（所有跳转失败的最终兜底） */
-    private void copyPathToClipboard(String path) {
-        try {
-            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText("file_path", path));
-            Toast.makeText(this, "已复制文件路径: " + path, Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
-            Toast.makeText(this, path, Toast.LENGTH_LONG).show();
+    
+    private String getMimeType(String filename) {
+        if (filename.endsWith(".zip")) {
+            return "application/zip";
+        } else if (filename.endsWith(".img")) {
+            return "application/octet-stream";
+        } else if (filename.endsWith(".bin")) {
+            return "application/octet-stream";
+        } else if (filename.endsWith(".apk")) {
+            return "application/vnd.android.package-archive";
+        } else if (filename.endsWith(".txt")) {
+            return "text/plain";
+        } else if (filename.endsWith(".log")) {
+            return "text/plain";
         }
+        return "*/*";
     }
 
     // ---------- 绘制工具 ----------

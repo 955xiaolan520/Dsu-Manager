@@ -1077,20 +1077,55 @@ public class OtaMergeActivity extends Activity {
     }
 
     private void openFolder() {
-        Uri uri = DocumentsContract.buildDocumentUri(
-            "com.android.externalstorage.documents",
-            "primary:" + new File(WORK_DIR + "/merged_images").getAbsolutePath().replace("/storage/emulated/0/", "")
-        );
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setDataAndType(uri, "vnd.android.document/directory");
-        intent.addCategory(Intent.CATEGORY_DEFAULT);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        // 使用 OUTPUT_DIR，和 3.9.44 版本保持一致
+        File dir = new File(OUTPUT_DIR);
+        
+        // 检查目录是否存在
+        if (!dir.exists() || !dir.isDirectory()) {
+            Toast.makeText(this, "目录不存在", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        // 找到目录中的所有文件
+        File[] files = dir.listFiles();
+        if (files == null || files.length == 0) {
+            Toast.makeText(this, "目录为空", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        // 使用第一个文件来触发文件管理器选择器（和 3.9.44 版本完全一致）
+        File file = files[0];
         try {
-            startActivity(intent);
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                this, 
+                getPackageName() + ".fileprovider", 
+                file
+            );
+            
+            // 根据文件名确定 MIME 类型
+            String mimeType;
+            String name = file.getName();
+            if (name.endsWith(".img")) {
+                mimeType = "application/octet-stream";
+            } else if (name.endsWith(".zip")) {
+                mimeType = "application/zip";
+            } else {
+                mimeType = "*/*";
+            }
+            
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, mimeType);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            
+            try {
+                // 使用 createChooser 弹出"打开方式"选择器
+                startActivity(Intent.createChooser(intent, "打开方式"));
+            } catch (Exception e) {
+                Toast.makeText(this, "没有可用的应用", Toast.LENGTH_SHORT).show();
+            }
         } catch (Exception e) {
-            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText("path", WORK_DIR + "/merged_images"));
-            Toast.makeText(this, "已复制路径: " + WORK_DIR + "/merged_images", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "无法访问文件", Toast.LENGTH_SHORT).show();
         }
     }
 
