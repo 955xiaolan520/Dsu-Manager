@@ -24,7 +24,6 @@ import android.view.View;
 import android.view.ViewParent;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -44,6 +43,7 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
@@ -141,12 +141,9 @@ public class OtaMergeActivity extends Activity {
                         // 状态框立即更新（无节流）
                         activity.applyStatus(status, progress);
                         activity.saveState();
-                        // 通知栏节流更新（500ms 内最多一次，避免系统节流导致不同步）
-                        long now = System.currentTimeMillis();
-                        if (now - lastNotificationTime >= NOTIFICATION_THROTTLE_MS || progress >= 100) {
-                            lastNotificationTime = now;
-                            activity.updateNotification(status, progress);
-                        }
+                        // 通知栏也立即更新（移除节流，每次都更新）
+                        activity.updateNotification(status, progress);
+                        lastNotificationTime = System.currentTimeMillis();
                     }
                 });
             }
@@ -514,28 +511,31 @@ public class OtaMergeActivity extends Activity {
         logTitle.setTypeface(null, Typeface.BOLD);
         logPanel.addView(logTitle);
 
-        // 外层垂直滚动
+        // 使用 ScrollView + TextView 方案（完全照搬 PayloadDumperActivity）
         logScroll = new ScrollView(this);
         logScroll.setVerticalScrollBarEnabled(true);
         logScroll.setScrollbarFadingEnabled(false);
+        logScroll.setFillViewport(false);
         logScroll.setBackgroundResource(R.drawable.dark_liquid_glass);
-
-        // 内层水平滚动
-        HorizontalScrollView logScrollHorizontal = new HorizontalScrollView(this);
-        logScrollHorizontal.setHorizontalScrollBarEnabled(true);
-        logScrollHorizontal.setScrollbarFadingEnabled(false);
-
-        // TextView：纯滚动查看，不启用文本选择
+        // 阻止父容器拦截触摸事件，允许滚动
+        logScroll.setOnTouchListener((view, event) -> {
+            ViewParent parent = view.getParent();
+            if (parent != null) {
+                int action = event.getActionMasked();
+                parent.requestDisallowInterceptTouchEvent(action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
+            }
+            return false;
+        });
+        
         logText = new TextView(this);
         logText.setText("等待开始...");
-        logText.setTextSize(12);
+        logText.setTextSize(14);
         logText.setTextColor(0xE6FFFFFF);
         logText.setTypeface(Typeface.MONOSPACE);
-        logText.setPadding(dp(10), dp(10), dp(10), dp(10));
-        logText.setHorizontallyScrolling(true);
+        logText.setPadding(dp(8), dp(8), dp(8), dp(8));
+        // 不设置 setTextIsSelectable，否则会阻止滚动
         
-        logScrollHorizontal.addView(logText, new HorizontalScrollView.LayoutParams(-2, -2));
-        logScroll.addView(logScrollHorizontal, new ScrollView.LayoutParams(-1, -2));
+        logScroll.addView(logText, new ScrollView.LayoutParams(-1, -2));
         
         LinearLayout.LayoutParams logScrollParams = new LinearLayout.LayoutParams(-1, dp(400));
         logScrollParams.topMargin = dp(8);
@@ -616,6 +616,32 @@ public class OtaMergeActivity extends Activity {
 
         MergeSession.EXECUTOR.execute(() -> {
             try {
+                // 预先复制并设置 payload_dumper 权限，避免后续权限错误
+                try {
+                    copyPayloadDumper();
+                    MergeSession.appendLog("✓ payload_dumper 已准备就绪");
+                } catch (Exception e) {
+                    MergeSession.appendLog("✗ 错误: " + e.getMessage());
+                    MergeSession.appendLog("\n━━━━━━━━━━━━━━━━━━━━");
+                    MergeSession.appendLog("合并终止");
+                    MergeSession.postStatus("payload_dumper 权限错误", 0);
+                    // 强制更新通知栏
+                    MergeSession.MAIN.post(() -> {
+                        if (MergeSession.ui != null) {
+                            MergeSession.ui.updateNotification("payload_dumper 权限错误", 0);
+                        }
+                    });
+                    MergeSession.running = false;
+                    if (MergeSession.ui != null) {
+                        MergeSession.MAIN.post(() -> {
+                            if (MergeSession.ui != null) {
+                                MergeSession.ui.applyButtons();
+                            }
+                        });
+                    }
+                    return;
+                }
+                
                 File otaDir = new File(OTA_DIR);
                 File patchDir = new File(PATCH_DIR);
                 
@@ -778,13 +804,15 @@ public class OtaMergeActivity extends Activity {
             throw new Exception("增量包格式错误: " + patchFile.getName());
         }
         
-        pb.redirectErrorStream(true);
+        // 不合并流，分别读取 stdout 和 stderr
         MergeSession.currentProcess = pb.start();
 
-        // 读取输出：逐字符读取，处理 \r 和 \n
+        // 同时读取 stdout 和 stderr
         final int[] patchProgress = {65};
         final int[] partitionCount = {0};
-        Thread outputReader = new Thread(() -> {
+        
+        // stdout 读取线程
+        Thread stdoutReader = new Thread(() -> {
             try {
                 InputStream is = MergeSession.currentProcess.getInputStream();
                 StringBuilder lineBuffer = new StringBuilder();
@@ -793,9 +821,8 @@ public class OtaMergeActivity extends Activity {
                     if (c == '\r' || c == '\n') {
                         if (lineBuffer.length() > 0) {
                             String line = lineBuffer.toString();
-                            MergeSession.appendLog(line);
+                            MergeSession.appendLog("[stdout] " + line);
                             
-                            // 解析关键信息更新进度
                             if (line.contains("- Processing file:")) {
                                 partitionCount[0]++;
                                 patchProgress[0] = Math.min(79, 65 + partitionCount[0] / 2);
@@ -808,18 +835,52 @@ public class OtaMergeActivity extends Activity {
                         lineBuffer.append((char) c);
                     }
                 }
-                // 处理最后一行
                 if (lineBuffer.length() > 0) {
-                    MergeSession.appendLog(lineBuffer.toString());
+                    MergeSession.appendLog("[stdout] " + lineBuffer.toString());
                 }
             } catch (Exception e) {
-                MergeSession.appendLog("读取输出异常: " + e.getMessage());
+                MergeSession.appendLog("stdout 读取异常: " + e.getMessage());
             }
         });
-        outputReader.start();
+        
+        // stderr 读取线程
+        Thread stderrReader = new Thread(() -> {
+            try {
+                InputStream is = MergeSession.currentProcess.getErrorStream();
+                StringBuilder lineBuffer = new StringBuilder();
+                int c;
+                while ((c = is.read()) != -1) {
+                    if (c == '\r' || c == '\n') {
+                        if (lineBuffer.length() > 0) {
+                            String line = lineBuffer.toString();
+                            MergeSession.appendLog("[stderr] " + line);
+                            
+                            if (line.contains("- Processing file:")) {
+                                partitionCount[0]++;
+                                patchProgress[0] = Math.min(79, 65 + partitionCount[0] / 2);
+                                MergeSession.postStatus("应用增量 " + partitionCount[0], patchProgress[0]);
+                            }
+                            
+                            lineBuffer.setLength(0);
+                        }
+                    } else {
+                        lineBuffer.append((char) c);
+                    }
+                }
+                if (lineBuffer.length() > 0) {
+                    MergeSession.appendLog("[stderr] " + lineBuffer.toString());
+                }
+            } catch (Exception e) {
+                MergeSession.appendLog("stderr 读取异常: " + e.getMessage());
+            }
+        });
+        
+        stdoutReader.start();
+        stderrReader.start();
 
         int exitCode = MergeSession.currentProcess.waitFor();
-        outputReader.join(5000);
+        stdoutReader.join(5000);
+        stderrReader.join(5000);
         
         if (exitCode != 0) {
             throw new Exception("应用增量包失败: exit code " + exitCode);
@@ -850,14 +911,48 @@ public class OtaMergeActivity extends Activity {
                 // 如果 Java API 失败，尝试用 chmod 命令
                 try {
                     Process p = Runtime.getRuntime().exec(new String[]{"chmod", "755", dumper.getAbsolutePath()});
-                    p.waitFor();
+                    int exitCode = p.waitFor();
+                    if (exitCode != 0) {
+                        throw new Exception("chmod 命令执行失败，exit code: " + exitCode);
+                    }
                 } catch (Exception e) {
-                    throw new Exception("无法设置 payload_dumper 执行权限: " + e.getMessage());
+                    String detailMsg = String.format(
+                        "无法设置 payload_dumper 执行权限\n" +
+                        "路径: %s\n" +
+                        "架构: %s\n" +
+                        "文件存在: %s\n" +
+                        "文件大小: %d bytes\n" +
+                        "错误: %s\n\n" +
+                        "建议:\n" +
+                        "1. 检查 SELinux 设置\n" +
+                        "2. 尝试重启 APP\n" +
+                        "3. 检查存储权限",
+                        dumper.getAbsolutePath(),
+                        android.os.Build.SUPPORTED_ABIS[0],
+                        dumper.exists(),
+                        dumper.length(),
+                        e.getMessage()
+                    );
+                    throw new Exception(detailMsg);
                 }
                 
                 // 再次检查
                 if (!dumper.canExecute()) {
-                    throw new Exception("payload_dumper 无法获得执行权限，请检查系统权限设置");
+                    String detailMsg = String.format(
+                        "payload_dumper 无法获得执行权限\n" +
+                        "路径: %s\n" +
+                        "架构: %s\n" +
+                        "setExecutable: 失败\n" +
+                        "chmod 755: 已执行但无效\n\n" +
+                        "可能原因:\n" +
+                        "1. SELinux 阻止执行\n" +
+                        "2. 存储分区挂载为 noexec\n" +
+                        "3. 系统权限限制\n\n" +
+                        "建议重启 APP 或联系开发者",
+                        dumper.getAbsolutePath(),
+                        android.os.Build.SUPPORTED_ABIS[0]
+                    );
+                    throw new Exception(detailMsg);
                 }
             }
         }
@@ -1018,20 +1113,35 @@ public class OtaMergeActivity extends Activity {
         
         // ZIP/BIN: 使用 payload_dumper
         File dumper = copyPayloadDumper();
+        
+        MergeSession.appendLog("准备执行 payload_dumper");
+        MergeSession.appendLog("命令: " + dumper.getAbsolutePath() + " " + fullPackage.getAbsolutePath() + " --out " + outputDir.getAbsolutePath());
+        
         ProcessBuilder pb = new ProcessBuilder(
             dumper.getAbsolutePath(),
             fullPackage.getAbsolutePath(),
             "--out", outputDir.getAbsolutePath()
         );
         
-        pb.redirectErrorStream(true);
+        // 设置环境变量，强制 Rust 程序无缓冲输出
+        Map<String, String> env = pb.environment();
+        env.put("RUST_LOG", "info");
+        env.put("RUST_BACKTRACE", "1");
+        
+        MergeSession.appendLog("启动进程并读取输出...");
+        // 不合并流，分别读取 stdout 和 stderr
         MergeSession.currentProcess = pb.start();
 
-        // 读取输出：逐字符读取，处理 \r 和 \n
+        // 同时读取 stdout 和 stderr
         final int[] extractProgress = {15};
         final int[] partitionCount = {0};
-        Thread outputReader = new Thread(() -> {
+        final int[] stdoutLineCount = {0};
+        final int[] stderrLineCount = {0};
+        
+        // stdout 读取线程
+        Thread stdoutReader = new Thread(() -> {
             try {
+                MergeSession.appendLog("[DEBUG] stdout 读取线程已启动");
                 InputStream is = MergeSession.currentProcess.getInputStream();
                 StringBuilder lineBuffer = new StringBuilder();
                 int c;
@@ -1039,9 +1149,9 @@ public class OtaMergeActivity extends Activity {
                     if (c == '\r' || c == '\n') {
                         if (lineBuffer.length() > 0) {
                             String line = lineBuffer.toString();
-                            MergeSession.appendLog(line);
+                            stdoutLineCount[0]++;
+                            MergeSession.appendLog("[stdout#" + stdoutLineCount[0] + "] " + line);
                             
-                            // 解析关键信息更新进度
                             if (line.contains("- Processing file:")) {
                                 partitionCount[0]++;
                                 extractProgress[0] = Math.min(44, 15 + partitionCount[0]);
@@ -1056,18 +1166,62 @@ public class OtaMergeActivity extends Activity {
                         lineBuffer.append((char) c);
                     }
                 }
-                // 处理最后一行
                 if (lineBuffer.length() > 0) {
-                    MergeSession.appendLog(lineBuffer.toString());
+                    stdoutLineCount[0]++;
+                    MergeSession.appendLog("[stdout#" + stdoutLineCount[0] + "] " + lineBuffer.toString());
                 }
+                MergeSession.appendLog("[DEBUG] stdout 读取线程结束，共 " + stdoutLineCount[0] + " 行");
             } catch (Exception e) {
-                MergeSession.appendLog("读取输出异常: " + e.getMessage());
+                MergeSession.appendLog("[ERROR] stdout 读取异常: " + e.getMessage());
             }
         });
-        outputReader.start();
+        
+        // stderr 读取线程
+        Thread stderrReader = new Thread(() -> {
+            try {
+                MergeSession.appendLog("[DEBUG] stderr 读取线程已启动");
+                InputStream is = MergeSession.currentProcess.getErrorStream();
+                StringBuilder lineBuffer = new StringBuilder();
+                int c;
+                while ((c = is.read()) != -1) {
+                    if (c == '\r' || c == '\n') {
+                        if (lineBuffer.length() > 0) {
+                            String line = lineBuffer.toString();
+                            stderrLineCount[0]++;
+                            MergeSession.appendLog("[stderr#" + stderrLineCount[0] + "] " + line);
+                            
+                            if (line.contains("- Processing file:")) {
+                                partitionCount[0]++;
+                                extractProgress[0] = Math.min(44, 15 + partitionCount[0]);
+                                MergeSession.postStatus("提取分区 " + partitionCount[0], extractProgress[0]);
+                            } else if (line.contains("- Found") && line.contains("partitions to extract")) {
+                                MergeSession.appendLog("开始提取...");
+                            }
+                            
+                            lineBuffer.setLength(0);
+                        }
+                    } else {
+                        lineBuffer.append((char) c);
+                    }
+                }
+                if (lineBuffer.length() > 0) {
+                    stderrLineCount[0]++;
+                    MergeSession.appendLog("[stderr#" + stderrLineCount[0] + "] " + lineBuffer.toString());
+                }
+                MergeSession.appendLog("[DEBUG] stderr 读取线程结束，共 " + stderrLineCount[0] + " 行");
+            } catch (Exception e) {
+                MergeSession.appendLog("[ERROR] stderr 读取异常: " + e.getMessage());
+            }
+        });
+        
+        stdoutReader.start();
+        stderrReader.start();
+        MergeSession.appendLog("输出读取线程已启动，等待进程结束...");
+
 
         int exitCode = MergeSession.currentProcess.waitFor();
-        outputReader.join(5000);
+        stdoutReader.join(5000);
+        stderrReader.join(5000);
         
         if (exitCode != 0) {
             throw new Exception("提取完整包失败: exit code " + exitCode);
@@ -1152,11 +1306,14 @@ public class OtaMergeActivity extends Activity {
 
     /** 更新通知栏进度（每次状态变化时调用） */
     private void updateNotification(String status, int progress) {
-        androidx.core.app.NotificationCompat.Builder builder = new androidx.core.app.NotificationCompat.Builder(this, MergeSession.CHANNEL_ID)
+        // 格式：[进度%] 状态文本
+        String contentText = progress > 0 ? String.format("[%d%%] %s", progress, status) : status;
+        
+        // 使用系统原生 Notification.Builder（和下载管理器一致）
+        android.app.Notification.Builder builder = new android.app.Notification.Builder(this, MergeSession.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("OTA 增量包合并")
-            .setContentText(status)
-            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
+            .setContentText(contentText)
             .setOngoing(MergeSession.running && progress < 100)
             .setProgress(100, progress, false);
 
@@ -1168,15 +1325,22 @@ public class OtaMergeActivity extends Activity {
             android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
         builder.setContentIntent(pendingIntent);
 
-        androidx.core.app.NotificationManagerCompat notificationManager = 
-            androidx.core.app.NotificationManagerCompat.from(this);
-        notificationManager.notify(MergeSession.NOTIFICATION_ID, builder.build());
+        // 使用系统原生 NotificationManager（和下载管理器一致）
+        android.app.NotificationManager notificationManager = 
+            (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (notificationManager != null) {
+            try {
+                notificationManager.notify(MergeSession.NOTIFICATION_ID, builder.build());
+            } catch (Exception ignored) { }
+        }
     }
 
     /** 取消通知（任务完成后用户可手动清除，或 APP 退出时清理） */
     private void cancelNotification() {
-        androidx.core.app.NotificationManagerCompat notificationManager = 
-            androidx.core.app.NotificationManagerCompat.from(this);
-        notificationManager.cancel(MergeSession.NOTIFICATION_ID);
+        android.app.NotificationManager notificationManager = 
+            (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (notificationManager != null) {
+            notificationManager.cancel(MergeSession.NOTIFICATION_ID);
+        }
     }
 }
