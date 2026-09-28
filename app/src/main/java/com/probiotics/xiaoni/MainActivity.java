@@ -653,7 +653,8 @@ public class MainActivity extends BaseActivity {
           addNavigationItem(items, t("首页", "Home"), 0, v -> selectTab(0));
          addNavigationItem(items, t("设置", "Settings"), 1, v -> selectTab(1));
            addNavigationItem(items, t("ROM", "ROM"), 2, v -> selectTab(2));
-           addNavigationItem(items, t("终端", "Terminal"), 3, v -> selectTab(3));
+           addNavigationItem(items, t("OTG", "OTG"), 3, v -> selectTab(3));
+           addNavigationItem(items, t("终端", "Terminal"), 4, v -> selectTab(4));
           liquidIndicator = new LiquidGlassIndicator(this);
           liquidIndicator.setElevation(dp(4));
           navigation.addView(liquidIndicator, new FrameLayout.LayoutParams(dp(62), dp(48)));
@@ -896,10 +897,10 @@ public class MainActivity extends BaseActivity {
         private void selectTab(int tab) {
              if (tab == currentTab) {
                  if (tab == 0) scrollToTop();
-                 if (tab == 3) refreshMorePage();
+                 if (tab == 4) refreshMorePage();
                 return;
             }
-            View next = tab == 0 ? homeScroll : tab == 1 ? buildSettingsPage() : tab == 2 ? buildRomPage() : buildMorePage();
+            View next = tab == 0 ? homeScroll : tab == 1 ? buildSettingsPage() : tab == 2 ? buildRomPage() : tab == 3 ? buildOtgPage() : buildMorePage();
           if (tab != 0) {
               ScrollView pageScroll = new ScrollView(this);
               pageScroll.setFillViewport(true);
@@ -949,6 +950,19 @@ public class MainActivity extends BaseActivity {
                   .rotationY(0f)
                   .setDuration(480)
                   .setInterpolator(new android.view.animation.DecelerateInterpolator(2.2f))
+                  .start();
+          } else if (tab == 3) {
+              // OTG页：从底部弹起 + 弹性缩放
+              next.setTranslationY(dp(400));
+              next.setScaleX(0.7f);
+              next.setScaleY(0.7f);
+              next.animate()
+                  .alpha(1f)
+                  .translationY(0f)
+                  .scaleX(1f)
+                  .scaleY(1f)
+                  .setDuration(470)
+                  .setInterpolator(new android.view.animation.OvershootInterpolator(1.5f))
                   .start();
           } else {
               // 更多页：从右侧弹入 + X轴翻转
@@ -1290,7 +1304,232 @@ public class MainActivity extends BaseActivity {
          heading.setTypeface(null, 1);
          heading.setPadding(dp(14), 0, dp(14), 0);
          page.addView(heading, new LinearLayout.LayoutParams(-1, dp(58)));
-         return page;
+          return page;
+       }
+
+      private LinearLayout buildOtgPage() {
+          LinearLayout content = new LinearLayout(this);
+          content.setOrientation(LinearLayout.VERTICAL);
+          content.setPadding(dp(20), dp(18), dp(20), dp(32));
+          content.setBackgroundResource(R.drawable.liquid_backdrop);
+
+          // 顶部标题
+          TextView title = new TextView(this);
+          title.setText(t("OTG 工具箱", "OTG Toolbox"));
+          title.setTextSize(24);
+          title.setTextColor(Color.WHITE);
+          title.setTypeface(null, 1);
+          title.setGravity(Gravity.CENTER_VERTICAL);
+          title.setPadding(dp(12), 0, 0, 0);
+          title.setBackgroundResource(R.drawable.liquid_glass_panel);
+          content.addView(title, new LinearLayout.LayoutParams(-1, dp(58)));
+
+          // 顶部 Tab 选择器容器（仿 OPPO 查询界面胶囊样式）
+          FrameLayout tabFrame = new FrameLayout(this);
+          tabFrame.setBackgroundResource(R.drawable.liquid_glass_panel);
+          tabFrame.setPadding(dp(8), dp(8), dp(8), dp(8));
+          LinearLayout.LayoutParams tabFrameParams = new LinearLayout.LayoutParams(-1, dp(60));
+          tabFrameParams.topMargin = dp(16);
+          content.addView(tabFrame, tabFrameParams);
+
+          // Tab 按钮容器
+          LinearLayout tabBar = new LinearLayout(this);
+          tabBar.setOrientation(LinearLayout.HORIZONTAL);
+          tabBar.setGravity(Gravity.CENTER);
+          tabFrame.addView(tabBar, new FrameLayout.LayoutParams(-1, -1));
+
+          // 选中指示器（白色胶囊）
+          View tabIndicator = new View(this);
+          GradientDrawable indicatorBg = new GradientDrawable();
+          indicatorBg.setCornerRadius(dp(22));
+          indicatorBg.setColor(0xCCFFFFFF);
+          tabIndicator.setBackground(indicatorBg);
+          tabIndicator.setElevation(dp(2));
+          tabFrame.addView(tabIndicator, new FrameLayout.LayoutParams(dp(80), dp(44)));
+
+          // 定义 Tab 标签
+          String[] tabLabels = {
+              t("设备", "Device"),
+              t("文件", "Files"),
+              t("应用", "Apps"),
+              t("命令", "Shell"),
+              t("备份", "Backup")
+          };
+
+          // 添加 Tab 按钮
+          for (int i = 0; i < tabLabels.length; i++) {
+              final int tabIndex = i;
+              TextView tab = new TextView(this);
+              tab.setText(tabLabels[i]);
+              tab.setTextSize(14);
+              tab.setTextColor(0xffffffff);
+              tab.setGravity(Gravity.CENTER);
+              tab.setSingleLine(true);
+              tab.setTypeface(null, 0);
+              tab.setOnClickListener(v -> {
+                  // TODO: 切换 Tab 内容
+                  animateOtgTabIndicator(tabFrame, tabIndicator, tabIndex, tabLabels.length);
+                  updateOtgTabContent(content, tabIndex);
+              });
+              LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(0, -1, 1f);
+              tabBar.addView(tab, tabParams);
+          }
+
+          // 初始化指示器位置
+          tabIndicator.post(() -> {
+              int itemWidth = tabBar.getWidth() / tabLabels.length;
+              FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) tabIndicator.getLayoutParams();
+              params.width = itemWidth - dp(8);
+              params.leftMargin = dp(8) + dp(4);
+              tabIndicator.setLayoutParams(params);
+          });
+
+          // 内容区域占位符
+          LinearLayout contentArea = new LinearLayout(this);
+          contentArea.setOrientation(LinearLayout.VERTICAL);
+          contentArea.setId(View.generateViewId());
+          LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(-1, -2);
+          contentParams.topMargin = dp(16);
+          content.addView(contentArea, contentParams);
+
+          // 默认显示设备连接页面
+          updateOtgTabContent(content, 0);
+
+          return content;
+      }
+
+      private void animateOtgTabIndicator(FrameLayout tabFrame, View indicator, int targetTab, int totalTabs) {
+          int itemWidth = tabFrame.getWidth() / totalTabs;
+          int targetLeft = dp(8) + (itemWidth * targetTab) + dp(4);
+          
+          FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) indicator.getLayoutParams();
+          params.width = itemWidth - dp(8);
+          
+          indicator.animate()
+              .translationX(targetLeft - params.leftMargin)
+              .setDuration(280)
+              .setInterpolator(new android.view.animation.DecelerateInterpolator(1.5f))
+              .start();
+          
+          Haptics.perform(indicator);
+      }
+
+      private void updateOtgTabContent(LinearLayout parent, int tabIndex) {
+          // 查找内容区域
+          LinearLayout contentArea = null;
+          for (int i = 0; i < parent.getChildCount(); i++) {
+              View child = parent.getChildAt(i);
+              if (child instanceof LinearLayout && child.getId() != View.NO_ID) {
+                  contentArea = (LinearLayout) child;
+                  break;
+              }
+          }
+          if (contentArea == null) return;
+
+          contentArea.removeAllViews();
+
+          switch (tabIndex) {
+              case 0: // 设备连接
+                  contentArea.addView(buildOtgDevicePanel());
+                  break;
+              case 1: // 文件管理
+                  contentArea.addView(buildOtgFilesPanel());
+                  break;
+              case 2: // 应用管理
+                  contentArea.addView(buildOtgAppsPanel());
+                  break;
+              case 3: // 命令行
+                  contentArea.addView(buildOtgShellPanel());
+                  break;
+              case 4: // 备份
+                  contentArea.addView(buildOtgBackupPanel());
+                  break;
+          }
+      }
+
+      private View buildOtgDevicePanel() {
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(16), dp(16), dp(16), dp(16));
+          panel.setBackgroundResource(R.drawable.liquid_glass_panel);
+
+          TextView hint = new TextView(this);
+          hint.setText(t("连接 OTG 设备或开启无线调试", "Connect OTG device or enable wireless debugging"));
+          hint.setTextSize(16);
+          hint.setTextColor(0xffffffff);
+          hint.setGravity(Gravity.CENTER);
+          panel.addView(hint);
+
+          // TODO: 添加设备列表、连接按钮等
+          TextView todo = new TextView(this);
+          todo.setText(t("功能开发中...", "Under development..."));
+          todo.setTextSize(14);
+          todo.setTextColor(0xaaffffff);
+          todo.setGravity(Gravity.CENTER);
+          todo.setPadding(0, dp(20), 0, 0);
+          panel.addView(todo);
+
+          return panel;
+      }
+
+      private View buildOtgFilesPanel() {
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(16), dp(16), dp(16), dp(16));
+          panel.setBackgroundResource(R.drawable.liquid_glass_panel);
+
+          TextView hint = new TextView(this);
+          hint.setText(t("文件管理", "File Manager"));
+          hint.setTextSize(16);
+          hint.setTextColor(0xffffffff);
+          panel.addView(hint);
+
+          return panel;
+      }
+
+      private View buildOtgAppsPanel() {
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(16), dp(16), dp(16), dp(16));
+          panel.setBackgroundResource(R.drawable.liquid_glass_panel);
+
+          TextView hint = new TextView(this);
+          hint.setText(t("应用管理", "App Manager"));
+          hint.setTextSize(16);
+          hint.setTextColor(0xffffffff);
+          panel.addView(hint);
+
+          return panel;
+      }
+
+      private View buildOtgShellPanel() {
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(16), dp(16), dp(16), dp(16));
+          panel.setBackgroundResource(R.drawable.liquid_glass_panel);
+
+          TextView hint = new TextView(this);
+          hint.setText(t("ADB Shell", "ADB Shell"));
+          hint.setTextSize(16);
+          hint.setTextColor(0xffffffff);
+          panel.addView(hint);
+
+          return panel;
+      }
+
+      private View buildOtgBackupPanel() {
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(16), dp(16), dp(16), dp(16));
+          panel.setBackgroundResource(R.drawable.liquid_glass_panel);
+
+          TextView hint = new TextView(this);
+          hint.setText(t("备份/恢复", "Backup/Restore"));
+          hint.setTextSize(16);
+          hint.setTextColor(0xffffffff);
+          panel.addView(hint);
+
+          return panel;
       }
 
       private LinearLayout buildMorePage() {
