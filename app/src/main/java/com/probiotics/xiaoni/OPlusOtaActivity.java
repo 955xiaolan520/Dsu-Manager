@@ -59,7 +59,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** OPlus 官方更新查询：全量 OTA / 增量包 / 降级包 / Realme EDL，四种协议各自独立表单。 */
-public final class OPlusOtaActivity extends Activity {
+public final class OPlusOtaActivity extends BaseActivity {
     private static final String[] REGION_CODES = {"auto", "cn", "cn_cmcc", "in", "eu", "sg", "ru", "tr", "th", "gl", "tw", "my", "vn", "id", "sa", "mea", "ph", "la", "br", "roe"};
     private static final String[] REGION_LABELS = {"通用地区（自动匹配全部地区）", "中国大陆 CN", "中国移动 CN CMCC", "印度 IN", "欧洲 EU", "新加坡 SG", "俄罗斯 RU", "土耳其 TR", "泰国 TH", "全球海外 GL", "中国台湾 TW", "马来西亚 MY", "越南 VN", "印度尼西亚 ID", "沙特 SA", "中东和非洲 MEA", "菲律宾 PH", "拉丁美洲 LA", "巴西 BR", "欧洲其他 ROE"};
     private static final String[] EDL_REGIONS = {"中国大陆 (domestic)", "欧盟 / 英国 (GDPR)", "其他地区 (export)"};

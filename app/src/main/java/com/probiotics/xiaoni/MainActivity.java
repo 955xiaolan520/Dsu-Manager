@@ -30,12 +30,13 @@ import java.util.ArrayList;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipInputStream;
 import java.io.*;
 import java.net.HttpURLConnection;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-public class MainActivity extends Activity {
+public class MainActivity extends BaseActivity {
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
         Haptics.onTouch(getWindow().getDecorView(), event);
         return super.dispatchTouchEvent(event);
@@ -150,6 +151,9 @@ public class MainActivity extends Activity {
             buildUi();
             if (rootAuthorized) refreshStatus();
         }
+        // 应用窗口透明设置
+        boolean isTransparent = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("window_transparent_bg", false);
+        applyWindowTransparency(isTransparent);
         bindRootService();
         if (!rootAuthorized) refreshRootStatus();
         if (currentTab == 3) refreshMorePage();
@@ -1522,6 +1526,30 @@ public class MainActivity extends Activity {
 
       private LinearLayout buildSettingsPage() {
          LinearLayout page = page(t("设置", "Settings"));
+         
+         // 在标题栏添加透明开关
+         TextView heading = (TextView) page.getChildAt(0);
+         LinearLayout titleBar = new LinearLayout(this);
+         titleBar.setOrientation(LinearLayout.HORIZONTAL);
+         titleBar.setGravity(Gravity.CENTER_VERTICAL);
+         titleBar.setPadding(dp(14), 0, dp(14), 0);
+         page.removeViewAt(0);
+         titleBar.addView(heading, new LinearLayout.LayoutParams(0, dp(58), 1));
+         
+         // 透明开关（右侧）
+         Switch transparencySwitch = new Switch(this);
+         transparencySwitch.setText(t("透明", "Trans"));
+         transparencySwitch.setTextColor(Color.WHITE);
+         transparencySwitch.setTextSize(13);
+         boolean isTransparent = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("window_transparent_bg", false);
+         transparencySwitch.setChecked(isTransparent);
+         transparencySwitch.setOnCheckedChangeListener((button, checked) -> {
+             getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("window_transparent_bg", checked).apply();
+             applyWindowTransparency(checked);
+         });
+         titleBar.addView(transparencySwitch, new LinearLayout.LayoutParams(-2, -2));
+         page.addView(titleBar, 0, new LinearLayout.LayoutParams(-1, dp(58)));
+         
          LinearLayout card = new LinearLayout(this);
          card.setOrientation(LinearLayout.VERTICAL);
          card.setPadding(dp(14), dp(10), dp(14), dp(10));
@@ -1815,6 +1843,38 @@ public class MainActivity extends Activity {
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
+    private void applyWindowTransparency(boolean transparent) {
+        if (transparent) {
+            try {
+                // 获取壁纸管理器
+                android.app.WallpaperManager wallpaperManager = android.app.WallpaperManager.getInstance(this);
+                android.app.WallpaperInfo wallpaperInfo = wallpaperManager.getWallpaperInfo();
+                
+                // 检查是否为动态壁纸
+                if (wallpaperInfo != null && wallpaperInfo.getPackageName() != null) {
+                    // 动态壁纸：添加 FLAG_SHOW_WALLPAPER
+                    getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
+                } else {
+                    // 静态壁纸：获取壁纸 Drawable 并设置为窗口背景
+                    android.graphics.drawable.Drawable wallpaperDrawable = wallpaperManager.getDrawable();
+                    getWindow().setBackgroundDrawable(wallpaperDrawable);
+                }
+                
+                // 设置窗口背景为透明（必须）
+                getWindow().getDecorView().setBackgroundResource(android.R.color.transparent);
+            } catch (Exception e) {
+                e.printStackTrace();
+                // 如果获取壁纸失败，设置透明背景
+                getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            }
+        } else {
+            // 恢复默认背景
+            getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
+            getWindow().setBackgroundDrawableResource(R.drawable.liquid_backdrop);
+            getWindow().getDecorView().setBackgroundResource(R.drawable.liquid_backdrop);
+        }
+    }
+
     private void showAboutDialog() {
            String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.8",
                 "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.8");
@@ -1966,7 +2026,60 @@ public class MainActivity extends Activity {
                     .showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
         }, 200);
     }
-     private void chooseZip(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("application/zip"); i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/zip","application/octet-stream"}); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_ZIP); }
+     private void chooseZip() {
+         // 检查存储空间
+         if (!checkStorageSpaceWithWarning()) {
+             return;
+         }
+         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+         i.setType("application/zip");
+         i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/octet-stream"});
+         i.addCategory(Intent.CATEGORY_OPENABLE);
+         startActivityForResult(i, PICK_ZIP);
+     }
+     
+     private boolean checkStorageSpaceWithWarning() {
+         try {
+             android.os.StatFs statFs = new android.os.StatFs("/data");
+             long totalBytes = statFs.getTotalBytes();
+             long freeBytes = statFs.getAvailableBytes();
+             float freePercent = (float) freeBytes / totalBytes * 100;
+             
+             if (freePercent < 40) {
+                 String message = t(
+                     "您的设备可用存储空间少于 40%，安装过程可能会报错，请释放更多空间后重试。\n\n" +
+                     "总容量: " + formatSizeBytesHuman(totalBytes) + "\n" +
+                     "可用: " + formatSizeBytesHuman(freeBytes) + " (" + String.format("%.1f%%", freePercent) + ")",
+                     "Your device has less than 40% free storage. Installation may fail. Please free up more space.\n\n" +
+                     "Total: " + formatSizeBytesHuman(totalBytes) + "\n" +
+                     "Available: " + formatSizeBytesHuman(freeBytes) + " (" + String.format("%.1f%%", freePercent) + ")"
+                 );
+                 
+                 final boolean[] shouldContinue = {false};
+                 AlertDialog dialog = new AlertDialog.Builder(this)
+                     .setTitle(t("可用存储空间不足", "Insufficient Storage"))
+                     .setMessage(message)
+                     .setPositiveButton(t("仍要继续", "Continue Anyway"), (d, w) -> {
+                         shouldContinue[0] = true;
+                         d.dismiss();
+                         // 继续选择文件
+                         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                         i.setType("application/zip");
+                         i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/octet-stream"});
+                         i.addCategory(Intent.CATEGORY_OPENABLE);
+                         startActivityForResult(i, PICK_ZIP);
+                     })
+                     .setNegativeButton(t("取消", "Cancel"), null)
+                     .create();
+                 dialog.show();
+                 return false;
+             }
+             return true;
+         } catch (Exception e) {
+             e.printStackTrace();
+             return true; // 如果检查失败，允许继续
+         }
+     }
      private void selectInstallSize(int index, String label){
          selectedInstallSize = index;
          pendingSizeLabel = label;
@@ -2069,143 +2182,164 @@ public class MainActivity extends Activity {
             return "";
         }
     }
+    
+    private volatile DSUInstaller currentInstaller;
+    
     private String installZipThroughRootService(String path) {
         IPrivilegedService service = privilegedService;
-         if (service == null) return t("ROOT Installer 尚未连接，请先完成 ROOT 授权后重试", "ROOT installer is not connected. Grant ROOT access and try again.");
-        boolean started = false;
-        boolean completed = false;
-         try (ZipFile zip = new ZipFile(path)) {
-              runOnUiThread(() -> stageBegin("create", t("创建 Dynamic System", "Creating Dynamic System")));
-              String cleanupError = service.cleanupDsuBackingImages();
-              if (cleanupError != null && !cleanupError.isEmpty()) return t("清理旧 DSU 镜像失败: " + cleanupError, "Failed to clean old DSU images: " + cleanupError);
-               if (!service.startInstallation(DSU_SLOT)) return t("Dynamic System 拒绝开始安装，请检查系统 Dynamic System 权限", "Dynamic System rejected the installation. Check Dynamic System permissions.");
-            started = true;
-              List<ZipEntry> imageEntries = new ArrayList<>();
-              java.util.Enumeration<? extends ZipEntry> zipEntries = zip.entries();
-              while (zipEntries.hasMoreElements()) {
-                  ZipEntry candidate = zipEntries.nextElement();
-                  String name = new File(candidate.getName()).getName();
-                  if (!candidate.isDirectory() && name.toLowerCase(Locale.US).endsWith(".img")) {
-                      String partition = name.substring(0, name.length() - 4).toLowerCase(Locale.US);
-                      if (partition.matches("[A-Za-z0-9_-]+") && !partition.isEmpty()) imageEntries.add(candidate);
-                  }
-              }
-              runOnUiThread(() -> stageDone("create", t("创建 Dynamic System", "Creating Dynamic System")));
-              boolean wroteImage = false;
-              java.util.HashSet<String> partitionNames = new java.util.HashSet<>();
-              for (ZipEntry entry : imageEntries) {
-                  String fileName = new File(entry.getName()).getName();
-                  String partitionName = fileName.substring(0, fileName.length() - 4).toLowerCase(Locale.US);
-                  if (!partitionNames.add(partitionName)) return t("ZIP 中存在重复分区镜像: " + fileName, "The ZIP contains a duplicate partition image: " + fileName);
-                  final String extractId = "ext_" + partitionName;
-                  final String writeId = "wr_" + partitionName;
-                  final long entrySize = entry.getSize();
-                  final String extractLabel = t("解压 " + partitionName, "Extracting " + partitionName);
-                  final String writeLabel = t("写入 " + partitionName, "Writing " + partitionName);
-                  // v3.9.7：回退 v3.8.6 老流程 —— 先把 ZIP 条目完整解压到临时文件
-                  // （「解压」条独立走完 0-100%），解压完成后再建分区、经 ashmem 通道写入
-                  // （「写入」条独立走完 0-100%）。两个阶段严格串行，不再边解压边写入。
-                  runOnUiThread(() -> stageBegin(extractId, extractLabel));
-                  File extracted = File.createTempFile("dsu-image-", ".img", getCacheDir());
-                  try {
-                      try (InputStream input = zip.getInputStream(entry);
-                           FileOutputStream output = new FileOutputStream(extracted)) {
-                          byte[] buffer = new byte[1024 * 1024];
-                          int count;
-                          long copied = 0;
-                          long lastUiAt = 0;
-                          int lastPct = -1;
-                          while ((count = input.read(buffer)) != -1) {
-                              output.write(buffer, 0, count);
-                              copied += count;
-                              if (entrySize > 0) {
-                                  int pct = (int) Math.min(100, copied * 100 / entrySize);
-                                  long now = System.currentTimeMillis();
-                                  if (pct != lastPct && now - lastUiAt >= 150) {
-                                      lastPct = pct;
-                                      lastUiAt = now;
-                                      final int p = pct;
-                                      runOnUiThread(() -> stageUpdate(extractId, p));
-                                  }
-                              }
-                          }
-                      }
-                      long size = extracted.length();
-                      if (size <= 0) return t("镜像为空: " + fileName, "The image is empty: " + fileName);
-                      runOnUiThread(() -> stageDone(extractId, extractLabel));
-                      wroteImage = true;
-                      boolean userdata = partitionName.equalsIgnoreCase("userdata");
-                      long partitionSize = userdata ? Math.max(userdataSizeBytes, size) : size;
-                      int status = service.createPartition(partitionName, partitionSize, !userdata);
-                      if (status != 0) return gsiStatusDetail(partitionName, status, partitionSize);
-                      runOnUiThread(() -> stageBegin(writeId, writeLabel));
-                      try (InputStream input = new FileInputStream(extracted)) {
-                          if (!streamEntry(input, service, partitionName, size, writeId))
-                              return t("写入镜像失败: " + fileName, "Failed to write image: " + fileName);
-                      }
-                      if (!service.closePartition()) return t("关闭分区失败: " + partitionName, "Failed to close partition: " + partitionName);
-                      runOnUiThread(() -> stageDone(writeId, writeLabel));
-                  } finally {
-                      if (extracted.exists()) extracted.delete();
-                  }
-             }
-              if (!wroteImage) return t("ZIP 中没有可用的 GSI img 镜像", "The ZIP contains no usable GSI .img images");
-              if (!partitionNames.contains("userdata")) {
-                  runOnUiThread(() -> stageBegin("userdata", t("创建 userdata", "Creating userdata")));
-                  long userdataSize = (userdataSizeBytes + 511L) & ~511L;
-                  int status = service.createPartition("userdata", userdataSize, false);
-                  if (status != 0) return gsiStatusDetail("userdata", status, userdataSize);
-                  if (!service.closePartition()) return t("关闭 userdata 分区失败", "Failed to close userdata partition");
-                  runOnUiThread(() -> stageDone("userdata", t("创建 userdata", "Creating userdata")));
-              }
-             runOnUiThread(() -> stageBegin("finish", t("完成安装", "Finishing installation")));
-             if (!service.finishInstallation()) return t("Dynamic System 未能完成安装", "Dynamic System could not finish installation");
-              if (!service.setEnable(true, false)) return t("GSI 已安装，但启用 DSU 失败", "GSI installed, but DSU could not be enabled");
-             completed = true;
-              return t("GSI 已安装并启用 DSU，请点击“重启到 DSU”进入系统", "GSI installed and DSU enabled. Tap \"Reboot to DSU\" to enter the system.");
-        } catch (Exception e) {
-             return t("安装失败: ", "Installation failed: ") + e.getMessage();
-        } finally {
-            if (started && !completed) try { service.abort(); } catch (Exception ignored) { }
+        if (service == null) return t("ROOT Installer 尚未连接，请先完成 ROOT 授权后重试", "ROOT installer is not connected. Grant ROOT access and try again.");
+        
+        final String[] result = {null};
+        
+        // 清空进度UI
+        runOnUiThread(() -> {
+            if (stageHost != null) stageHost.removeAllViews();
+            partitionProgressViews.clear(); // 清空所有分区进度条
+        });
+        
+        // 创建安装器 (使用 Kotlin 版本)
+        long userdataSize = (userdataSizeBytes + 511L) & ~511L;
+        currentInstaller = new DSUInstaller(
+            service,
+            userdataSize,
+            path,
+            error -> { result[0] = error; return kotlin.Unit.INSTANCE; },
+            (progress, partition) -> { updateInstallProgress(partition, progress); return kotlin.Unit.INSTANCE; },
+            () -> { result[0] = t("GSI 已安装并启用 DSU，请点击 '重启到 DSU' 进入系统", "GSI installed and DSU enabled. Tap 'Reboot to DSU' to enter the system."); return kotlin.Unit.INSTANCE; }
+        );
+        
+        // 在后台线程执行安装
+        Thread installThread = new Thread(() -> {
+            currentInstaller.startInstallation();
+        });
+        installThread.start();
+        
+        // 等待完成
+        try {
+            installThread.join();
+        } catch (InterruptedException e) {
+            currentInstaller.cancel();
+            return t("安装被中断", "Installation interrupted");
         }
+        
+        currentInstaller = null;
+        return result[0];
     }
-     /**
-      * v3.9.7：回退 v3.8.6 的 ashmem 写入通道 —— 4MiB 共享内存分块 submitFromAshmem。
-      * 进度按「写入 <分区>」阶段内真实字节推进（0-100%）。
-      */
-     private boolean streamEntry(InputStream input, IPrivilegedService service, String partition, long totalSize, String stageId) throws Exception {
-         final int bufferSize = 4 * 1024 * 1024;
-          try (SharedMemory memory = SharedMemory.create("tianming-dsu", bufferSize)) {
-              try (ParcelFileDescriptor fd = sharedMemoryFd(memory)) {
-                  if (!service.setAshmem(fd, bufferSize)) return false;
-                  ByteBuffer mapped = memory.mapReadWrite();
-                  try {
-                      byte[] buffer = new byte[1024 * 1024];
-                      int count;
-                      long written = 0;
-                      long lastUiAt = 0;
-                      while ((count = input.read(buffer)) != -1) {
-                          mapped.position(0);
-                          mapped.put(buffer, 0, count);
-                          if (!service.submitFromAshmem(count)) return false;
-                          written += count;
-                          if (totalSize > 0) {
-                              long now = System.currentTimeMillis();
-                              if (now - lastUiAt >= 150) {
-                                  lastUiAt = now;
-                                  final int p = (int) Math.min(100, written * 100 / totalSize);
-                                  runOnUiThread(() -> stageUpdate(stageId, p));
-                              }
-                          }
-                      }
-                      runOnUiThread(() -> stageUpdate(stageId, 100));
-                      return true;
-                  } finally {
-                      memory.unmap(mapped);
-                  }
-              }
-          }
-     }
+    
+    /**
+     * 更新统一的安装进度
+     * @param partition 当前分区名称
+     * @param progress 进度 0.0 - 1.0
+     */
+    private final java.util.HashMap<String, View> partitionProgressViews = new java.util.HashMap<>(); // 每个分区一个进度条
+    
+    private void updateInstallProgress(String partition, float progress) {
+        runOnUiThread(() -> {
+            View progressView = partitionProgressViews.get(partition);
+            
+            if (progressView == null && stageHost != null) {
+                // 为该分区创建新的进度条
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.VERTICAL);
+                row.setPadding(dp(16), dp(12), dp(16), dp(12));
+                
+                // 创建圆角背景
+                android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
+                background.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+                background.setColor(0xF0FFFFFF); // 半透明白色
+                background.setCornerRadius(dp(16)); // 16dp 圆角
+                row.setBackground(background);
+                
+                // 添加阴影效果
+                if (android.os.Build.VERSION.SDK_INT >= 21) {
+                    row.setElevation(dp(4));
+                }
+                
+                LinearLayout topRow = new LinearLayout(this);
+                topRow.setOrientation(LinearLayout.HORIZONTAL);
+                
+                TextView label = new TextView(this);
+                label.setId(android.R.id.text1);
+                label.setText(partition);
+                label.setTextSize(16);
+                label.setTextColor(0xFF333333); // 深灰色
+                label.setTypeface(null, android.graphics.Typeface.BOLD);
+                LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                label.setLayoutParams(labelParams);
+                topRow.addView(label);
+                
+                TextView pct = new TextView(this);
+                pct.setId(android.R.id.text2);
+                pct.setText(String.format(Locale.US, "%d%%", (int)(progress * 100)));
+                pct.setTextSize(16);
+                pct.setTextColor(0xFF333333); // 深灰色
+                pct.setTypeface(null, android.graphics.Typeface.BOLD);
+                topRow.addView(pct);
+                
+                row.addView(topRow);
+                
+                ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+                bar.setId(android.R.id.progress);
+                bar.setIndeterminate(false);
+                bar.setMax(100);
+                bar.setProgress((int)(progress * 100));
+                
+                // 圆角进度条背景
+                android.graphics.drawable.GradientDrawable progressBg = new android.graphics.drawable.GradientDrawable();
+                progressBg.setCornerRadius(dp(4)); // 圆角
+                progressBg.setColor(0xFFE0E0E0); // 浅灰色背景
+                
+                // 圆角进度条前景（渐变色）
+                android.graphics.drawable.GradientDrawable progressFg = new android.graphics.drawable.GradientDrawable();
+                progressFg.setCornerRadius(dp(4));
+                progressFg.setColors(new int[]{0xFF64B5F6, 0xFF1976D2}); // 浅蓝到深蓝渐变
+                progressFg.setOrientation(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT);
+                
+                android.graphics.drawable.ClipDrawable clip = new android.graphics.drawable.ClipDrawable(
+                    progressFg, android.view.Gravity.LEFT, android.graphics.drawable.ClipDrawable.HORIZONTAL);
+                
+                android.graphics.drawable.LayerDrawable layers = new android.graphics.drawable.LayerDrawable(
+                    new android.graphics.drawable.Drawable[]{progressBg, clip});
+                layers.setId(0, android.R.id.background);
+                layers.setId(1, android.R.id.progress);
+                
+                bar.setProgressDrawable(layers);
+                
+                LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(8));
+                barParams.topMargin = dp(8);
+                bar.setLayoutParams(barParams);
+                row.addView(bar);
+                
+                // 添加间距
+                LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                rowParams.bottomMargin = dp(12);
+                row.setLayoutParams(rowParams);
+                
+                stageHost.addView(row);
+                partitionProgressViews.put(partition, row);
+                progressView = row;
+            }
+            
+            // 更新进度
+            if (progressView != null) {
+                TextView pct = progressView.findViewById(android.R.id.text2);
+                ProgressBar bar = progressView.findViewById(android.R.id.progress);
+                
+                if (pct != null) pct.setText(String.format(Locale.US, "%d%%", (int)(progress * 100)));
+                if (bar != null) {
+                    bar.setIndeterminate(false);
+                    bar.setMax(100);
+                    bar.setProgress((int)(progress * 100));
+                }
+            }
+        });
+    }
+    
+    /**
+     * 检查是否应该安装该文件
+     */
 
      /** v3.9.6：gsid INSTALL_* 状态码 → 可读诊断（含分区尺寸与 /data 可用空间） */
      private String gsiStatusDetail(String partition, int status, long sizeBytes) {

@@ -4,9 +4,11 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ClipDrawable;
@@ -16,9 +18,11 @@ import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.DocumentsContract;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -29,6 +33,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import com.topjohnwu.superuser.ipc.RootService;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -41,17 +46,24 @@ import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.InputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
-public class OtaMergeActivity extends Activity {
+public class OtaMergeActivity extends BaseActivity {
     private static final String BASE_DIR = "/storage/emulated/0/Download/DsuManager/Input";
     private static final String OTA_DIR = BASE_DIR + "/ota";
     private static final String PATCH_DIR = BASE_DIR + "/patch";
@@ -67,6 +79,17 @@ public class OtaMergeActivity extends Activity {
     private Button cancelButton;
     private Button cleanButton;
     private Button refreshButton;
+    
+    // Root 服务
+    private IPrivilegedService privilegedService;
+    private final ServiceConnection rootConnection = new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName name, IBinder service) {
+            privilegedService = IPrivilegedService.Stub.asInterface(service);
+        }
+        @Override public void onServiceDisconnected(ComponentName name) {
+            privilegedService = null;
+        }
+    };
     
     // WakeLock 防止 CPU 休眠
     private PowerManager.WakeLock wakeLock;
@@ -167,6 +190,8 @@ public class OtaMergeActivity extends Activity {
         buildUi();
         initDirectories();
         createNotificationChannel();
+        // 绑定 Root 服务
+        RootService.bind(new Intent(this, PrivilegedRootService.class), rootConnection);
     }
 
     @Override
@@ -199,6 +224,10 @@ public class OtaMergeActivity extends Activity {
             MergeSession.ui = null;
         }
         saveState();
+        // 解绑 Root 服务
+        try {
+            RootService.unbind(rootConnection);
+        } catch (Exception ignored) {}
         // 注意：不在这里释放 WakeLock，因为任务可能还在后台运行
         // WakeLock 只在任务完成/取消/失败时由 finally 块释放
     }
@@ -339,8 +368,8 @@ public class OtaMergeActivity extends Activity {
         TextView stepsContent = new TextView(this);
         stepsContent.setText("1. 旧版完整包 → /Download/DsuManager/Input/ota/\n" +
                 "2. 增量包 → /Download/DsuManager/Input/patch/\n" +
-                "3. 点击「开始合并」等待完成\n" +
-                "4. 合并后镜像 → work/merged_images/");
+                "3. 自动识别 .zip、.bin 或所有 .img 文件\n" +
+                "4. 点击「开始合并」等待完成");
         stepsContent.setTextSize(13);
         stepsContent.setTextColor(0xFF2C3E50);
         stepsContent.setLineSpacing(dp(4), 1.0f);
@@ -668,50 +697,143 @@ public class OtaMergeActivity extends Activity {
                 MergeSession.appendLogWithProgress(5, "查找包文件");
                 MergeSession.postStatus("查找包文件", 5);
                 
-                File[] otaFiles = otaDir.listFiles((dir, name) -> 
-                    name.endsWith(".zip") || name.endsWith(".bin") || name.endsWith(".img"));
-                File[] patchFiles = patchDir.listFiles((dir, name) -> 
-                    name.endsWith(".zip") || name.endsWith(".bin") || name.endsWith(".img"));
+                // 使用 Shell 命令列出文件（绕过 SELinux 限制）
+                MergeSession.appendLog("检查 ota 目录: " + OTA_DIR);
+                List<String> otaFiles = listFilesViaShell(OTA_DIR);
+                MergeSession.appendLog("  文件总数: " + otaFiles.size());
+                
+                if (otaFiles.size() > 0) {
+                    MergeSession.appendLog("  前5个文件:");
+                    for (int i = 0; i < Math.min(5, otaFiles.size()); i++) {
+                        MergeSession.appendLog("    - " + otaFiles.get(i));
+                    }
+                }
+                
+                // 自动识别完整包：zip、bin 或所有 img
+                File fullOta = null;
+                List<String> otaZips = new ArrayList<>();
+                List<String> otaBins = new ArrayList<>();
+                List<String> otaImgs = new ArrayList<>();
+                
+                for (String name : otaFiles) {
+                    String lower = name.toLowerCase();
+                    if (lower.endsWith(".zip")) otaZips.add(name);
+                    else if (lower.endsWith(".bin")) otaBins.add(name);
+                    else if (lower.endsWith(".img")) otaImgs.add(name);
+                }
+                
+                MergeSession.appendLog("扫描结果:");
+                MergeSession.appendLog("  .zip 文件: " + otaZips.size());
+                MergeSession.appendLog("  .bin 文件: " + otaBins.size());
+                MergeSession.appendLog("  .img 文件: " + otaImgs.size());
+                
+                if (otaZips.size() > 0) {
+                    fullOta = new File(otaDir, otaZips.get(0));
+                    MergeSession.appendLog("✓ 找到完整包 ZIP: " + fullOta.getName());
+                } else if (otaBins.size() > 0) {
+                    fullOta = new File(otaDir, otaBins.get(0));
+                    MergeSession.appendLog("✓ 找到完整包 BIN: " + fullOta.getName());
+                } else if (otaImgs.size() > 0) {
+                    fullOta = new File(otaDir, otaImgs.get(0)); // 使用第一个 img 作为标识
+                    MergeSession.appendLog("✓ 找到 " + otaImgs.size() + " 个 IMG 镜像");
+                }
+                
+                // 自动识别增量包：zip、bin 或所有 img
+                File patchZip = null;
+                MergeSession.appendLog("检查 patch 目录: " + PATCH_DIR);
+                List<String> patchFiles = listFilesViaShell(PATCH_DIR);
+                MergeSession.appendLog("  文件总数: " + patchFiles.size());
+                
+                List<String> patchZips = new ArrayList<>();
+                List<String> patchBins = new ArrayList<>();
+                List<String> patchImgs = new ArrayList<>();
+                
+                for (String name : patchFiles) {
+                    String lower = name.toLowerCase();
+                    if (lower.endsWith(".zip")) patchZips.add(name);
+                    else if (lower.endsWith(".bin")) patchBins.add(name);
+                    else if (lower.endsWith(".img")) patchImgs.add(name);
+                }
+                
+                if (patchZips.size() > 0) {
+                    patchZip = new File(patchDir, patchZips.get(0));
+                    MergeSession.appendLog("✓ 找到增量包 ZIP: " + patchZip.getName());
+                } else if (patchBins.size() > 0) {
+                    patchZip = new File(patchDir, patchBins.get(0));
+                    MergeSession.appendLog("✓ 找到增量包 BIN: " + patchZip.getName());
+                } else if (patchImgs.size() > 0) {
+                    patchZip = new File(patchDir, patchImgs.get(0)); // 使用第一个 img 作为标识
+                    MergeSession.appendLog("✓ 找到 " + patchImgs.size() + " 个增量包 IMG");
+                }
 
-                if (otaFiles == null || otaFiles.length == 0) {
-                    MergeSession.appendLog("错误: ota 目录为空");
+                if (fullOta == null) {
+                    MergeSession.appendLog("✗ 错误: ota 目录未找到 .zip、.bin 或 .img 文件");
+                    MergeSession.appendLog("请将文件放到: " + OTA_DIR);
                     MergeSession.postStatus("合并失败: 找不到旧版完整包", 0);
                     return;
                 }
 
-                if (patchFiles == null || patchFiles.length == 0) {
-                    MergeSession.appendLog("错误: patch 目录为空");
+                if (patchZip == null) {
+                    MergeSession.appendLog("✗ 错误: patch 目录为空，找不到增量包");
+                    MergeSession.appendLog("请将增量包（.zip/.bin/.img）放到: " + PATCH_DIR);
                     MergeSession.postStatus("合并失败: 找不到增量包", 0);
                     return;
                 }
-
-                File fullOta = otaFiles[0];
-                File patchZip = patchFiles[0];
                 
                 // 判断完整包类型
                 String fullPackageDesc;
-                if (fullOta.getName().endsWith(".img")) {
-                    File[] allImgs = otaDir.listFiles((dir, name) -> name.endsWith(".img"));
-                    fullPackageDesc = allImgs != null ? allImgs.length + " 个镜像文件" : "镜像文件";
+                boolean otaAlreadyImages = fullOta.getName().endsWith(".img");
+                if (otaAlreadyImages) {
+                    fullPackageDesc = otaImgs.size() + " 个镜像文件";
                 } else {
                     fullPackageDesc = fullOta.getName();
                 }
                 
-                MergeSession.appendLogWithProgress(10, "提取完整包: " + fullPackageDesc);
-                MergeSession.appendLogWithProgress(11, "输出到: base_images/");
-                MergeSession.appendLogWithProgress(15, "正在提取完整包...");
-                MergeSession.postStatus("提取完整包", 15);
+                MergeSession.appendLogWithProgress(10, "准备完整包: " + fullPackageDesc);
+                MergeSession.postStatus("准备完整包", 10);
                 
-                // 步骤1: 提取完整包
+                // 步骤1: 准备基础镜像
                 File baseImagesDir = new File(WORK_DIR, "base_images");
                 deleteDirectory(baseImagesDir);
                 baseImagesDir.mkdirs();
                 
-                extractFullOtaWithProgress(fullOta, baseImagesDir);
+                File[] baseImages;
+                if (otaAlreadyImages) {
+                    // ota 目录已经是 img 文件，直接复制
+                    MergeSession.appendLogWithProgress(15, "复制已有镜像到 base_images/");
+                    // 使用之前通过 Root 服务获取的文件列表
+                    if (otaImgs.size() == 0) {
+                        MergeSession.appendLog("✗ 错误: ota 目录没有找到 img 文件");
+                        MergeSession.postStatus("合并失败", 0);
+                        return;
+                    }
+                    File[] sourceImgs = new File[otaImgs.size()];
+                    for (int i = 0; i < otaImgs.size(); i++) {
+                        sourceImgs[i] = new File(otaDir, otaImgs.get(i));
+                    }
+                    copyFilesWithProgress(sourceImgs, baseImagesDir, 15, 45);
+                    // 使用 Root 服务列出复制后的文件
+                    List<String> copiedFiles = listFilesViaShell(baseImagesDir.getAbsolutePath());
+                    List<String> imgFiles = new ArrayList<>();
+                    for (String name : copiedFiles) {
+                        if (name.toLowerCase().endsWith(".img")) {
+                            imgFiles.add(name);
+                        }
+                    }
+                    baseImages = new File[imgFiles.size()];
+                    for (int i = 0; i < imgFiles.size(); i++) {
+                        baseImages[i] = new File(baseImagesDir, imgFiles.get(i));
+                    }
+                } else {
+                    // 需要从 zip/bin 提取
+                    MergeSession.appendLogWithProgress(15, "正在提取完整包...");
+                    MergeSession.postStatus("提取完整包", 15);
+                    extractFullOtaWithProgress(fullOta, baseImagesDir);
+                    baseImages = baseImagesDir.listFiles((dir, name) -> name.endsWith(".img"));
+                }
                 
-                File[] baseImages = baseImagesDir.listFiles((dir, name) -> name.endsWith(".img"));
                 if (baseImages == null || baseImages.length == 0) {
-                    MergeSession.appendLog("错误: 未能提取任何镜像");
+                    MergeSession.appendLog("✗ 错误: 未能获取任何镜像");
                     MergeSession.postStatus("合并失败", 0);
                     return;
                 }
@@ -720,7 +842,7 @@ public class OtaMergeActivity extends Activity {
                 for (File img : baseImages) {
                     totalSize += img.length();
                 }
-                MergeSession.appendLogWithProgress(45, String.format("✓ 已提取 %d 个镜像 (%dMB)", baseImages.length, totalSize / 1024 / 1024));
+                MergeSession.appendLogWithProgress(45, String.format("✓ 已准备 %d 个镜像 (%dMB)", baseImages.length, totalSize / 1024 / 1024));
 
                 // 步骤2: 创建增量包输出目录
                 MergeSession.appendLogWithProgress(50, "准备增量合并环境");
@@ -747,12 +869,22 @@ public class OtaMergeActivity extends Activity {
                 
                 applyIncrementalPatch(patchZip, oldDir, patchOutputDir);
                 
-                // 步骤5: 验证结果
-                File[] mergedImages = patchOutputDir.listFiles((dir, name) -> name.endsWith(".img"));
-                if (mergedImages == null || mergedImages.length == 0) {
+                // 步骤5: 验证结果（使用 Root 服务列出文件）
+                List<String> mergedFileNames = listFilesViaShell(patchOutputDir.getAbsolutePath());
+                List<String> mergedImgNames = new ArrayList<>();
+                for (String name : mergedFileNames) {
+                    if (name.toLowerCase().endsWith(".img")) {
+                        mergedImgNames.add(name);
+                    }
+                }
+                if (mergedImgNames.size() == 0) {
                     MergeSession.appendLog("错误: 增量合并失败");
                     MergeSession.postStatus("合并失败", 0);
                     return;
+                }
+                File[] mergedImages = new File[mergedImgNames.size()];
+                for (int i = 0; i < mergedImgNames.size(); i++) {
+                    mergedImages[i] = new File(patchOutputDir, mergedImgNames.get(i));
                 }
                 
                 long mergedSize = 0;
@@ -765,20 +897,42 @@ public class OtaMergeActivity extends Activity {
                 MergeSession.postStatus("验证合并结果", 82);
                 MergeSession.appendLogWithProgress(84, String.format("✓ 合并完成！共 %d 个镜像，总大小 %dMB", mergedImages.length, mergedSize / 1024 / 1024));
 
-                // 步骤6: 打包
-                MergeSession.appendLogWithProgress(85, "正在打包 ZIP（仅存储模式）...");
-                MergeSession.postStatus("打包 ZIP", 85);
+                // 步骤6: 移动合并后的镜像到 output 目录
+                MergeSession.appendLogWithProgress(85, "整理输出文件...");
+                MergeSession.postStatus("整理输出文件", 85);
                 
-                String outputName = patchZip.getName().replace(".zip", "_merged.zip").replace(".bin", "_merged.zip");
-                File outputFile = new File(OUTPUT_DIR, outputName);
-                packImagesWithProgress(patchOutputDir, outputFile, mergedImages.length);
-
+                // 删除 old 目录
+                File oldDirToDelete = new File(patchOutputDir, "old");
+                if (oldDirToDelete.exists()) {
+                    MergeSession.appendLogWithProgress(86, "删除 old 目录");
+                    deleteDirectory(oldDirToDelete);
+                }
+                
+                // 将合并后的目录重命名/移动到 output
+                String outputDirName = patchZip.getName().replace(".zip", "_merged").replace(".bin", "_merged");
+                File finalOutputDir = new File(OUTPUT_DIR, outputDirName);
+                
+                // 如果目标已存在，先删除
+                if (finalOutputDir.exists()) {
+                    deleteDirectory(finalOutputDir);
+                }
+                
+                // 移动整个目录
+                MergeSession.appendLogWithProgress(90, "移动到 output 目录");
+                boolean moved = patchOutputDir.renameTo(finalOutputDir);
+                
+                if (!moved) {
+                    throw new Exception("移动输出目录失败");
+                }
+                
+                MergeSession.appendLogWithProgress(95, "✓ 输出完成");
                 MergeSession.postStatus("✓ 合并完成！", 100);
                 MergeSession.appendLog("\n━━━━━━━━━━━━━━━━━━━━");
                 MergeSession.appendLog("✓ 合并完成！");
-                MergeSession.appendLog("输出路径：" + outputFile.getAbsolutePath());
-                MergeSession.appendLog(String.format("文件大小：%d MB", outputFile.length() / 1024 / 1024));
-                MergeSession.appendLog("\n✓ 所有 img 仅存储 ZIP 已完成，在 output 文件夹");
+                MergeSession.appendLog("输出路径：" + finalOutputDir.getAbsolutePath());
+                MergeSession.appendLog(String.format("镜像数量：%d 个", mergedImages.length));
+                MergeSession.appendLog(String.format("总大小：%d MB", mergedSize / 1024 / 1024));
+                MergeSession.appendLog("\n✓ 所有合并后的 img 文件已保存到 output 目录");
 
             } catch (Exception e) {
                 e.printStackTrace();
@@ -815,12 +969,13 @@ public class OtaMergeActivity extends Activity {
         
         ProcessBuilder pb;
         if (patchFile.getName().endsWith(".zip") || patchFile.getName().endsWith(".bin")) {
-            // payload_dumper 会读取 patch.zip，从 oldDir 找旧镜像，输出到 outputDir
+            // 使用 su 以 Root 权限执行 payload_dumper（绕过 SELinux）
             pb = new ProcessBuilder(
-                dumper.getAbsolutePath(),
-                patchFile.getAbsolutePath(),
-                "--source-dir", oldDir.getAbsolutePath(),
-                "--out", outputDir.getAbsolutePath()
+                "su", "-c",
+                dumper.getAbsolutePath() + " " +
+                patchFile.getAbsolutePath() + " " +
+                "--source-dir " + oldDir.getAbsolutePath() + " " +
+                "--out " + outputDir.getAbsolutePath()
             );
         } else {
             throw new Exception("增量包格式错误: " + patchFile.getName());
@@ -964,12 +1119,21 @@ public class OtaMergeActivity extends Activity {
     }
 
     private void copyFile(File src, File dest) throws Exception {
-        try (FileInputStream fis = new FileInputStream(src);
-             FileOutputStream fos = new FileOutputStream(dest)) {
-            byte[] buffer = new byte[1024 * 1024]; // 1MB 缓冲区，提升复制速度
-            int len;
-            while ((len = fis.read(buffer)) > 0) {
-                fos.write(buffer, 0, len);
+        // 使用 Root 服务复制文件（绕过 SELinux 限制）
+        if (privilegedService != null) {
+            boolean success = privilegedService.copyFile(src.getAbsolutePath(), dest.getAbsolutePath());
+            if (!success) {
+                throw new Exception("Root 服务复制失败: " + src.getName());
+            }
+        } else {
+            // 回退到普通复制（可能失败）
+            try (FileInputStream fis = new FileInputStream(src);
+                 FileOutputStream fos = new FileOutputStream(dest)) {
+                byte[] buffer = new byte[1024 * 1024]; // 1MB 缓冲区
+                int len;
+                while ((len = fis.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
             }
         }
     }
@@ -1025,15 +1189,22 @@ public class OtaMergeActivity extends Activity {
     }
 
     private void deleteDirectory(File dir) {
-        if (dir.isDirectory()) {
-            File[] files = dir.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    deleteDirectory(file);
+        if (privilegedService != null) {
+            try {
+                privilegedService.deleteFile(dir.getAbsolutePath());
+            } catch (Exception e) {
+                Log.e("OtaMerge", "deleteDirectory via root failed", e);
+            }
+        } else {
+            // 回退到普通删除
+            if (dir.isDirectory()) {
+                List<String> fileNames = listFilesViaShell(dir.getAbsolutePath());
+                for (String name : fileNames) {
+                    deleteDirectory(new File(dir, name));
                 }
             }
+            dir.delete();
         }
-        dir.delete();
     }
 
     private void resetUi() {
@@ -1066,13 +1237,14 @@ public class OtaMergeActivity extends Activity {
             return;
         }
         
-        File[] files = dir.listFiles();
-        if (files == null || files.length == 0) {
+        // 使用 Root 服务列出文件
+        List<String> fileNames = listFilesViaShell(dir.getAbsolutePath());
+        if (fileNames.size() == 0) {
             Toast.makeText(this, "目录为空", Toast.LENGTH_SHORT).show();
             return;
         }
         
-        File file = files[0];
+        File file = new File(dir, fileNames.get(0));
         try {
             android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
                 this, 
@@ -1118,14 +1290,21 @@ public class OtaMergeActivity extends Activity {
 
     private void extractFullOtaWithProgress(File fullPackage, File outputDir) throws Exception {
         if (fullPackage.getName().endsWith(".img")) {
-            File otaDir = new File(OTA_DIR);
-            File[] allImgs = otaDir.listFiles((dir, name) -> name.endsWith(".img"));
+            // 使用 Root 服务列出文件
+            List<String> fileNames = listFilesViaShell(OTA_DIR);
+            List<String> imgNames = new ArrayList<>();
+            for (String name : fileNames) {
+                if (name.toLowerCase().endsWith(".img")) {
+                    imgNames.add(name);
+                }
+            }
             
-            if (allImgs == null || allImgs.length == 0) {
+            if (imgNames.size() == 0) {
                 throw new Exception("ota 目录没有找到 img 文件");
             }
             
-            for (File img : allImgs) {
+            for (String imgName : imgNames) {
+                File img = new File(OTA_DIR, imgName);
                 copyFile(img, new File(outputDir, img.getName()));
             }
             return;
@@ -1291,13 +1470,21 @@ public class OtaMergeActivity extends Activity {
         try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(outputFile))) {
             zos.setLevel(ZipOutputStream.STORED);
             
-            File[] files = sourceDir.listFiles((dir, name) -> name.endsWith(".img"));
-            if (files != null) {
-                for (int i = 0; i < files.length; i++) {
+            // 使用 Root 服务列出文件
+            List<String> fileNames = listFilesViaShell(sourceDir.getAbsolutePath());
+            List<String> imgNames = new ArrayList<>();
+            for (String name : fileNames) {
+                if (name.toLowerCase().endsWith(".img")) {
+                    imgNames.add(name);
+                }
+            }
+            
+            if (imgNames.size() > 0) {
+                for (int i = 0; i < imgNames.size(); i++) {
                     MergeSession.checkCancelled();
-                    File file = files[i];
-                    int progress = 85 + (11 * (i + 1) / files.length);
-                    MergeSession.appendLogWithProgress(progress, String.format("打包 %s (%d/%d)", file.getName(), i + 1, files.length));
+                    File file = new File(sourceDir, imgNames.get(i));
+                    int progress = 85 + (11 * (i + 1) / imgNames.size());
+                    MergeSession.appendLogWithProgress(progress, String.format("打包 %s (%d/%d)", file.getName(), i + 1, imgNames.size()));
                     
                     ZipEntry entry = new ZipEntry(file.getName());
                     entry.setMethod(ZipEntry.STORED);
@@ -1370,5 +1557,19 @@ public class OtaMergeActivity extends Activity {
         if (notificationManager != null) {
             notificationManager.cancel(MergeSession.NOTIFICATION_ID);
         }
+    }
+    
+    /** 使用 Root 服务列出目录中的文件（绕过 SELinux 限制） */
+    private List<String> listFilesViaShell(String dirPath) {
+        List<String> result = new ArrayList<>();
+        try {
+            // 使用 Root 服务
+            if (privilegedService != null) {
+                result = privilegedService.listFiles(dirPath);
+            }
+        } catch (Exception e) {
+            Log.e("OtaMerge", "listFiles via root failed", e);
+        }
+        return result;
     }
 }

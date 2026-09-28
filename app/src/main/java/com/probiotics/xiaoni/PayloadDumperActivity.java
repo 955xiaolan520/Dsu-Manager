@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Payload Dumper 功能：在线提取和本地提取 */
-public final class PayloadDumperActivity extends Activity {
+public final class PayloadDumperActivity extends BaseActivity {
     private static final String[] TAB_LABELS = {"在线提取", "本地提取"};
     private static final int PICK_FILE = 1001;
     

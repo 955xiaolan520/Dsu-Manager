@@ -12,7 +12,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.*;
 
-public final class MoreActivity extends Activity {
+public final class MoreActivity extends BaseActivity {
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
         Haptics.onTouch(getWindow().getDecorView(), event);
         return super.dispatchTouchEvent(event);

@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -25,6 +26,29 @@ public final class PrivilegedRootService extends RootService {
     private static final String TAG = "TianmingDsu";
     private final IPrivilegedService.Stub bridge = new IPrivilegedService.Stub() {
         @Override public int getUid() { return Process.myUid(); }
+        
+        @Override public void setDynProp() {
+            try {
+                Class<?> sysPropClass = Class.forName("android.os.SystemProperties");
+                java.lang.reflect.Method setMethod = sysPropClass.getMethod("set", String.class, String.class);
+                setMethod.invoke(null, "persist.sys.fflag.override.settings_dynamic_system", "true");
+                Log.d(TAG, "setDynProp: set persist.sys.fflag.override.settings_dynamic_system=true");
+            } catch (Exception e) {
+                Log.e(TAG, "setDynProp failed", e);
+            }
+        }
+        
+        @Override public void forceStopPackage(String packageName) {
+            try {
+                Object activityManager = getActivityManager();
+                HiddenApiBypass.invoke(activityManager.getClass(), activityManager, 
+                    "forceStopPackage", packageName, 0);
+                Log.d(TAG, "forceStopPackage: " + packageName);
+            } catch (Exception e) {
+                Log.e(TAG, "forceStopPackage failed", e);
+            }
+        }
+        
         @Override public boolean isInUse() { return bool(7); }
         @Override public boolean isInstalled() { return bool(8); }
         @Override public boolean isEnabled() { return bool(9); }
@@ -46,12 +70,55 @@ public final class PrivilegedRootService extends RootService {
         @Override public boolean abort() { return bool(6); }
         @Override public boolean startInstallation(String slot) { return transactBoolean(1, p -> p.writeString(slot)); }
         @Override public int createPartition(String name, long size, boolean readOnly) {
+            // Android 13 以下返回 boolean，需要转换
+            if (android.os.Build.VERSION.SDK_INT < 33) {
+                boolean result = transactBoolean(2, p -> { p.writeString(name); p.writeLong(size); p.writeInt(readOnly ? 1 : 0); });
+                return result ? 0 : -1; // 0 = INSTALL_OK, -1 = INSTALL_ERROR_GENERIC
+            }
             return transactInt(2, p -> { p.writeString(name); p.writeLong(size); p.writeInt(readOnly ? 1 : 0); });
         }
         @Override public boolean setAshmem(ParcelFileDescriptor fd, long size) {
             return transactBoolean(12, p -> { p.writeTypedObject(fd, 0); p.writeLong(size); });
         }
         @Override public boolean submitFromAshmem(long bytes) { return transactBoolean(13, p -> p.writeLong(bytes)); }
+        @Override public GsiProgress getInstallationProgress() {
+            try {
+                Object dss = dynamicSystem();
+                if (dss == null) {
+                    Log.e(TAG, "dynamicSystem() returned null");
+                    return new GsiProgress();
+                }
+                
+                // 直接访问 installationProgress 属性
+                Object progress = HiddenApiBypass.invoke(
+                    dss.getClass(),
+                    dss,
+                    "getInstallationProgress"
+                );
+                
+                if (progress == null) {
+                    Log.w(TAG, "getInstallationProgress returned null");
+                    return new GsiProgress();
+                }
+                
+                // 读取所有字段
+                java.lang.reflect.Field stepField = progress.getClass().getField("step");
+                java.lang.reflect.Field statusField = progress.getClass().getField("status");
+                java.lang.reflect.Field bytesField = progress.getClass().getField("bytes_processed");
+                java.lang.reflect.Field totalField = progress.getClass().getField("total_bytes");
+                
+                String step = (String) stepField.get(progress);
+                int status = statusField.getInt(progress);
+                long bytes = bytesField.getLong(progress);
+                long total = totalField.getLong(progress);
+                
+                Log.d(TAG, "Progress: " + bytes + "/" + total + " bytes, status=" + status);
+                return new GsiProgress(step, status, bytes, total);
+            } catch (Exception e) {
+                Log.e(TAG, "getInstallationProgress failed", e);
+                return new GsiProgress();
+            }
+        }
         @Override public boolean closePartition() { return bool(3); }
         @Override public boolean finishInstallation() { return bool(4); }
         @Override public String getInstalledGsiImageDir() {
@@ -392,6 +459,71 @@ public final class PrivilegedRootService extends RootService {
             }
         }
 
+        @Override public List<String> listFiles(String dirPath) {
+            List<String> result = new ArrayList<>();
+            try {
+                File dir = new File(dirPath);
+                if (!dir.exists() || !dir.isDirectory()) {
+                    return result;
+                }
+                File[] files = dir.listFiles();
+                if (files != null) {
+                    for (File file : files) {
+                        result.add(file.getName());
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "listFiles failed", e);
+            }
+            return result;
+        }
+
+        @Override public boolean copyFile(String srcPath, String destPath) {
+            try {
+                File src = new File(srcPath);
+                File dest = new File(destPath);
+                if (!src.exists() || !src.isFile()) {
+                    return false;
+                }
+                dest.getParentFile().mkdirs();
+                java.io.FileInputStream fis = new java.io.FileInputStream(src);
+                java.io.FileOutputStream fos = new java.io.FileOutputStream(dest);
+                byte[] buffer = new byte[8192];
+                int len;
+                while ((len = fis.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
+                fis.close();
+                fos.close();
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "copyFile failed: " + srcPath + " -> " + destPath, e);
+                return false;
+            }
+        }
+
+        @Override public boolean deleteFile(String path) {
+            try {
+                File file = new File(path);
+                return deleteRecursive(file);
+            } catch (Exception e) {
+                Log.e(TAG, "deleteFile failed: " + path, e);
+                return false;
+            }
+        }
+
+        private boolean deleteRecursive(File file) {
+            if (file.isDirectory()) {
+                File[] children = file.listFiles();
+                if (children != null) {
+                    for (File child : children) {
+                        deleteRecursive(child);
+                    }
+                }
+            }
+            return file.delete();
+        }
+
         private void validateSlot(String slot) {
             if (slot == null || slot.length() == 0 || slot.startsWith("/") || slot.contains(".."))
                 throw new IllegalArgumentException("invalid GSI slot");
@@ -658,6 +790,14 @@ public final class PrivilegedRootService extends RootService {
             return null;
         }
     }
+    
+    private Object getActivityManager() throws Exception {
+        Class<?> manager = Class.forName("android.os.ServiceManager");
+        IBinder binder = (IBinder) HiddenApiBypass.invoke(manager, null, "getService", "activity");
+        Class<?> stub = Class.forName("android.app.IActivityManager$Stub");
+        return HiddenApiBypass.invoke(stub, null, "asInterface", binder);
+    }
+    
     private interface Writer { void write(Parcel parcel); }
 
     private boolean bool(int code) { return transactBoolean(code, null); }
@@ -686,7 +826,7 @@ public final class PrivilegedRootService extends RootService {
         Parcel reply = Parcel.obtain();
         try {
             data.writeInterfaceToken("android.os.image.IDynamicSystemService");
-            writer.write(data);
+            if (writer != null) writer.write(data);
             IBinder service = dynamicSystem();
             if (service == null || !service.transact(code, data, reply, 0)) return -1;
             reply.readException();
@@ -694,6 +834,25 @@ public final class PrivilegedRootService extends RootService {
         } catch (Exception e) {
             Log.e(TAG, "dynamic_system transaction failed: " + code, e);
             return -1;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    private long transactLong(int code, Writer writer) {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken("android.os.image.IDynamicSystemService");
+            if (writer != null) writer.write(data);
+            IBinder service = dynamicSystem();
+            if (service == null || !service.transact(code, data, reply, 0)) return 0L;
+            reply.readException();
+            return reply.readLong();
+        } catch (Exception e) {
+            Log.e(TAG, "dynamic_system transaction failed: " + code, e);
+            return 0L;
         } finally {
             data.recycle();
             reply.recycle();

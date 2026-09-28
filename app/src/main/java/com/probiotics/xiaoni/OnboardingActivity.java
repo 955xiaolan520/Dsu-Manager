@@ -40,7 +40,7 @@ import java.util.Random;
  *  5. 一切已就绪 → 开始使用（图六）
  * 完成后弹出图一 MIUI 白色底部授权弹窗（通知 / 音频文件 / 照片和视频）。
  */
-public final class OnboardingActivity extends Activity {
+public final class OnboardingActivity extends BaseActivity {
 
     private static final String[] CLAUSES_ZH = {
             "本应用为 DSU 动态系统更新 / ROM 下载与提取工具，仅供个人学习与研究使用，请勿用于商业用途。",

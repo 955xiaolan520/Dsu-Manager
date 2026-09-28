@@ -13,7 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-public class AboutActivity extends Activity {
+public class AboutActivity extends BaseActivity {
     
     private static final String VERSION = "3.5.8";
     

@@ -28,7 +28,7 @@ import com.termux.terminal.TerminalSessionClient;
 import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
 
-public class LinuxTerminalActivity extends Activity {
+public class LinuxTerminalActivity extends BaseActivity {
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
         Haptics.onTouch(getWindow().getDecorView(), event);
         return super.dispatchTouchEvent(event);

@@ -13,7 +13,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 /** OPlus secondary-page entry. The complete selector and forms live in OPlusOtaActivity. */
-public final class OPlusLookupActivity extends Activity {
+public final class OPlusLookupActivity extends BaseActivity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         startActivity(new android.content.Intent(this, OPlusOtaActivity.class));

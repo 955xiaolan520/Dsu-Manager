@@ -16,15 +16,17 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
+import android.widget.SeekBar;
 
 import java.util.Locale;
 
-public final class SettingsActivity extends Activity {
+public final class SettingsActivity extends BaseActivity {
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
         Haptics.onTouch(getWindow().getDecorView(), event);
         return super.dispatchTouchEvent(event);
     }
     private static final String LANGUAGE_KEY = "language_mode";
+    private static final String TRANSPARENCY_KEY = "window_transparency";
     private static final String CURRENT_VERSION = BuildConfig.VERSION_NAME;
     private TextView updateStatus;
     private TextView releaseNotes;
@@ -89,6 +91,56 @@ public final class SettingsActivity extends Activity {
         title.setTypeface(null, 1);
         titleBar.addView(title, new LinearLayout.LayoutParams(0, dp(46), 1));
         root.addView(titleBar);
+
+        // 透明度设置
+        TextView transparencyTitle = label(english ? "Transparency" : "透明度", 16, Color.rgb(20, 29, 55));
+        transparencyTitle.setTypeface(null, 1);
+        transparencyTitle.setTextColor(Color.rgb(130, 70, 150));
+        LinearLayout.LayoutParams transparencyTitleLp = new LinearLayout.LayoutParams(-1, dp(34));
+        transparencyTitleLp.setMargins(dp(4), dp(18), dp(4), dp(4));
+        transparencyTitle.setBackgroundResource(R.drawable.settings_language_title);
+        root.addView(transparencyTitle, transparencyTitleLp);
+        
+        LinearLayout transparencyPanel = new LinearLayout(this);
+        transparencyPanel.setOrientation(LinearLayout.VERTICAL);
+        transparencyPanel.setPadding(dp(14), dp(12), dp(14), dp(12));
+        transparencyPanel.setBackgroundResource(R.drawable.rounded_panel);
+        
+        int currentTransparency = getSharedPreferences("settings", MODE_PRIVATE).getInt(TRANSPARENCY_KEY, 100);
+        
+        LinearLayout transparencyRow = new LinearLayout(this);
+        transparencyRow.setOrientation(LinearLayout.HORIZONTAL);
+        transparencyRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView transparencyLabel = label(english ? "Opacity" : "不透明度", 14, Color.rgb(80, 88, 105));
+        transparencyRow.addView(transparencyLabel, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView transparencyValue = label(currentTransparency + "%", 14, Color.rgb(80, 88, 105));
+        transparencyValue.setTypeface(null, 1);
+        transparencyRow.addView(transparencyValue, new LinearLayout.LayoutParams(-2, -2));
+        transparencyPanel.addView(transparencyRow, new LinearLayout.LayoutParams(-1, dp(40)));
+        
+        SeekBar transparencySeek = new SeekBar(this);
+        transparencySeek.setMax(100);
+        transparencySeek.setMin(30);
+        transparencySeek.setProgress(currentTransparency);
+        transparencySeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                transparencyValue.setText(progress + "%");
+                float alpha = progress / 100f;
+                getWindow().getAttributes().alpha = alpha;
+            }
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                getSharedPreferences("settings", MODE_PRIVATE)
+                    .edit()
+                    .putInt(TRANSPARENCY_KEY, seekBar.getProgress())
+                    .apply();
+            }
+        });
+        transparencyPanel.addView(transparencySeek, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(transparencyPanel);
 
         TextView languageTitle = label(english ? "Language" : "多语言", 16, Color.rgb(20, 29, 55));
         languageTitle.setTypeface(null, 1);

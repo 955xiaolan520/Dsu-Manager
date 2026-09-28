@@ -34,7 +34,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public final class VivoActivity extends Activity {
+public final class VivoActivity extends BaseActivity {
     private static final String[] TAB_LABELS = {"手机", "平板", "手动输入", "穿戴设备"};
     private static final String TAB_PHONE = "手机";
     private static final String TAB_TABLET = "平板";

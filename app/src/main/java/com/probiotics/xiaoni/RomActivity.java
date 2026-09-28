@@ -59,7 +59,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public final class RomActivity extends Activity {
+public final class RomActivity extends BaseActivity {
     private static final String DEVICES_URL = "https://raw.githubusercontent.com/HegeKen/HyperData/main/devices.json";
     private static final String RECENT_URL = "https://raw.githubusercontent.com/HegeKen/HyperData/main/index.json";
     private static final String FANS_DEVICE_URL = "https://data.hyperos.fans/devices/";

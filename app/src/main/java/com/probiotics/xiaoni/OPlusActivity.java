@@ -39,7 +39,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-public final class OPlusActivity extends Activity {
+public final class OPlusActivity extends BaseActivity {
     private static final String[] REGIONS = {"cn", "cn_cmcc", "in", "eu", "sg", "ru", "tr", "th", "gl", "tw", "my", "vn", "id", "sa", "mea", "ph", "la", "br", "roe"};
     private static final String[] REGION_NAMES = {"中国大陆 CN", "中国移动 CN CMCC", "印度 IN", "欧洲 EU", "新加坡 SG", "俄罗斯 RU", "土耳其 TR", "泰国 TH", "全球 GL", "中国台湾 TW", "马来西亚 MY", "越南 VN", "印度尼西亚 ID", "沙特 SA", "中东和非洲 MEA", "菲律宾 PH", "拉丁美洲 LA", "巴西 BR", "欧洲其他 ROE"};
     private final ExecutorService executor = Executors.newSingleThreadExecutor();

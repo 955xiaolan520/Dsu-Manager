@@ -45,7 +45,7 @@ import java.util.Locale;
  *  - 下载历史：完成 / 取消 / 失败徽章，完成后一键「打开文件位置」，可删除单条 / 一键清空
  *  - 全程液态玻璃效果框 + 全局振动反馈
  */
-public final class DownloadManagerActivity extends Activity {
+public final class DownloadManagerActivity extends BaseActivity {
 
     // 蓝绿色系（青碧）：玻璃背景上高对比可见
     private static final int TEAL_TITLE = 0xff0e7d95;   // 标题蓝绿色
