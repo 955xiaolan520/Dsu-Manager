@@ -1699,21 +1699,89 @@ public class MainActivity extends BaseActivity {
           panel.setOrientation(LinearLayout.VERTICAL);
           panel.setPadding(dp(16), dp(16), dp(16), dp(16));
 
-          TextView hint = new TextView(this);
-          hint.setText(t("文件管理", "File Manager"));
-          hint.setTextSize(16);
-          hint.setTextColor(0xff20375b);
-          hint.setGravity(Gravity.CENTER);
-          panel.addView(hint);
+          // 设备选择
+          TextView deviceLabel = new TextView(this);
+          deviceLabel.setText(t("选择设备", "Select Device"));
+          deviceLabel.setTextSize(14);
+          deviceLabel.setTextColor(0xff596579);
+          panel.addView(deviceLabel);
 
-          TextView todo = new TextView(this);
-          todo.setText(t("功能开发中...", "Under development..."));
-          todo.setTextSize(14);
-          todo.setTextColor(0xff596579);
-          todo.setGravity(Gravity.CENTER);
-          LinearLayout.LayoutParams todoLp = new LinearLayout.LayoutParams(-1, -2);
-          todoLp.topMargin = dp(20);
-          panel.addView(todo, todoLp);
+          EditText deviceInput = new EditText(this);
+          deviceInput.setHint(t("设备 ID", "Device ID"));
+          deviceInput.setTextSize(14);
+          deviceInput.setTextColor(0xff20375b);
+          deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams deviceLp = new LinearLayout.LayoutParams(-1, -2);
+          deviceLp.topMargin = dp(6);
+          panel.addView(deviceInput, deviceLp);
+
+          // 路径输入
+          EditText pathInput = new EditText(this);
+          pathInput.setHint(t("路径 (默认: /sdcard)", "Path (default: /sdcard)"));
+          pathInput.setText("/sdcard");
+          pathInput.setTextSize(14);
+          pathInput.setTextColor(0xff20375b);
+          pathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          pathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
+          pathLp.topMargin = dp(10);
+          panel.addView(pathInput, pathLp);
+
+          // 浏览按钮
+          Button browseButton = new Button(this);
+          browseButton.setText(t("浏览文件", "Browse Files"));
+          browseButton.setTextSize(14);
+          browseButton.setTextColor(Color.WHITE);
+          browseButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          browseButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          LinearLayout.LayoutParams browseLp = new LinearLayout.LayoutParams(-1, -2);
+          browseLp.topMargin = dp(10);
+          panel.addView(browseButton, browseLp);
+
+          // 文件列表容器
+          ScrollView fileScroll = new ScrollView(this);
+          LinearLayout fileList = new LinearLayout(this);
+          fileList.setOrientation(LinearLayout.VERTICAL);
+          fileScroll.addView(fileList);
+          LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, dp(300));
+          scrollLp.topMargin = dp(16);
+          panel.addView(fileScroll, scrollLp);
+
+          browseButton.setOnClickListener(v -> {
+              String deviceId = deviceInput.getText().toString().trim();
+              String path = pathInput.getText().toString().trim();
+              if (deviceId.isEmpty()) {
+                  Toast.makeText(this, t("请输入设备 ID", "Please enter device ID"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              fileList.removeAllViews();
+              new Thread(() -> {
+                  java.util.List<String> files = adbManager.listFiles(deviceId, path);
+                  runOnUiThread(() -> {
+                      if (files.isEmpty()) {
+                          TextView empty = new TextView(this);
+                          empty.setText(t("无法读取目录", "Cannot read directory"));
+                          empty.setTextSize(14);
+                          empty.setTextColor(0xff596579);
+                          empty.setGravity(Gravity.CENTER);
+                          fileList.addView(empty);
+                      } else {
+                          for (String file : files) {
+                              TextView fileItem = new TextView(this);
+                              fileItem.setText(file);
+                              fileItem.setTextSize(12);
+                              fileItem.setTextColor(0xff20375b);
+                              fileItem.setPadding(dp(8), dp(6), dp(8), dp(6));
+                              fileItem.setBackgroundResource(R.drawable.liquid_glass_panel);
+                              LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
+                              itemLp.topMargin = dp(4);
+                              fileList.addView(fileItem, itemLp);
+                          }
+                      }
+                  });
+              }).start();
+          });
 
           return panel;
       }
@@ -1723,21 +1791,142 @@ public class MainActivity extends BaseActivity {
           panel.setOrientation(LinearLayout.VERTICAL);
           panel.setPadding(dp(16), dp(16), dp(16), dp(16));
 
-          TextView hint = new TextView(this);
-          hint.setText(t("应用管理", "App Manager"));
-          hint.setTextSize(16);
-          hint.setTextColor(0xff20375b);
-          hint.setGravity(Gravity.CENTER);
-          panel.addView(hint);
+          // 设备选择
+          EditText deviceInput = new EditText(this);
+          deviceInput.setHint(t("设备 ID", "Device ID"));
+          deviceInput.setTextSize(14);
+          deviceInput.setTextColor(0xff20375b);
+          deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          panel.addView(deviceInput);
 
-          TextView todo = new TextView(this);
-          todo.setText(t("功能开发中...", "Under development..."));
-          todo.setTextSize(14);
-          todo.setTextColor(0xff596579);
-          todo.setGravity(Gravity.CENTER);
-          LinearLayout.LayoutParams todoLp = new LinearLayout.LayoutParams(-1, -2);
-          todoLp.topMargin = dp(20);
-          panel.addView(todo, todoLp);
+          // 列出应用按钮
+          Button listAppsButton = new Button(this);
+          listAppsButton.setText(t("列出已安装应用", "List Installed Apps"));
+          listAppsButton.setTextSize(14);
+          listAppsButton.setTextColor(Color.WHITE);
+          listAppsButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          listAppsButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(-1, -2);
+          listLp.topMargin = dp(10);
+          panel.addView(listAppsButton, listLp);
+
+          // 应用列表容器
+          ScrollView appScroll = new ScrollView(this);
+          LinearLayout appList = new LinearLayout(this);
+          appList.setOrientation(LinearLayout.VERTICAL);
+          appScroll.addView(appList);
+          LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, dp(250));
+          scrollLp.topMargin = dp(16);
+          panel.addView(appScroll, scrollLp);
+
+          listAppsButton.setOnClickListener(v -> {
+              String deviceId = deviceInput.getText().toString().trim();
+              if (deviceId.isEmpty()) {
+                  Toast.makeText(this, t("请输入设备 ID", "Please enter device ID"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              appList.removeAllViews();
+              new Thread(() -> {
+                  java.util.List<String> packages = adbManager.listPackages(deviceId);
+                  runOnUiThread(() -> {
+                      if (packages.isEmpty()) {
+                          TextView empty = new TextView(this);
+                          empty.setText(t("未找到应用", "No apps found"));
+                          empty.setTextSize(14);
+                          empty.setTextColor(0xff596579);
+                          empty.setGravity(Gravity.CENTER);
+                          appList.addView(empty);
+                      } else {
+                          for (String pkg : packages) {
+                              LinearLayout appItem = new LinearLayout(this);
+                              appItem.setOrientation(LinearLayout.HORIZONTAL);
+                              appItem.setPadding(dp(8), dp(6), dp(8), dp(6));
+                              appItem.setBackgroundResource(R.drawable.liquid_glass_panel);
+                              
+                              TextView pkgName = new TextView(this);
+                              pkgName.setText(pkg);
+                              pkgName.setTextSize(12);
+                              pkgName.setTextColor(0xff20375b);
+                              appItem.addView(pkgName, new LinearLayout.LayoutParams(0, -2, 1f));
+                              
+                              Button uninstallBtn = new Button(this);
+                              uninstallBtn.setText(t("卸载", "Uninstall"));
+                              uninstallBtn.setTextSize(10);
+                              uninstallBtn.setTextColor(Color.WHITE);
+                              uninstallBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
+                              uninstallBtn.setPadding(dp(8), dp(4), dp(8), dp(4));
+                              uninstallBtn.setOnClickListener(btn -> {
+                                  new Thread(() -> {
+                                      com.topjohnwu.superuser.Shell.Result result = adbManager.uninstallPackage(deviceId, pkg);
+                                      runOnUiThread(() -> {
+                                          if (result.isSuccess()) {
+                                              Toast.makeText(this, t("卸载成功", "Uninstalled"), Toast.LENGTH_SHORT).show();
+                                              appList.removeView(appItem);
+                                          } else {
+                                              Toast.makeText(this, t("卸载失败", "Failed"), Toast.LENGTH_SHORT).show();
+                                          }
+                                      });
+                                  }).start();
+                              });
+                              appItem.addView(uninstallBtn, new LinearLayout.LayoutParams(-2, -2));
+                              
+                              LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
+                              itemLp.topMargin = dp(4);
+                              appList.addView(appItem, itemLp);
+                          }
+                      }
+                  });
+              }).start();
+          });
+
+          // 安装 APK 区域
+          TextView installLabel = new TextView(this);
+          installLabel.setText(t("安装 APK", "Install APK"));
+          installLabel.setTextSize(14);
+          installLabel.setTextColor(0xff596579);
+          installLabel.setTypeface(null, 1);
+          LinearLayout.LayoutParams installTitleLp = new LinearLayout.LayoutParams(-1, -2);
+          installTitleLp.topMargin = dp(16);
+          panel.addView(installLabel, installTitleLp);
+
+          EditText apkPathInput = new EditText(this);
+          apkPathInput.setHint(t("APK 路径", "APK Path"));
+          apkPathInput.setTextSize(14);
+          apkPathInput.setTextColor(0xff20375b);
+          apkPathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          apkPathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams apkLp = new LinearLayout.LayoutParams(-1, -2);
+          apkLp.topMargin = dp(8);
+          panel.addView(apkPathInput, apkLp);
+
+          Button installButton = new Button(this);
+          installButton.setText(t("安装", "Install"));
+          installButton.setTextSize(14);
+          installButton.setTextColor(Color.WHITE);
+          installButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          installButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          installButton.setOnClickListener(v -> {
+              String deviceId = deviceInput.getText().toString().trim();
+              String apkPath = apkPathInput.getText().toString().trim();
+              if (deviceId.isEmpty() || apkPath.isEmpty()) {
+                  Toast.makeText(this, t("请填写完整信息", "Please fill all fields"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              new Thread(() -> {
+                  com.topjohnwu.superuser.Shell.Result result = adbManager.installApk(deviceId, apkPath);
+                  runOnUiThread(() -> {
+                      if (result.isSuccess()) {
+                          Toast.makeText(this, t("安装成功", "Installed"), Toast.LENGTH_SHORT).show();
+                      } else {
+                          Toast.makeText(this, t("安装失败", "Failed"), Toast.LENGTH_SHORT).show();
+                      }
+                  });
+              }).start();
+          });
+          LinearLayout.LayoutParams installBtnLp = new LinearLayout.LayoutParams(-1, -2);
+          installBtnLp.topMargin = dp(8);
+          panel.addView(installButton, installBtnLp);
 
           return panel;
       }
@@ -1747,21 +1936,77 @@ public class MainActivity extends BaseActivity {
           panel.setOrientation(LinearLayout.VERTICAL);
           panel.setPadding(dp(16), dp(16), dp(16), dp(16));
 
-          TextView hint = new TextView(this);
-          hint.setText(t("ADB Shell", "ADB Shell"));
-          hint.setTextSize(16);
-          hint.setTextColor(0xff20375b);
-          hint.setGravity(Gravity.CENTER);
-          panel.addView(hint);
+          // 设备选择
+          EditText deviceInput = new EditText(this);
+          deviceInput.setHint(t("设备 ID", "Device ID"));
+          deviceInput.setTextSize(14);
+          deviceInput.setTextColor(0xff20375b);
+          deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          panel.addView(deviceInput);
 
-          TextView todo = new TextView(this);
-          todo.setText(t("功能开发中...", "Under development..."));
-          todo.setTextSize(14);
-          todo.setTextColor(0xff596579);
-          todo.setGravity(Gravity.CENTER);
-          LinearLayout.LayoutParams todoLp = new LinearLayout.LayoutParams(-1, -2);
-          todoLp.topMargin = dp(20);
-          panel.addView(todo, todoLp);
+          // 命令输入
+          EditText commandInput = new EditText(this);
+          commandInput.setHint(t("输入 Shell 命令", "Enter Shell Command"));
+          commandInput.setTextSize(14);
+          commandInput.setTextColor(0xff20375b);
+          commandInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          commandInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams cmdLp = new LinearLayout.LayoutParams(-1, -2);
+          cmdLp.topMargin = dp(10);
+          panel.addView(commandInput, cmdLp);
+
+          // 执行按钮
+          Button executeButton = new Button(this);
+          executeButton.setText(t("执行", "Execute"));
+          executeButton.setTextSize(14);
+          executeButton.setTextColor(Color.WHITE);
+          executeButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          executeButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          LinearLayout.LayoutParams execLp = new LinearLayout.LayoutParams(-1, -2);
+          execLp.topMargin = dp(10);
+          panel.addView(executeButton, execLp);
+
+          // 输出区域
+          ScrollView outputScroll = new ScrollView(this);
+          TextView outputText = new TextView(this);
+          outputText.setTextSize(12);
+          outputText.setTextColor(0xff20375b);
+          outputText.setTypeface(android.graphics.Typeface.MONOSPACE);
+          outputText.setPadding(dp(12), dp(12), dp(12), dp(12));
+          outputText.setBackgroundResource(R.drawable.liquid_glass_panel);
+          outputScroll.addView(outputText);
+          LinearLayout.LayoutParams outputLp = new LinearLayout.LayoutParams(-1, dp(300));
+          outputLp.topMargin = dp(16);
+          panel.addView(outputScroll, outputLp);
+
+          executeButton.setOnClickListener(v -> {
+              String deviceId = deviceInput.getText().toString().trim();
+              String command = commandInput.getText().toString().trim();
+              if (deviceId.isEmpty() || command.isEmpty()) {
+                  Toast.makeText(this, t("请填写完整信息", "Please fill all fields"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              outputText.setText(t("执行中...", "Executing..."));
+              new Thread(() -> {
+                  com.topjohnwu.superuser.Shell.Result result = adbManager.execShell(deviceId, command);
+                  runOnUiThread(() -> {
+                      StringBuilder output = new StringBuilder();
+                      output.append("$ ").append(command).append("\n\n");
+                      if (result.isSuccess()) {
+                          for (String line : result.getOut()) {
+                              output.append(line).append("\n");
+                          }
+                      } else {
+                          output.append(t("执行失败", "Failed")).append("\n");
+                          for (String line : result.getErr()) {
+                              output.append(line).append("\n");
+                          }
+                      }
+                      outputText.setText(output.toString());
+                  });
+              }).start();
+          });
 
           return panel;
       }
@@ -1771,21 +2016,121 @@ public class MainActivity extends BaseActivity {
           panel.setOrientation(LinearLayout.VERTICAL);
           panel.setPadding(dp(16), dp(16), dp(16), dp(16));
 
-          TextView hint = new TextView(this);
-          hint.setText(t("备份/恢复", "Backup/Restore"));
-          hint.setTextSize(16);
-          hint.setTextColor(0xff20375b);
-          hint.setGravity(Gravity.CENTER);
-          panel.addView(hint);
+          // 设备选择
+          EditText deviceInput = new EditText(this);
+          deviceInput.setHint(t("设备 ID", "Device ID"));
+          deviceInput.setTextSize(14);
+          deviceInput.setTextColor(0xff20375b);
+          deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          panel.addView(deviceInput);
 
-          TextView todo = new TextView(this);
-          todo.setText(t("功能开发中...", "Under development..."));
-          todo.setTextSize(14);
-          todo.setTextColor(0xff596579);
-          todo.setGravity(Gravity.CENTER);
-          LinearLayout.LayoutParams todoLp = new LinearLayout.LayoutParams(-1, -2);
-          todoLp.topMargin = dp(20);
-          panel.addView(todo, todoLp);
+          // 备份区域
+          TextView backupLabel = new TextView(this);
+          backupLabel.setText(t("备份应用数据", "Backup App Data"));
+          backupLabel.setTextSize(16);
+          backupLabel.setTextColor(0xff20375b);
+          backupLabel.setTypeface(null, 1);
+          LinearLayout.LayoutParams backupTitleLp = new LinearLayout.LayoutParams(-1, -2);
+          backupTitleLp.topMargin = dp(16);
+          panel.addView(backupLabel, backupTitleLp);
+
+          EditText packageInput = new EditText(this);
+          packageInput.setHint(t("包名", "Package Name"));
+          packageInput.setTextSize(14);
+          packageInput.setTextColor(0xff20375b);
+          packageInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          packageInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams pkgLp = new LinearLayout.LayoutParams(-1, -2);
+          pkgLp.topMargin = dp(8);
+          panel.addView(packageInput, pkgLp);
+
+          EditText backupPathInput = new EditText(this);
+          backupPathInput.setHint(t("备份文件路径", "Backup File Path"));
+          backupPathInput.setTextSize(14);
+          backupPathInput.setTextColor(0xff20375b);
+          backupPathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          backupPathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams backupPathLp = new LinearLayout.LayoutParams(-1, -2);
+          backupPathLp.topMargin = dp(8);
+          panel.addView(backupPathInput, backupPathLp);
+
+          Button backupButton = new Button(this);
+          backupButton.setText(t("备份", "Backup"));
+          backupButton.setTextSize(14);
+          backupButton.setTextColor(Color.WHITE);
+          backupButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          backupButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          backupButton.setOnClickListener(v -> {
+              String deviceId = deviceInput.getText().toString().trim();
+              String pkg = packageInput.getText().toString().trim();
+              String backupPath = backupPathInput.getText().toString().trim();
+              if (deviceId.isEmpty() || pkg.isEmpty() || backupPath.isEmpty()) {
+                  Toast.makeText(this, t("请填写完整信息", "Please fill all fields"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              new Thread(() -> {
+                  com.topjohnwu.superuser.Shell.Result result = adbManager.backupPackage(deviceId, pkg, backupPath);
+                  runOnUiThread(() -> {
+                      if (result.isSuccess()) {
+                          Toast.makeText(this, t("备份成功", "Backup successful"), Toast.LENGTH_SHORT).show();
+                      } else {
+                          Toast.makeText(this, t("备份失败", "Backup failed"), Toast.LENGTH_SHORT).show();
+                      }
+                  });
+              }).start();
+          });
+          LinearLayout.LayoutParams backupBtnLp = new LinearLayout.LayoutParams(-1, -2);
+          backupBtnLp.topMargin = dp(10);
+          panel.addView(backupButton, backupBtnLp);
+
+          // 恢复区域
+          TextView restoreLabel = new TextView(this);
+          restoreLabel.setText(t("恢复应用数据", "Restore App Data"));
+          restoreLabel.setTextSize(16);
+          restoreLabel.setTextColor(0xff20375b);
+          restoreLabel.setTypeface(null, 1);
+          LinearLayout.LayoutParams restoreTitleLp = new LinearLayout.LayoutParams(-1, -2);
+          restoreTitleLp.topMargin = dp(24);
+          panel.addView(restoreLabel, restoreTitleLp);
+
+          EditText restorePathInput = new EditText(this);
+          restorePathInput.setHint(t("备份文件路径", "Backup File Path"));
+          restorePathInput.setTextSize(14);
+          restorePathInput.setTextColor(0xff20375b);
+          restorePathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          restorePathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams restorePathLp = new LinearLayout.LayoutParams(-1, -2);
+          restorePathLp.topMargin = dp(8);
+          panel.addView(restorePathInput, restorePathLp);
+
+          Button restoreButton = new Button(this);
+          restoreButton.setText(t("恢复", "Restore"));
+          restoreButton.setTextSize(14);
+          restoreButton.setTextColor(Color.WHITE);
+          restoreButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          restoreButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          restoreButton.setOnClickListener(v -> {
+              String deviceId = deviceInput.getText().toString().trim();
+              String restorePath = restorePathInput.getText().toString().trim();
+              if (deviceId.isEmpty() || restorePath.isEmpty()) {
+                  Toast.makeText(this, t("请填写完整信息", "Please fill all fields"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              new Thread(() -> {
+                  com.topjohnwu.superuser.Shell.Result result = adbManager.restoreBackup(deviceId, restorePath);
+                  runOnUiThread(() -> {
+                      if (result.isSuccess()) {
+                          Toast.makeText(this, t("恢复成功", "Restore successful"), Toast.LENGTH_SHORT).show();
+                      } else {
+                          Toast.makeText(this, t("恢复失败", "Restore failed"), Toast.LENGTH_SHORT).show();
+                      }
+                  });
+              }).start();
+          });
+          LinearLayout.LayoutParams restoreBtnLp = new LinearLayout.LayoutParams(-1, -2);
+          restoreBtnLp.topMargin = dp(10);
+          panel.addView(restoreButton, restoreBtnLp);
 
           return panel;
       }
