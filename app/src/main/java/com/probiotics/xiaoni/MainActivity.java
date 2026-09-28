@@ -47,6 +47,7 @@ public class MainActivity extends BaseActivity {
     private static final int PICK_ZIP = 20;
     private static final int PICK_REPLACEMENT = 30;
     private static final int PICK_ROOTFS = 40;
+    private static final int PICK_FASTBOOT_IMAGE = 50;
     private String replacementPartition;
     private String replacementBackingImage;
     private String replacementSlot;
@@ -86,6 +87,7 @@ public class MainActivity extends BaseActivity {
     private FrameLayout contentRoot;   // 根布局（引导页淡入转场用）
     // OTG 页面相关
     private AdbManager adbManager;
+    private EditText fastbootFilePathInput;
     private Button[] otgTabs;
     private LinearLayout otgTabItems;
     private LiquidGlassIndicator otgTabIndicator;
@@ -1344,7 +1346,7 @@ public class MainActivity extends BaseActivity {
           TextView subtitle = new TextView(this);
           subtitle.setText(t("ADB / Fastboot / 文件管理", "ADB / Fastboot / File Manager"));
           subtitle.setTextSize(11);
-          subtitle.setTextColor(0xff596579);
+          subtitle.setTextColor(0xff2d4a66);
           subtitle.setGravity(Gravity.CENTER);
           title.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(32)));
           LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, dp(82));
@@ -1361,7 +1363,7 @@ public class MainActivity extends BaseActivity {
           otgTabItems.setClipChildren(false);
           tabs.addView(otgTabItems, new FrameLayout.LayoutParams(-1, dp(64)));
           
-          String[] tabLabels = {t("设备", "Device"), t("文件", "Files"), t("应用", "Apps"), t("命令", "Shell"), t("备份", "Backup")};
+          String[] tabLabels = {t("设备", "Device"), t("文件", "Files"), t("应用", "Apps"), t("命令", "Shell"), t("Fastboot", "Fastboot")};
           otgTabs = new Button[tabLabels.length];
           for (int i = 0; i < tabLabels.length; i++) {
               final int index = i;
@@ -1472,7 +1474,7 @@ public class MainActivity extends BaseActivity {
           for (int i = 0; i < otgTabs.length; i++) {
               otgTabs[i].setAlpha(i == index ? 1f : .55f);
               otgTabs[i].setTypeface(null, i == index ? 1 : 0);
-              otgTabs[i].setTextColor(i == index ? 0xff17334f : 0xff596579);
+              otgTabs[i].setTextColor(i == index ? 0xff17334f : 0xff1a2332);
           }
           moveOtgTabIndicator(index, true);
           otgCurrentTab = index;
@@ -1601,7 +1603,7 @@ public class MainActivity extends BaseActivity {
                           TextView empty = new TextView(this);
                           empty.setText(t("未检测到设备", "No devices found"));
                           empty.setTextSize(14);
-                          empty.setTextColor(0xff596579);
+                          empty.setTextColor(0xff1a2332);
                           empty.setGravity(Gravity.CENTER);
                           empty.setPadding(0, dp(20), 0, 0);
                           deviceList.addView(empty);
@@ -1610,7 +1612,7 @@ public class MainActivity extends BaseActivity {
                               TextView deviceItem = new TextView(this);
                               deviceItem.setText("📱 " + deviceId);
                               deviceItem.setTextSize(14);
-                              deviceItem.setTextColor(0xff20375b);
+                              deviceItem.setTextColor(0xff0d1824);
                               deviceItem.setPadding(dp(12), dp(10), dp(12), dp(10));
                               deviceItem.setBackgroundResource(R.drawable.liquid_glass_panel);
                               LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1626,7 +1628,7 @@ public class MainActivity extends BaseActivity {
           TextView wirelessTitle = new TextView(this);
           wirelessTitle.setText(t("无线调试配对", "Wireless Debugging"));
           wirelessTitle.setTextSize(16);
-          wirelessTitle.setTextColor(0xff20375b);
+          wirelessTitle.setTextColor(0xff0d1824);
           wirelessTitle.setTypeface(null, 1);
           LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
           titleLp.topMargin = dp(24);
@@ -1635,7 +1637,7 @@ public class MainActivity extends BaseActivity {
           EditText hostInput = new EditText(this);
           hostInput.setHint(t("IP 地址", "IP Address"));
           hostInput.setTextSize(14);
-          hostInput.setTextColor(0xff20375b);
+          hostInput.setTextColor(0xff0d1824);
           hostInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           hostInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           LinearLayout.LayoutParams hostLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1645,7 +1647,7 @@ public class MainActivity extends BaseActivity {
           EditText portInput = new EditText(this);
           portInput.setHint(t("端口号", "Port"));
           portInput.setTextSize(14);
-          portInput.setTextColor(0xff20375b);
+          portInput.setTextColor(0xff0d1824);
           portInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           portInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           LinearLayout.LayoutParams portLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1655,7 +1657,7 @@ public class MainActivity extends BaseActivity {
           EditText codeInput = new EditText(this);
           codeInput.setHint(t("配对码", "Pairing Code"));
           codeInput.setTextSize(14);
-          codeInput.setTextColor(0xff20375b);
+          codeInput.setTextColor(0xff0d1824);
           codeInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           codeInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           LinearLayout.LayoutParams codeLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1703,13 +1705,13 @@ public class MainActivity extends BaseActivity {
           TextView deviceLabel = new TextView(this);
           deviceLabel.setText(t("选择设备", "Select Device"));
           deviceLabel.setTextSize(14);
-          deviceLabel.setTextColor(0xff596579);
+          deviceLabel.setTextColor(0xff1a2332);
           panel.addView(deviceLabel);
 
           EditText deviceInput = new EditText(this);
           deviceInput.setHint(t("设备 ID", "Device ID"));
           deviceInput.setTextSize(14);
-          deviceInput.setTextColor(0xff20375b);
+          deviceInput.setTextColor(0xff0d1824);
           deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           LinearLayout.LayoutParams deviceLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1721,7 +1723,7 @@ public class MainActivity extends BaseActivity {
           pathInput.setHint(t("路径 (默认: /sdcard)", "Path (default: /sdcard)"));
           pathInput.setText("/sdcard");
           pathInput.setTextSize(14);
-          pathInput.setTextColor(0xff20375b);
+          pathInput.setTextColor(0xff0d1824);
           pathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           pathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1763,7 +1765,7 @@ public class MainActivity extends BaseActivity {
                           TextView empty = new TextView(this);
                           empty.setText(t("无法读取目录", "Cannot read directory"));
                           empty.setTextSize(14);
-                          empty.setTextColor(0xff596579);
+                          empty.setTextColor(0xff1a2332);
                           empty.setGravity(Gravity.CENTER);
                           fileList.addView(empty);
                       } else {
@@ -1771,7 +1773,7 @@ public class MainActivity extends BaseActivity {
                               TextView fileItem = new TextView(this);
                               fileItem.setText(file);
                               fileItem.setTextSize(12);
-                              fileItem.setTextColor(0xff20375b);
+                              fileItem.setTextColor(0xff0d1824);
                               fileItem.setPadding(dp(8), dp(6), dp(8), dp(6));
                               fileItem.setBackgroundResource(R.drawable.liquid_glass_panel);
                               LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1795,7 +1797,7 @@ public class MainActivity extends BaseActivity {
           EditText deviceInput = new EditText(this);
           deviceInput.setHint(t("设备 ID", "Device ID"));
           deviceInput.setTextSize(14);
-          deviceInput.setTextColor(0xff20375b);
+          deviceInput.setTextColor(0xff0d1824);
           deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           panel.addView(deviceInput);
@@ -1834,7 +1836,7 @@ public class MainActivity extends BaseActivity {
                           TextView empty = new TextView(this);
                           empty.setText(t("未找到应用", "No apps found"));
                           empty.setTextSize(14);
-                          empty.setTextColor(0xff596579);
+                          empty.setTextColor(0xff1a2332);
                           empty.setGravity(Gravity.CENTER);
                           appList.addView(empty);
                       } else {
@@ -1847,7 +1849,7 @@ public class MainActivity extends BaseActivity {
                               TextView pkgName = new TextView(this);
                               pkgName.setText(pkg);
                               pkgName.setTextSize(12);
-                              pkgName.setTextColor(0xff20375b);
+                              pkgName.setTextColor(0xff0d1824);
                               appItem.addView(pkgName, new LinearLayout.LayoutParams(0, -2, 1f));
                               
                               Button uninstallBtn = new Button(this);
@@ -1884,7 +1886,7 @@ public class MainActivity extends BaseActivity {
           TextView installLabel = new TextView(this);
           installLabel.setText(t("安装 APK", "Install APK"));
           installLabel.setTextSize(14);
-          installLabel.setTextColor(0xff596579);
+          installLabel.setTextColor(0xff1a2332);
           installLabel.setTypeface(null, 1);
           LinearLayout.LayoutParams installTitleLp = new LinearLayout.LayoutParams(-1, -2);
           installTitleLp.topMargin = dp(16);
@@ -1893,7 +1895,7 @@ public class MainActivity extends BaseActivity {
           EditText apkPathInput = new EditText(this);
           apkPathInput.setHint(t("APK 路径", "APK Path"));
           apkPathInput.setTextSize(14);
-          apkPathInput.setTextColor(0xff20375b);
+          apkPathInput.setTextColor(0xff0d1824);
           apkPathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           apkPathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           LinearLayout.LayoutParams apkLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1940,7 +1942,7 @@ public class MainActivity extends BaseActivity {
           EditText deviceInput = new EditText(this);
           deviceInput.setHint(t("设备 ID", "Device ID"));
           deviceInput.setTextSize(14);
-          deviceInput.setTextColor(0xff20375b);
+          deviceInput.setTextColor(0xff0d1824);
           deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           panel.addView(deviceInput);
@@ -1949,7 +1951,7 @@ public class MainActivity extends BaseActivity {
           EditText commandInput = new EditText(this);
           commandInput.setHint(t("输入 Shell 命令", "Enter Shell Command"));
           commandInput.setTextSize(14);
-          commandInput.setTextColor(0xff20375b);
+          commandInput.setTextColor(0xff0d1824);
           commandInput.setPadding(dp(12), dp(10), dp(12), dp(10));
           commandInput.setBackgroundResource(R.drawable.liquid_glass_panel);
           LinearLayout.LayoutParams cmdLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1971,7 +1973,7 @@ public class MainActivity extends BaseActivity {
           ScrollView outputScroll = new ScrollView(this);
           TextView outputText = new TextView(this);
           outputText.setTextSize(12);
-          outputText.setTextColor(0xff20375b);
+          outputText.setTextColor(0xff0d1824);
           outputText.setTypeface(android.graphics.Typeface.MONOSPACE);
           outputText.setPadding(dp(12), dp(12), dp(12), dp(12));
           outputText.setBackgroundResource(R.drawable.liquid_glass_panel);
@@ -2016,121 +2018,203 @@ public class MainActivity extends BaseActivity {
           panel.setOrientation(LinearLayout.VERTICAL);
           panel.setPadding(dp(16), dp(16), dp(16), dp(16));
 
-          // 设备选择
-          EditText deviceInput = new EditText(this);
-          deviceInput.setHint(t("设备 ID", "Device ID"));
-          deviceInput.setTextSize(14);
-          deviceInput.setTextColor(0xff20375b);
-          deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-          deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
-          panel.addView(deviceInput);
+          TextView title = new TextView(this);
+          title.setText(t("Fastboot 刷机", "Fastboot Flash"));
+          title.setTextSize(18);
+          title.setTextColor(0xff0d1824);
+          title.setTypeface(null, 1);
+          title.setGravity(Gravity.CENTER);
+          panel.addView(title);
 
-          // 备份区域
-          TextView backupLabel = new TextView(this);
-          backupLabel.setText(t("备份应用数据", "Backup App Data"));
-          backupLabel.setTextSize(16);
-          backupLabel.setTextColor(0xff20375b);
-          backupLabel.setTypeface(null, 1);
-          LinearLayout.LayoutParams backupTitleLp = new LinearLayout.LayoutParams(-1, -2);
-          backupTitleLp.topMargin = dp(16);
-          panel.addView(backupLabel, backupTitleLp);
+          TextView hint = new TextView(this);
+          hint.setText(t("给连接的设备刷入镜像文件", "Flash images to connected device"));
+          hint.setTextSize(12);
+          hint.setTextColor(0xff1a2332);
+          hint.setGravity(Gravity.CENTER);
+          LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+          hintLp.topMargin = dp(4);
+          panel.addView(hint, hintLp);
 
-          EditText packageInput = new EditText(this);
-          packageInput.setHint(t("包名", "Package Name"));
-          packageInput.setTextSize(14);
-          packageInput.setTextColor(0xff20375b);
-          packageInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-          packageInput.setBackgroundResource(R.drawable.liquid_glass_panel);
-          LinearLayout.LayoutParams pkgLp = new LinearLayout.LayoutParams(-1, -2);
-          pkgLp.topMargin = dp(8);
-          panel.addView(packageInput, pkgLp);
+          // 检测 Fastboot 设备按钮
+          Button detectButton = new Button(this);
+          detectButton.setText(t("检测 Fastboot 设备", "Detect Fastboot Device"));
+          detectButton.setTextSize(14);
+          detectButton.setTextColor(Color.WHITE);
+          detectButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          detectButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          LinearLayout.LayoutParams detectLp = new LinearLayout.LayoutParams(-1, -2);
+          detectLp.topMargin = dp(16);
+          panel.addView(detectButton, detectLp);
 
-          EditText backupPathInput = new EditText(this);
-          backupPathInput.setHint(t("备份文件路径", "Backup File Path"));
-          backupPathInput.setTextSize(14);
-          backupPathInput.setTextColor(0xff20375b);
-          backupPathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-          backupPathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
-          LinearLayout.LayoutParams backupPathLp = new LinearLayout.LayoutParams(-1, -2);
-          backupPathLp.topMargin = dp(8);
-          panel.addView(backupPathInput, backupPathLp);
+          TextView deviceStatus = new TextView(this);
+          deviceStatus.setText(t("未检测到设备", "No device detected"));
+          deviceStatus.setTextSize(14);
+          deviceStatus.setTextColor(0xff1a2332);
+          deviceStatus.setGravity(Gravity.CENTER);
+          LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
+          statusLp.topMargin = dp(8);
+          panel.addView(deviceStatus, statusLp);
 
-          Button backupButton = new Button(this);
-          backupButton.setText(t("备份", "Backup"));
-          backupButton.setTextSize(14);
-          backupButton.setTextColor(Color.WHITE);
-          backupButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          backupButton.setPadding(dp(20), dp(12), dp(20), dp(12));
-          backupButton.setOnClickListener(v -> {
-              String deviceId = deviceInput.getText().toString().trim();
-              String pkg = packageInput.getText().toString().trim();
-              String backupPath = backupPathInput.getText().toString().trim();
-              if (deviceId.isEmpty() || pkg.isEmpty() || backupPath.isEmpty()) {
-                  Toast.makeText(this, t("请填写完整信息", "Please fill all fields"), Toast.LENGTH_SHORT).show();
-                  return;
-              }
+          detectButton.setOnClickListener(v -> {
               new Thread(() -> {
-                  com.topjohnwu.superuser.Shell.Result result = adbManager.backupPackage(deviceId, pkg, backupPath);
+                  com.topjohnwu.superuser.Shell.Result result = adbManager.execFastboot("devices");
                   runOnUiThread(() -> {
-                      if (result.isSuccess()) {
-                          Toast.makeText(this, t("备份成功", "Backup successful"), Toast.LENGTH_SHORT).show();
+                      if (result.isSuccess() && !result.getOut().isEmpty()) {
+                          String devices = String.join("\n", result.getOut());
+                          if (devices.contains("\tfastboot")) {
+                              deviceStatus.setText("✓ " + t("已连接 Fastboot 设备", "Fastboot device connected"));
+                              deviceStatus.setTextColor(0xff00aa00);
+                          } else {
+                              deviceStatus.setText(t("未检测到设备", "No device detected"));
+                              deviceStatus.setTextColor(0xffaa0000);
+                          }
                       } else {
-                          Toast.makeText(this, t("备份失败", "Backup failed"), Toast.LENGTH_SHORT).show();
+                          deviceStatus.setText(t("未检测到设备", "No device detected"));
+                          deviceStatus.setTextColor(0xffaa0000);
                       }
                   });
               }).start();
           });
-          LinearLayout.LayoutParams backupBtnLp = new LinearLayout.LayoutParams(-1, -2);
-          backupBtnLp.topMargin = dp(10);
-          panel.addView(backupButton, backupBtnLp);
 
-          // 恢复区域
-          TextView restoreLabel = new TextView(this);
-          restoreLabel.setText(t("恢复应用数据", "Restore App Data"));
-          restoreLabel.setTextSize(16);
-          restoreLabel.setTextColor(0xff20375b);
-          restoreLabel.setTypeface(null, 1);
-          LinearLayout.LayoutParams restoreTitleLp = new LinearLayout.LayoutParams(-1, -2);
-          restoreTitleLp.topMargin = dp(24);
-          panel.addView(restoreLabel, restoreTitleLp);
+          // 分区选择
+          TextView partitionLabel = new TextView(this);
+          partitionLabel.setText(t("选择分区", "Select Partition"));
+          partitionLabel.setTextSize(16);
+          partitionLabel.setTextColor(0xff0d1824);
+          partitionLabel.setTypeface(null, 1);
+          LinearLayout.LayoutParams partLabelLp = new LinearLayout.LayoutParams(-1, -2);
+          partLabelLp.topMargin = dp(20);
+          panel.addView(partitionLabel, partLabelLp);
 
-          EditText restorePathInput = new EditText(this);
-          restorePathInput.setHint(t("备份文件路径", "Backup File Path"));
-          restorePathInput.setTextSize(14);
-          restorePathInput.setTextColor(0xff20375b);
-          restorePathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-          restorePathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
-          LinearLayout.LayoutParams restorePathLp = new LinearLayout.LayoutParams(-1, -2);
-          restorePathLp.topMargin = dp(8);
-          panel.addView(restorePathInput, restorePathLp);
+          String[] partitions = {"boot", "recovery", "system", "vendor", "userdata", "cache", "vbmeta", "dtbo", "super"};
+          android.widget.Spinner partitionSpinner = new android.widget.Spinner(this);
+          android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, partitions);
+          adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+          partitionSpinner.setAdapter(adapter);
+          LinearLayout.LayoutParams spinnerLp = new LinearLayout.LayoutParams(-1, -2);
+          spinnerLp.topMargin = dp(8);
+          panel.addView(partitionSpinner, spinnerLp);
 
-          Button restoreButton = new Button(this);
-          restoreButton.setText(t("恢复", "Restore"));
-          restoreButton.setTextSize(14);
-          restoreButton.setTextColor(Color.WHITE);
-          restoreButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          restoreButton.setPadding(dp(20), dp(12), dp(20), dp(12));
-          restoreButton.setOnClickListener(v -> {
-              String deviceId = deviceInput.getText().toString().trim();
-              String restorePath = restorePathInput.getText().toString().trim();
-              if (deviceId.isEmpty() || restorePath.isEmpty()) {
-                  Toast.makeText(this, t("请填写完整信息", "Please fill all fields"), Toast.LENGTH_SHORT).show();
+          // 镜像文件路径
+          TextView fileLabel = new TextView(this);
+          fileLabel.setText(t("镜像文件", "Image File"));
+          fileLabel.setTextSize(16);
+          fileLabel.setTextColor(0xff0d1824);
+          fileLabel.setTypeface(null, 1);
+          LinearLayout.LayoutParams fileLabelLp = new LinearLayout.LayoutParams(-1, -2);
+          fileLabelLp.topMargin = dp(16);
+          panel.addView(fileLabel, fileLabelLp);
+
+          fastbootFilePathInput = new EditText(this);
+          fastbootFilePathInput.setHint(t("镜像文件路径 (.img)", "Image file path (.img)"));
+          fastbootFilePathInput.setTextSize(14);
+          fastbootFilePathInput.setTextColor(0xff0d1824);
+          fastbootFilePathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          fastbootFilePathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams filePathLp = new LinearLayout.LayoutParams(-1, -2);
+          filePathLp.topMargin = dp(8);
+          panel.addView(fastbootFilePathInput, filePathLp);
+
+          // 选择文件按钮
+          Button browseButton = new Button(this);
+          browseButton.setText(t("📁 浏览文件", "📁 Browse"));
+          browseButton.setTextSize(14);
+          browseButton.setTextColor(Color.WHITE);
+          browseButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          browseButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          browseButton.setOnClickListener(v -> {
+              Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+              intent.setType("*/*");
+              intent.addCategory(Intent.CATEGORY_OPENABLE);
+              startActivityForResult(Intent.createChooser(intent, t("选择镜像文件", "Select Image File")), PICK_FASTBOOT_IMAGE);
+          });
+          LinearLayout.LayoutParams browseLp = new LinearLayout.LayoutParams(-1, -2);
+          browseLp.topMargin = dp(8);
+          panel.addView(browseButton, browseLp);
+
+          // 刷入按钮
+          Button flashButton = new Button(this);
+          flashButton.setText(t("⚡ 刷入镜像", "⚡ Flash Image"));
+          flashButton.setTextSize(16);
+          flashButton.setTextColor(Color.WHITE);
+          flashButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          flashButton.setPadding(dp(20), dp(14), dp(20), dp(14));
+          flashButton.setOnClickListener(v -> {
+              String partition = partitionSpinner.getSelectedItem().toString();
+              String imagePath = fastbootFilePathInput.getText().toString().trim();
+              if (imagePath.isEmpty()) {
+                  Toast.makeText(this, t("请选择镜像文件", "Please select an image file"), Toast.LENGTH_SHORT).show();
                   return;
               }
+              new android.app.AlertDialog.Builder(this)
+                  .setTitle(t("确认刷入", "Confirm Flash"))
+                  .setMessage(t("确定要刷入 ", "Flash ") + partition + t(" 分区吗？\n此操作有风险！", " partition?\nThis operation is risky!"))
+                  .setPositiveButton(t("刷入", "Flash"), (dialog, which) -> {
+                      new Thread(() -> {
+                          runOnUiThread(() -> Toast.makeText(this, t("开始刷入...", "Flashing..."), Toast.LENGTH_SHORT).show());
+                          com.topjohnwu.superuser.Shell.Result result = adbManager.execFastboot("flash", partition, imagePath);
+                          runOnUiThread(() -> {
+                              if (result.isSuccess()) {
+                                  Toast.makeText(this, t("刷入成功！", "Flash successful!"), Toast.LENGTH_LONG).show();
+                              } else {
+                                  String error = result.getErr().isEmpty() ? t("未知错误", "Unknown error") : String.join("\n", result.getErr());
+                                  Toast.makeText(this, t("刷入失败: ", "Failed: ") + error, Toast.LENGTH_LONG).show();
+                              }
+                          });
+                      }).start();
+                  })
+                  .setNegativeButton(t("取消", "Cancel"), null)
+                  .show();
+          });
+          LinearLayout.LayoutParams flashLp = new LinearLayout.LayoutParams(-1, -2);
+          flashLp.topMargin = dp(20);
+          panel.addView(flashButton, flashLp);
+
+          // 其他 Fastboot 操作
+          TextView otherLabel = new TextView(this);
+          otherLabel.setText(t("其他操作", "Other Operations"));
+          otherLabel.setTextSize(16);
+          otherLabel.setTextColor(0xff0d1824);
+          otherLabel.setTypeface(null, 1);
+          LinearLayout.LayoutParams otherLabelLp = new LinearLayout.LayoutParams(-1, -2);
+          otherLabelLp.topMargin = dp(20);
+          panel.addView(otherLabel, otherLabelLp);
+
+          LinearLayout buttonRow = new LinearLayout(this);
+          buttonRow.setOrientation(LinearLayout.HORIZONTAL);
+          LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+          rowLp.topMargin = dp(10);
+          panel.addView(buttonRow, rowLp);
+
+          Button rebootButton = new Button(this);
+          rebootButton.setText(t("重启", "Reboot"));
+          rebootButton.setTextSize(12);
+          rebootButton.setTextColor(Color.WHITE);
+          rebootButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          rebootButton.setPadding(dp(12), dp(8), dp(12), dp(8));
+          rebootButton.setOnClickListener(v -> {
               new Thread(() -> {
-                  com.topjohnwu.superuser.Shell.Result result = adbManager.restoreBackup(deviceId, restorePath);
-                  runOnUiThread(() -> {
-                      if (result.isSuccess()) {
-                          Toast.makeText(this, t("恢复成功", "Restore successful"), Toast.LENGTH_SHORT).show();
-                      } else {
-                          Toast.makeText(this, t("恢复失败", "Restore failed"), Toast.LENGTH_SHORT).show();
-                      }
-                  });
+                  adbManager.execFastboot("reboot");
+                  runOnUiThread(() -> Toast.makeText(this, t("已发送重启命令", "Reboot command sent"), Toast.LENGTH_SHORT).show());
               }).start();
           });
-          LinearLayout.LayoutParams restoreBtnLp = new LinearLayout.LayoutParams(-1, -2);
-          restoreBtnLp.topMargin = dp(10);
-          panel.addView(restoreButton, restoreBtnLp);
+          buttonRow.addView(rebootButton, new LinearLayout.LayoutParams(0, -2, 1f));
+
+          Button bootloaderButton = new Button(this);
+          bootloaderButton.setText(t("重启到 Bootloader", "Reboot Bootloader"));
+          bootloaderButton.setTextSize(12);
+          bootloaderButton.setTextColor(Color.WHITE);
+          bootloaderButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          bootloaderButton.setPadding(dp(12), dp(8), dp(12), dp(8));
+          bootloaderButton.setOnClickListener(v -> {
+              new Thread(() -> {
+                  adbManager.execFastboot("reboot-bootloader");
+                  runOnUiThread(() -> Toast.makeText(this, t("已重启到 Bootloader", "Rebooted to bootloader"), Toast.LENGTH_SHORT).show());
+              }).start();
+          });
+          LinearLayout.LayoutParams bootloaderLp = new LinearLayout.LayoutParams(0, -2, 1f);
+          bootloaderLp.leftMargin = dp(8);
+          buttonRow.addView(bootloaderButton, bootloaderLp);
 
           return panel;
       }
@@ -2960,7 +3044,7 @@ public class MainActivity extends BaseActivity {
          installWithDsuSideloaderFlow(pendingInstallZip);
      }
      private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
-        @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } }
+        @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } else if(r==PICK_FASTBOOT_IMAGE){ String path=getPath(u,"fastboot.img"); if(!path.isEmpty() && fastbootFilePathInput != null){ fastbootFilePathInput.setText(path); } } }
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
