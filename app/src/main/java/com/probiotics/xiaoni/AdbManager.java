@@ -208,4 +208,116 @@ public class AdbManager {
     public File getFastbootBinary() {
         return fastbootBinary;
     }
+
+    /**
+     * 分区信息类
+     */
+    public static class PartitionInfo {
+        public String name;
+        public String blockDevice;
+        public long sizeBytes;
+        public String slot;
+
+        public PartitionInfo(String name, String blockDevice, long sizeBytes) {
+            this.name = name;
+            this.blockDevice = blockDevice;
+            this.sizeBytes = sizeBytes;
+            
+            // 判断槽位
+            if (name.endsWith("_a")) {
+                this.slot = "A";
+            } else if (name.endsWith("_b")) {
+                this.slot = "B";
+            } else {
+                this.slot = "其他";
+            }
+        }
+
+        public String getSizeMB() {
+            return String.format("%.2f", sizeBytes / 1024.0 / 1024.0);
+        }
+    }
+
+    /**
+     * 读取本机所有分区
+     */
+    public List<PartitionInfo> getLocalPartitions() {
+        List<PartitionInfo> partitions = new ArrayList<>();
+        
+        // 方法1：从 /dev/block/by-name/ 读取（推荐）
+        Shell.Result byNameResult = Shell.cmd("ls -l /dev/block/by-name/").exec();
+        if (byNameResult.isSuccess()) {
+            for (String line : byNameResult.getOut()) {
+                if (line.contains("->")) {
+                    String[] parts = line.split("\\s+");
+                    if (parts.length >= 11) {
+                        String name = parts[8];
+                        String target = parts[10];
+                        String blockDevice = "/dev/block/by-name/" + name;
+                        
+                        // 获取分区大小
+                        Shell.Result sizeResult = Shell.cmd("blockdev --getsize64 " + blockDevice).exec();
+                        long size = 0;
+                        if (sizeResult.isSuccess() && !sizeResult.getOut().isEmpty()) {
+                            try {
+                                size = Long.parseLong(sizeResult.getOut().get(0).trim());
+                            } catch (Exception ignored) {}
+                        }
+                        
+                        partitions.add(new PartitionInfo(name, blockDevice, size));
+                    }
+                }
+            }
+        }
+        
+        // 方法2：如果方法1失败，尝试从 /proc/partitions 读取
+        if (partitions.isEmpty()) {
+            Shell.Result procResult = Shell.cmd("cat /proc/partitions").exec();
+            if (procResult.isSuccess()) {
+                for (String line : procResult.getOut()) {
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length >= 4 && !parts[0].equals("major")) {
+                        try {
+                            long blocks = Long.parseLong(parts[2]);
+                            String name = parts[3];
+                            String blockDevice = "/dev/block/" + name;
+                            partitions.add(new PartitionInfo(name, blockDevice, blocks * 1024));
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+        }
+        
+        return partitions;
+    }
+
+    /**
+     * 提取分区镜像到文件
+     */
+    public Shell.Result extractPartition(String blockDevice, String outputPath) {
+        return Shell.cmd("dd if=" + blockDevice + " of=" + outputPath + " bs=4M").exec();
+    }
+
+    /**
+     * 刷入镜像到分区
+     */
+    public Shell.Result flashPartition(String imagePath, String blockDevice) {
+        return Shell.cmd("dd if=" + imagePath + " of=" + blockDevice + " bs=4M").exec();
+    }
+
+    /**
+     * 获取 Fastboot 设备列表
+     */
+    public List<String> getFastbootDevices() {
+        Shell.Result result = execFastboot("devices");
+        List<String> devices = new ArrayList<>();
+        if (result.isSuccess()) {
+            for (String line : result.getOut()) {
+                if (line.contains("\tfastboot")) {
+                    devices.add(line.split("\t")[0]);
+                }
+            }
+        }
+        return devices;
+    }
 }

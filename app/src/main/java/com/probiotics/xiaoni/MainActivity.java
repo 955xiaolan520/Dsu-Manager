@@ -2057,6 +2057,14 @@ public class MainActivity extends BaseActivity {
           searchBox.setPadding(dp(16), dp(12), dp(16), dp(12));
           searchBox.setBackgroundResource(R.drawable.liquid_glass_panel);
           searchBox.setSingleLine(true);
+          searchBox.addTextChangedListener(new android.text.TextWatcher() {
+              @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+              @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                  currentSearchQuery = s.toString();
+                  refreshPartitionList();
+              }
+              @Override public void afterTextChanged(android.text.Editable s) {}
+          });
           LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, -2);
           searchLp.topMargin = dp(16);
           panel.addView(searchBox, searchLp);
@@ -2145,17 +2153,17 @@ public class MainActivity extends BaseActivity {
           scrollView.addView(partitionList, new LinearLayout.LayoutParams(-1, -2));
 
           // 底部执行按钮
-          Button executeButton = new Button(this);
-          executeButton.setText(t("⚡ 提取选中分区", "⚡ Extract Selected"));
-          executeButton.setTextSize(16);
-          executeButton.setTextColor(Color.WHITE);
-          executeButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          executeButton.setPadding(dp(20), dp(14), dp(20), dp(14));
-          executeButton.setTypeface(null, 1);
-          executeButton.setOnClickListener(v -> executePartitionOperation());
+          executePartitionButton = new Button(this);
+          executePartitionButton.setText(t("⚡ 提取选中分区", "⚡ Extract Selected"));
+          executePartitionButton.setTextSize(16);
+          executePartitionButton.setTextColor(Color.WHITE);
+          executePartitionButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          executePartitionButton.setPadding(dp(20), dp(14), dp(20), dp(14));
+          executePartitionButton.setTypeface(null, 1);
+          executePartitionButton.setOnClickListener(v -> executePartitionOperation());
           LinearLayout.LayoutParams execLp = new LinearLayout.LayoutParams(-1, -2);
           execLp.topMargin = dp(12);
-          panel.addView(executeButton, execLp);
+          panel.addView(executePartitionButton, execLp);
 
           // 初始化分区列表
           loadPartitionList(partitionList, true);
@@ -2163,40 +2171,81 @@ public class MainActivity extends BaseActivity {
           return panel;
       }
 
-      private void loadPartitionList(LinearLayout container, boolean extractMode) {
-          container.removeAllViews();
-          
-          // 模拟分区数据（实际应从 /proc/partitions 或 block 设备读取）
-          String[][] partitions = {
-              {"boot_a", "A", "32"},
-              {"boot_b", "B", "32"},
-              {"vendor_boot_a", "A", "64"},
-              {"vendor_boot_b", "B", "64"},
-              {"dtbo_a", "A", "8"},
-              {"dtbo_b", "B", "8"},
-              {"vbmeta_a", "A", "1"},
-              {"vbmeta_b", "B", "1"},
-              {"system_a", "A", "2048"},
-              {"system_b", "B", "2048"},
-              {"vendor_a", "A", "512"},
-              {"vendor_b", "B", "512"},
-              {"product_a", "A", "1024"},
-              {"product_b", "B", "1024"},
-              {"odm_a", "A", "256"},
-              {"odm_b", "B", "256"},
-              {"userdata", "其他", "16384"},
-              {"metadata", "其他", "16"},
-              {"persist", "其他", "32"},
-              {"misc", "其他", "1"}
-          };
+      private List<AdbManager.PartitionInfo> allPartitions = new ArrayList<>();
+      private List<LinearLayout> partitionItemViews = new ArrayList<>();
+      private LinearLayout partitionListContainer;
+      private boolean currentExtractMode = true;
+      private int currentSlotFilter = 0;
+      private String currentSearchQuery = "";
+      private Button executePartitionButton;
 
-          for (String[] partition : partitions) {
-              LinearLayout item = createPartitionItem(partition[0], partition[1], partition[2], extractMode);
-              container.addView(item);
+      private void loadPartitionList(LinearLayout container, boolean extractMode) {
+          this.partitionListContainer = container;
+          this.currentExtractMode = extractMode;
+          container.removeAllViews();
+          partitionItemViews.clear();
+          
+          TextView loadingText = new TextView(this);
+          loadingText.setText(t("正在读取分区信息...", "Loading partitions..."));
+          loadingText.setTextSize(14);
+          loadingText.setTextColor(0xff1a2332);
+          loadingText.setGravity(Gravity.CENTER);
+          loadingText.setPadding(dp(16), dp(32), dp(16), dp(32));
+          container.addView(loadingText);
+          
+          // 后台读取分区
+          new Thread(() -> {
+              allPartitions = adbManager.getLocalPartitions();
+              runOnUiThread(() -> {
+                  container.removeAllViews();
+                  if (allPartitions.isEmpty()) {
+                      TextView emptyText = new TextView(this);
+                      emptyText.setText(t("无法读取分区信息", "Failed to read partitions"));
+                      emptyText.setTextSize(14);
+                      emptyText.setTextColor(0xffaa0000);
+                      emptyText.setGravity(Gravity.CENTER);
+                      emptyText.setPadding(dp(16), dp(32), dp(16), dp(32));
+                      container.addView(emptyText);
+                  } else {
+                      refreshPartitionList();
+                  }
+              });
+          }).start();
+      }
+
+      private void refreshPartitionList() {
+          if (partitionListContainer == null) return;
+          partitionListContainer.removeAllViews();
+          partitionItemViews.clear();
+          
+          for (AdbManager.PartitionInfo partition : allPartitions) {
+              // 应用搜索过滤
+              if (!currentSearchQuery.isEmpty() && !partition.name.toLowerCase().contains(currentSearchQuery.toLowerCase())) {
+                  continue;
+              }
+              
+              // 应用槽位过滤
+              if (currentSlotFilter == 1 && !partition.slot.equals("A")) continue;
+              if (currentSlotFilter == 2 && !partition.slot.equals("B")) continue;
+              if (currentSlotFilter == 3 && !partition.slot.equals("其他")) continue;
+              
+              LinearLayout item = createPartitionItem(partition, currentExtractMode);
+              partitionListContainer.addView(item);
+              partitionItemViews.add(item);
+          }
+          
+          if (partitionItemViews.isEmpty()) {
+              TextView emptyText = new TextView(this);
+              emptyText.setText(t("没有符合条件的分区", "No matching partitions"));
+              emptyText.setTextSize(14);
+              emptyText.setTextColor(0xff1a2332);
+              emptyText.setGravity(Gravity.CENTER);
+              emptyText.setPadding(dp(16), dp(32), dp(16), dp(32));
+              partitionListContainer.addView(emptyText);
           }
       }
 
-      private LinearLayout createPartitionItem(String name, String slot, String sizeMB, boolean extractMode) {
+      private LinearLayout createPartitionItem(AdbManager.PartitionInfo partition, boolean extractMode) {
           LinearLayout item = new LiquidGlassPanel(this, 12f);
           item.setOrientation(LinearLayout.HORIZONTAL);
           item.setPadding(dp(16), dp(14), dp(16), dp(14));
@@ -2210,23 +2259,32 @@ public class MainActivity extends BaseActivity {
           item.addView(textInfo, new LinearLayout.LayoutParams(0, -2, 1f));
 
           TextView nameText = new TextView(this);
-          nameText.setText(name);
+          nameText.setText(partition.name);
           nameText.setTextSize(16);
           nameText.setTextColor(0xff0d1824);
           nameText.setTypeface(null, 1);
           textInfo.addView(nameText);
 
           TextView infoText = new TextView(this);
-          infoText.setText(slot + " · " + t("大小: ", "Size: ") + sizeMB + "MB");
+          infoText.setText(partition.slot + " · " + t("大小: ", "Size: ") + partition.getSizeMB() + "MB");
           infoText.setTextSize(12);
           infoText.setTextColor(0xff1a2332);
           LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(-2, -2);
           infoLp.topMargin = dp(4);
           textInfo.addView(infoText, infoLp);
 
+          TextView pathText = new TextView(this);
+          pathText.setText(partition.blockDevice);
+          pathText.setTextSize(10);
+          pathText.setTextColor(0xff4a5568);
+          LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-2, -2);
+          pathLp.topMargin = dp(2);
+          textInfo.addView(pathText, pathLp);
+
           // 右侧勾选框
           android.widget.CheckBox checkBox = new android.widget.CheckBox(this);
           checkBox.setButtonDrawable(android.R.drawable.checkbox_on_background);
+          checkBox.setTag(partition);
           item.addView(checkBox, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
           item.setOnClickListener(v -> checkBox.setChecked(!checkBox.isChecked()));
@@ -2235,28 +2293,149 @@ public class MainActivity extends BaseActivity {
       }
 
       private void rebuildPartitionList(boolean extractMode) {
-          Toast.makeText(this, extractMode ? t("切换到提取模式", "Extract mode") : t("切换到刷入模式", "Flash mode"), Toast.LENGTH_SHORT).show();
+          currentExtractMode = extractMode;
+          if (executePartitionButton != null) {
+              executePartitionButton.setText(extractMode ? 
+                  t("⚡ 提取选中分区", "⚡ Extract Selected") : 
+                  t("⚡ 刷入选中分区", "⚡ Flash Selected"));
+          }
+          refreshPartitionList();
       }
 
       private void filterPartitionsBySlot(int slotIndex) {
-          String[] filters = {t("全部", "All"), t("槽位 A", "Slot A"), t("槽位 B", "Slot B"), t("其他", "Other")};
-          Toast.makeText(this, t("筛选: ", "Filter: ") + filters[slotIndex], Toast.LENGTH_SHORT).show();
+          currentSlotFilter = slotIndex;
+          refreshPartitionList();
       }
 
       private void selectAllPartitions(boolean selectAll) {
-          Toast.makeText(this, selectAll ? t("已全选", "All selected") : t("已取消", "Deselected"), Toast.LENGTH_SHORT).show();
+          for (LinearLayout item : partitionItemViews) {
+              android.widget.CheckBox checkBox = (android.widget.CheckBox) ((LinearLayout) item).getChildAt(1);
+              checkBox.setChecked(selectAll);
+          }
       }
 
       private void invertSelection() {
-          Toast.makeText(this, t("已反选", "Inverted selection"), Toast.LENGTH_SHORT).show();
+          for (LinearLayout item : partitionItemViews) {
+              android.widget.CheckBox checkBox = (android.widget.CheckBox) ((LinearLayout) item).getChildAt(1);
+              checkBox.setChecked(!checkBox.isChecked());
+          }
       }
 
       private void showOnlySelected() {
-          Toast.makeText(this, t("仅显示已选项", "Show selected only"), Toast.LENGTH_SHORT).show();
+          for (LinearLayout item : partitionItemViews) {
+              android.widget.CheckBox checkBox = (android.widget.CheckBox) ((LinearLayout) item).getChildAt(1);
+              item.setVisibility(checkBox.isChecked() ? View.VISIBLE : View.GONE);
+          }
       }
 
       private void executePartitionOperation() {
-          Toast.makeText(this, t("开始执行操作...", "Executing..."), Toast.LENGTH_SHORT).show();
+          List<AdbManager.PartitionInfo> selectedPartitions = new ArrayList<>();
+          for (LinearLayout item : partitionItemViews) {
+              if (item.getVisibility() != View.VISIBLE) continue;
+              android.widget.CheckBox checkBox = (android.widget.CheckBox) ((LinearLayout) item).getChildAt(1);
+              if (checkBox.isChecked()) {
+                  selectedPartitions.add((AdbManager.PartitionInfo) checkBox.getTag());
+              }
+          }
+          
+          if (selectedPartitions.isEmpty()) {
+              Toast.makeText(this, t("请选择至少一个分区", "Please select at least one partition"), Toast.LENGTH_SHORT).show();
+              return;
+          }
+          
+          if (currentExtractMode) {
+              extractPartitions(selectedPartitions);
+          } else {
+              flashPartitions(selectedPartitions);
+          }
+      }
+
+      private void extractPartitions(List<AdbManager.PartitionInfo> partitions) {
+          String outputDir = "/sdcard/partition_backups";
+          
+          new android.app.AlertDialog.Builder(this)
+              .setTitle(t("确认提取", "Confirm Extract"))
+              .setMessage(t("将提取 ", "Extract ") + partitions.size() + t(" 个分区到:\n", " partitions to:\n") + outputDir)
+              .setPositiveButton(t("提取", "Extract"), (dialog, which) -> {
+                  new Thread(() -> {
+                      com.topjohnwu.superuser.Shell.cmd("mkdir -p " + outputDir).exec();
+                      int success = 0;
+                      int failed = 0;
+                      
+                      for (AdbManager.PartitionInfo partition : partitions) {
+                          runOnUiThread(() -> Toast.makeText(this, t("正在提取: ", "Extracting: ") + partition.name, Toast.LENGTH_SHORT).show());
+                          
+                          String outputPath = outputDir + "/" + partition.name + ".img";
+                          com.topjohnwu.superuser.Shell.Result result = adbManager.extractPartition(partition.blockDevice, outputPath);
+                          
+                          if (result.isSuccess()) {
+                              success++;
+                          } else {
+                              failed++;
+                          }
+                      }
+                      
+                      final int finalSuccess = success;
+                      final int finalFailed = failed;
+                      runOnUiThread(() -> {
+                          new android.app.AlertDialog.Builder(this)
+                              .setTitle(t("提取完成", "Extract Complete"))
+                              .setMessage(t("成功: ", "Success: ") + finalSuccess + "\n" + 
+                                        t("失败: ", "Failed: ") + finalFailed + "\n" +
+                                        t("保存位置: ", "Location: ") + outputDir)
+                              .setPositiveButton(t("确定", "OK"), null)
+                              .show();
+                      });
+                  }).start();
+              })
+              .setNegativeButton(t("取消", "Cancel"), null)
+              .show();
+      }
+
+      private void flashPartitions(List<AdbManager.PartitionInfo> partitions) {
+          String inputDir = "/sdcard/partition_backups";
+          
+          new android.app.AlertDialog.Builder(this)
+              .setTitle(t("⚠️ 危险操作", "⚠️ Dangerous Operation"))
+              .setMessage(t("即将刷入 ", "About to flash ") + partitions.size() + t(" 个分区！\n此操作有风险，请确保镜像文件正确！\n\n镜像目录: ", " partitions!\nThis is risky! Ensure images are correct!\n\nImage directory: ") + inputDir)
+              .setPositiveButton(t("确认刷入", "Confirm Flash"), (dialog, which) -> {
+                  new Thread(() -> {
+                      int success = 0;
+                      int failed = 0;
+                      
+                      for (AdbManager.PartitionInfo partition : partitions) {
+                          runOnUiThread(() -> Toast.makeText(this, t("正在刷入: ", "Flashing: ") + partition.name, Toast.LENGTH_SHORT).show());
+                          
+                          String imagePath = inputDir + "/" + partition.name + ".img";
+                          com.topjohnwu.superuser.Shell.Result checkFile = com.topjohnwu.superuser.Shell.cmd("test -f " + imagePath).exec();
+                          if (!checkFile.isSuccess()) {
+                              failed++;
+                              continue;
+                          }
+                          
+                          com.topjohnwu.superuser.Shell.Result result = adbManager.flashPartition(imagePath, partition.blockDevice);
+                          
+                          if (result.isSuccess()) {
+                              success++;
+                          } else {
+                              failed++;
+                          }
+                      }
+                      
+                      final int finalSuccess = success;
+                      final int finalFailed = failed;
+                      runOnUiThread(() -> {
+                          new android.app.AlertDialog.Builder(this)
+                              .setTitle(t("刷入完成", "Flash Complete"))
+                              .setMessage(t("成功: ", "Success: ") + finalSuccess + "\n" + 
+                                        t("失败: ", "Failed: ") + finalFailed)
+                              .setPositiveButton(t("确定", "OK"), null)
+                              .show();
+                      });
+                  }).start();
+              })
+              .setNegativeButton(t("取消", "Cancel"), null)
+              .show();
       }
 
       private LinearLayout buildMorePage() {
