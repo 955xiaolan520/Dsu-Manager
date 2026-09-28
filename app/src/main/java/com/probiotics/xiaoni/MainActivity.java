@@ -2018,205 +2018,245 @@ public class MainActivity extends BaseActivity {
           panel.setOrientation(LinearLayout.VERTICAL);
           panel.setPadding(dp(16), dp(16), dp(16), dp(16));
 
-          TextView title = new TextView(this);
-          title.setText(t("Fastboot 刷机", "Fastboot Flash"));
-          title.setTextSize(18);
-          title.setTextColor(0xff0d1824);
-          title.setTypeface(null, 1);
-          title.setGravity(Gravity.CENTER);
-          panel.addView(title);
+          // 顶部模式切换按钮
+          LinearLayout modeSwitch = new LinearLayout(this);
+          modeSwitch.setOrientation(LinearLayout.HORIZONTAL);
+          modeSwitch.setGravity(Gravity.CENTER);
+          panel.addView(modeSwitch);
 
-          TextView hint = new TextView(this);
-          hint.setText(t("给连接的设备刷入镜像文件", "Flash images to connected device"));
-          hint.setTextSize(12);
-          hint.setTextColor(0xff1a2332);
-          hint.setGravity(Gravity.CENTER);
-          LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
-          hintLp.topMargin = dp(4);
-          panel.addView(hint, hintLp);
+          Button[] modeButtons = new Button[2];
+          String[] modeLabels = {t("📤 提取镜像", "📤 Extract"), t("📥 刷入镜像", "📥 Flash")};
+          
+          for (int i = 0; i < 2; i++) {
+              final int index = i;
+              Button btn = new Button(this);
+              btn.setText(modeLabels[i]);
+              btn.setTextSize(14);
+              btn.setTextColor(i == 0 ? Color.WHITE : 0xff1a2332);
+              btn.setBackgroundResource(R.drawable.liquid_glass_panel);
+              btn.setPadding(dp(24), dp(12), dp(24), dp(12));
+              btn.setTypeface(null, i == 0 ? 1 : 0);
+              LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(0, -2, 1f);
+              if (i > 0) btnLp.leftMargin = dp(12);
+              btn.setOnClickListener(v -> {
+                  for (int j = 0; j < modeButtons.length; j++) {
+                      modeButtons[j].setTextColor(j == index ? Color.WHITE : 0xff1a2332);
+                      modeButtons[j].setTypeface(null, j == index ? 1 : 0);
+                  }
+                  rebuildPartitionList(index == 0);
+              });
+              modeButtons[i] = btn;
+              modeSwitch.addView(btn, btnLp);
+          }
 
-          // 检测 Fastboot 设备按钮
-          Button detectButton = new Button(this);
-          detectButton.setText(t("检测 Fastboot 设备", "Detect Fastboot Device"));
-          detectButton.setTextSize(14);
-          detectButton.setTextColor(Color.WHITE);
-          detectButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          detectButton.setPadding(dp(20), dp(12), dp(20), dp(12));
-          LinearLayout.LayoutParams detectLp = new LinearLayout.LayoutParams(-1, -2);
-          detectLp.topMargin = dp(16);
-          panel.addView(detectButton, detectLp);
+          // 搜索框
+          EditText searchBox = new EditText(this);
+          searchBox.setHint(t("🔍 搜索分区名称", "🔍 Search partition"));
+          searchBox.setTextSize(14);
+          searchBox.setTextColor(0xff0d1824);
+          searchBox.setPadding(dp(16), dp(12), dp(16), dp(12));
+          searchBox.setBackgroundResource(R.drawable.liquid_glass_panel);
+          searchBox.setSingleLine(true);
+          LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, -2);
+          searchLp.topMargin = dp(16);
+          panel.addView(searchBox, searchLp);
 
-          TextView deviceStatus = new TextView(this);
-          deviceStatus.setText(t("未检测到设备", "No device detected"));
-          deviceStatus.setTextSize(14);
-          deviceStatus.setTextColor(0xff1a2332);
-          deviceStatus.setGravity(Gravity.CENTER);
-          LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
-          statusLp.topMargin = dp(8);
-          panel.addView(deviceStatus, statusLp);
+          // 槽位筛选按钮组
+          LinearLayout slotFilter = new LinearLayout(this);
+          slotFilter.setOrientation(LinearLayout.HORIZONTAL);
+          slotFilter.setGravity(Gravity.CENTER);
+          LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(-1, -2);
+          slotLp.topMargin = dp(12);
+          panel.addView(slotFilter, slotLp);
 
-          detectButton.setOnClickListener(v -> {
-              new Thread(() -> {
-                  com.topjohnwu.superuser.Shell.Result result = adbManager.execFastboot("devices");
-                  runOnUiThread(() -> {
-                      if (result.isSuccess() && !result.getOut().isEmpty()) {
-                          String devices = String.join("\n", result.getOut());
-                          if (devices.contains("\tfastboot")) {
-                              deviceStatus.setText("✓ " + t("已连接 Fastboot 设备", "Fastboot device connected"));
-                              deviceStatus.setTextColor(0xff00aa00);
-                          } else {
-                              deviceStatus.setText(t("未检测到设备", "No device detected"));
-                              deviceStatus.setTextColor(0xffaa0000);
-                          }
-                      } else {
-                          deviceStatus.setText(t("未检测到设备", "No device detected"));
-                          deviceStatus.setTextColor(0xffaa0000);
-                      }
-                  });
-              }).start();
-          });
+          Button[] slotButtons = new Button[4];
+          String[] slotLabels = {t("全部", "All"), t("槽位 A", "Slot A"), t("槽位 B", "Slot B"), t("其他", "Other")};
+          
+          for (int i = 0; i < 4; i++) {
+              final int index = i;
+              Button btn = new Button(this);
+              btn.setText(slotLabels[i]);
+              btn.setTextSize(12);
+              btn.setTextColor(i == 0 ? 0xff0d1824 : 0xff1a2332);
+              btn.setBackgroundResource(R.drawable.liquid_glass_panel);
+              btn.setPadding(dp(16), dp(8), dp(16), dp(8));
+              btn.setTypeface(null, i == 0 ? 1 : 0);
+              LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(0, -2, 1f);
+              if (i > 0) btnLp.leftMargin = dp(8);
+              btn.setOnClickListener(v -> {
+                  for (int j = 0; j < slotButtons.length; j++) {
+                      slotButtons[j].setTextColor(j == index ? 0xff0d1824 : 0xff1a2332);
+                      slotButtons[j].setTypeface(null, j == index ? 1 : 0);
+                  }
+                  filterPartitionsBySlot(index);
+              });
+              slotButtons[i] = btn;
+              slotFilter.addView(btn, btnLp);
+          }
 
-          // 分区选择
-          TextView partitionLabel = new TextView(this);
-          partitionLabel.setText(t("选择分区", "Select Partition"));
-          partitionLabel.setTextSize(16);
-          partitionLabel.setTextColor(0xff0d1824);
-          partitionLabel.setTypeface(null, 1);
-          LinearLayout.LayoutParams partLabelLp = new LinearLayout.LayoutParams(-1, -2);
-          partLabelLp.topMargin = dp(20);
-          panel.addView(partitionLabel, partLabelLp);
+          // 批量操作按钮
+          LinearLayout batchActions = new LinearLayout(this);
+          batchActions.setOrientation(LinearLayout.HORIZONTAL);
+          LinearLayout.LayoutParams batchLp = new LinearLayout.LayoutParams(-1, -2);
+          batchLp.topMargin = dp(12);
+          panel.addView(batchActions, batchLp);
 
-          String[] partitions = {"boot", "recovery", "system", "vendor", "userdata", "cache", "vbmeta", "dtbo", "super"};
-          android.widget.Spinner partitionSpinner = new android.widget.Spinner(this);
-          android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, partitions);
-          adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-          partitionSpinner.setAdapter(adapter);
-          LinearLayout.LayoutParams spinnerLp = new LinearLayout.LayoutParams(-1, -2);
-          spinnerLp.topMargin = dp(8);
-          panel.addView(partitionSpinner, spinnerLp);
+          Button selectAllBtn = new Button(this);
+          selectAllBtn.setText(t("全选", "Select All"));
+          selectAllBtn.setTextSize(12);
+          selectAllBtn.setTextColor(0xff1a2332);
+          selectAllBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
+          selectAllBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
+          selectAllBtn.setOnClickListener(v -> selectAllPartitions(true));
+          batchActions.addView(selectAllBtn, new LinearLayout.LayoutParams(0, -2, 1f));
 
-          // 镜像文件路径
-          TextView fileLabel = new TextView(this);
-          fileLabel.setText(t("镜像文件", "Image File"));
-          fileLabel.setTextSize(16);
-          fileLabel.setTextColor(0xff0d1824);
-          fileLabel.setTypeface(null, 1);
-          LinearLayout.LayoutParams fileLabelLp = new LinearLayout.LayoutParams(-1, -2);
-          fileLabelLp.topMargin = dp(16);
-          panel.addView(fileLabel, fileLabelLp);
+          Button deselectAllBtn = new Button(this);
+          deselectAllBtn.setText(t("反选", "Invert"));
+          deselectAllBtn.setTextSize(12);
+          deselectAllBtn.setTextColor(0xff1a2332);
+          deselectAllBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
+          deselectAllBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
+          deselectAllBtn.setOnClickListener(v -> invertSelection());
+          LinearLayout.LayoutParams deselectLp = new LinearLayout.LayoutParams(0, -2, 1f);
+          deselectLp.leftMargin = dp(8);
+          batchActions.addView(deselectAllBtn, deselectLp);
 
-          fastbootFilePathInput = new EditText(this);
-          fastbootFilePathInput.setHint(t("镜像文件路径 (.img)", "Image file path (.img)"));
-          fastbootFilePathInput.setTextSize(14);
-          fastbootFilePathInput.setTextColor(0xff0d1824);
-          fastbootFilePathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-          fastbootFilePathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
-          LinearLayout.LayoutParams filePathLp = new LinearLayout.LayoutParams(-1, -2);
-          filePathLp.topMargin = dp(8);
-          panel.addView(fastbootFilePathInput, filePathLp);
+          Button viewSelectedBtn = new Button(this);
+          viewSelectedBtn.setText(t("仅看已选", "Show Selected"));
+          viewSelectedBtn.setTextSize(12);
+          viewSelectedBtn.setTextColor(0xff1a2332);
+          viewSelectedBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
+          viewSelectedBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
+          viewSelectedBtn.setOnClickListener(v -> showOnlySelected());
+          LinearLayout.LayoutParams viewLp = new LinearLayout.LayoutParams(0, -2, 1f);
+          viewLp.leftMargin = dp(8);
+          batchActions.addView(viewSelectedBtn, viewLp);
 
-          // 选择文件按钮
-          Button browseButton = new Button(this);
-          browseButton.setText(t("📁 浏览文件", "📁 Browse"));
-          browseButton.setTextSize(14);
-          browseButton.setTextColor(Color.WHITE);
-          browseButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          browseButton.setPadding(dp(20), dp(12), dp(20), dp(12));
-          browseButton.setOnClickListener(v -> {
-              Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-              intent.setType("*/*");
-              intent.addCategory(Intent.CATEGORY_OPENABLE);
-              startActivityForResult(Intent.createChooser(intent, t("选择镜像文件", "Select Image File")), PICK_FASTBOOT_IMAGE);
-          });
-          LinearLayout.LayoutParams browseLp = new LinearLayout.LayoutParams(-1, -2);
-          browseLp.topMargin = dp(8);
-          panel.addView(browseButton, browseLp);
+          // 分区列表容器
+          ScrollView scrollView = new ScrollView(this);
+          scrollView.setVerticalScrollBarEnabled(false);
+          LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, 0);
+          scrollLp.topMargin = dp(12);
+          scrollLp.weight = 1;
+          panel.addView(scrollView, scrollLp);
 
-          // 刷入按钮
-          Button flashButton = new Button(this);
-          flashButton.setText(t("⚡ 刷入镜像", "⚡ Flash Image"));
-          flashButton.setTextSize(16);
-          flashButton.setTextColor(Color.WHITE);
-          flashButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          flashButton.setPadding(dp(20), dp(14), dp(20), dp(14));
-          flashButton.setOnClickListener(v -> {
-              String partition = partitionSpinner.getSelectedItem().toString();
-              String imagePath = fastbootFilePathInput.getText().toString().trim();
-              if (imagePath.isEmpty()) {
-                  Toast.makeText(this, t("请选择镜像文件", "Please select an image file"), Toast.LENGTH_SHORT).show();
-                  return;
-              }
-              new android.app.AlertDialog.Builder(this)
-                  .setTitle(t("确认刷入", "Confirm Flash"))
-                  .setMessage(t("确定要刷入 ", "Flash ") + partition + t(" 分区吗？\n此操作有风险！", " partition?\nThis operation is risky!"))
-                  .setPositiveButton(t("刷入", "Flash"), (dialog, which) -> {
-                      new Thread(() -> {
-                          runOnUiThread(() -> Toast.makeText(this, t("开始刷入...", "Flashing..."), Toast.LENGTH_SHORT).show());
-                          com.topjohnwu.superuser.Shell.Result result = adbManager.execFastboot("flash", partition, imagePath);
-                          runOnUiThread(() -> {
-                              if (result.isSuccess()) {
-                                  Toast.makeText(this, t("刷入成功！", "Flash successful!"), Toast.LENGTH_LONG).show();
-                              } else {
-                                  String error = result.getErr().isEmpty() ? t("未知错误", "Unknown error") : String.join("\n", result.getErr());
-                                  Toast.makeText(this, t("刷入失败: ", "Failed: ") + error, Toast.LENGTH_LONG).show();
-                              }
-                          });
-                      }).start();
-                  })
-                  .setNegativeButton(t("取消", "Cancel"), null)
-                  .show();
-          });
-          LinearLayout.LayoutParams flashLp = new LinearLayout.LayoutParams(-1, -2);
-          flashLp.topMargin = dp(20);
-          panel.addView(flashButton, flashLp);
+          LinearLayout partitionList = new LinearLayout(this);
+          partitionList.setOrientation(LinearLayout.VERTICAL);
+          scrollView.addView(partitionList, new LinearLayout.LayoutParams(-1, -2));
 
-          // 其他 Fastboot 操作
-          TextView otherLabel = new TextView(this);
-          otherLabel.setText(t("其他操作", "Other Operations"));
-          otherLabel.setTextSize(16);
-          otherLabel.setTextColor(0xff0d1824);
-          otherLabel.setTypeface(null, 1);
-          LinearLayout.LayoutParams otherLabelLp = new LinearLayout.LayoutParams(-1, -2);
-          otherLabelLp.topMargin = dp(20);
-          panel.addView(otherLabel, otherLabelLp);
+          // 底部执行按钮
+          Button executeButton = new Button(this);
+          executeButton.setText(t("⚡ 提取选中分区", "⚡ Extract Selected"));
+          executeButton.setTextSize(16);
+          executeButton.setTextColor(Color.WHITE);
+          executeButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          executeButton.setPadding(dp(20), dp(14), dp(20), dp(14));
+          executeButton.setTypeface(null, 1);
+          executeButton.setOnClickListener(v -> executePartitionOperation());
+          LinearLayout.LayoutParams execLp = new LinearLayout.LayoutParams(-1, -2);
+          execLp.topMargin = dp(12);
+          panel.addView(executeButton, execLp);
 
-          LinearLayout buttonRow = new LinearLayout(this);
-          buttonRow.setOrientation(LinearLayout.HORIZONTAL);
-          LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
-          rowLp.topMargin = dp(10);
-          panel.addView(buttonRow, rowLp);
-
-          Button rebootButton = new Button(this);
-          rebootButton.setText(t("重启", "Reboot"));
-          rebootButton.setTextSize(12);
-          rebootButton.setTextColor(Color.WHITE);
-          rebootButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          rebootButton.setPadding(dp(12), dp(8), dp(12), dp(8));
-          rebootButton.setOnClickListener(v -> {
-              new Thread(() -> {
-                  adbManager.execFastboot("reboot");
-                  runOnUiThread(() -> Toast.makeText(this, t("已发送重启命令", "Reboot command sent"), Toast.LENGTH_SHORT).show());
-              }).start();
-          });
-          buttonRow.addView(rebootButton, new LinearLayout.LayoutParams(0, -2, 1f));
-
-          Button bootloaderButton = new Button(this);
-          bootloaderButton.setText(t("重启到 Bootloader", "Reboot Bootloader"));
-          bootloaderButton.setTextSize(12);
-          bootloaderButton.setTextColor(Color.WHITE);
-          bootloaderButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          bootloaderButton.setPadding(dp(12), dp(8), dp(12), dp(8));
-          bootloaderButton.setOnClickListener(v -> {
-              new Thread(() -> {
-                  adbManager.execFastboot("reboot-bootloader");
-                  runOnUiThread(() -> Toast.makeText(this, t("已重启到 Bootloader", "Rebooted to bootloader"), Toast.LENGTH_SHORT).show());
-              }).start();
-          });
-          LinearLayout.LayoutParams bootloaderLp = new LinearLayout.LayoutParams(0, -2, 1f);
-          bootloaderLp.leftMargin = dp(8);
-          buttonRow.addView(bootloaderButton, bootloaderLp);
+          // 初始化分区列表
+          loadPartitionList(partitionList, true);
 
           return panel;
+      }
+
+      private void loadPartitionList(LinearLayout container, boolean extractMode) {
+          container.removeAllViews();
+          
+          // 模拟分区数据（实际应从 /proc/partitions 或 block 设备读取）
+          String[][] partitions = {
+              {"boot_a", "A", "32"},
+              {"boot_b", "B", "32"},
+              {"vendor_boot_a", "A", "64"},
+              {"vendor_boot_b", "B", "64"},
+              {"dtbo_a", "A", "8"},
+              {"dtbo_b", "B", "8"},
+              {"vbmeta_a", "A", "1"},
+              {"vbmeta_b", "B", "1"},
+              {"system_a", "A", "2048"},
+              {"system_b", "B", "2048"},
+              {"vendor_a", "A", "512"},
+              {"vendor_b", "B", "512"},
+              {"product_a", "A", "1024"},
+              {"product_b", "B", "1024"},
+              {"odm_a", "A", "256"},
+              {"odm_b", "B", "256"},
+              {"userdata", "其他", "16384"},
+              {"metadata", "其他", "16"},
+              {"persist", "其他", "32"},
+              {"misc", "其他", "1"}
+          };
+
+          for (String[] partition : partitions) {
+              LinearLayout item = createPartitionItem(partition[0], partition[1], partition[2], extractMode);
+              container.addView(item);
+          }
+      }
+
+      private LinearLayout createPartitionItem(String name, String slot, String sizeMB, boolean extractMode) {
+          LinearLayout item = new LiquidGlassPanel(this, 12f);
+          item.setOrientation(LinearLayout.HORIZONTAL);
+          item.setPadding(dp(16), dp(14), dp(16), dp(14));
+          item.setGravity(Gravity.CENTER_VERTICAL);
+          LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
+          itemLp.topMargin = dp(8);
+
+          // 左侧文字信息
+          LinearLayout textInfo = new LinearLayout(this);
+          textInfo.setOrientation(LinearLayout.VERTICAL);
+          item.addView(textInfo, new LinearLayout.LayoutParams(0, -2, 1f));
+
+          TextView nameText = new TextView(this);
+          nameText.setText(name);
+          nameText.setTextSize(16);
+          nameText.setTextColor(0xff0d1824);
+          nameText.setTypeface(null, 1);
+          textInfo.addView(nameText);
+
+          TextView infoText = new TextView(this);
+          infoText.setText(slot + " · " + t("大小: ", "Size: ") + sizeMB + "MB");
+          infoText.setTextSize(12);
+          infoText.setTextColor(0xff1a2332);
+          LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(-2, -2);
+          infoLp.topMargin = dp(4);
+          textInfo.addView(infoText, infoLp);
+
+          // 右侧勾选框
+          android.widget.CheckBox checkBox = new android.widget.CheckBox(this);
+          checkBox.setButtonDrawable(android.R.drawable.checkbox_on_background);
+          item.addView(checkBox, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+          item.setOnClickListener(v -> checkBox.setChecked(!checkBox.isChecked()));
+
+          return item;
+      }
+
+      private void rebuildPartitionList(boolean extractMode) {
+          Toast.makeText(this, extractMode ? t("切换到提取模式", "Extract mode") : t("切换到刷入模式", "Flash mode"), Toast.LENGTH_SHORT).show();
+      }
+
+      private void filterPartitionsBySlot(int slotIndex) {
+          String[] filters = {t("全部", "All"), t("槽位 A", "Slot A"), t("槽位 B", "Slot B"), t("其他", "Other")};
+          Toast.makeText(this, t("筛选: ", "Filter: ") + filters[slotIndex], Toast.LENGTH_SHORT).show();
+      }
+
+      private void selectAllPartitions(boolean selectAll) {
+          Toast.makeText(this, selectAll ? t("已全选", "All selected") : t("已取消", "Deselected"), Toast.LENGTH_SHORT).show();
+      }
+
+      private void invertSelection() {
+          Toast.makeText(this, t("已反选", "Inverted selection"), Toast.LENGTH_SHORT).show();
+      }
+
+      private void showOnlySelected() {
+          Toast.makeText(this, t("仅显示已选项", "Show selected only"), Toast.LENGTH_SHORT).show();
+      }
+
+      private void executePartitionOperation() {
+          Toast.makeText(this, t("开始执行操作...", "Executing..."), Toast.LENGTH_SHORT).show();
       }
 
       private LinearLayout buildMorePage() {
