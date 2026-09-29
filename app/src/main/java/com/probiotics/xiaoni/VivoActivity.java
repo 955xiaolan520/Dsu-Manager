@@ -1132,7 +1132,7 @@ public final class VivoActivity extends BaseActivity {
                 int android = 17 - androidSpinner.getSelectedItemPosition();
                 String serialRaw = serialEdit.getText().toString().trim();
                 String serial = serialRaw.isEmpty() ? "A0000000000000A" : serialRaw;
-                VivoOtaClient.QueryChannel channel = VivoOtaClient.QueryChannel.values()[packageSpinner.getSelectedItemPosition()];
+                com.mytiantian.updater.vivo.VivoOtaClient.QueryChannel channel = com.mytiantian.updater.vivo.VivoOtaClient.QueryChannel.values()[packageSpinner.getSelectedItemPosition()];
                 boolean isFull = fullOrIncrementalSpinner.getSelectedItemPosition() == 0; // 0=完整包, 1=增量包
                 // 根据当前 Tab 确定 isPhone 参数
                 boolean isPhone = (currentTab == 0); // 0=手机, 1=平板, 2=手动输入, 3=穿戴设备
@@ -1143,9 +1143,15 @@ public final class VivoActivity extends BaseActivity {
                 // IMEI：手动填写优先，留空由客户端自动生成（同步自上游 ImeiSource 逻辑）
                 String imei = imeiEdit == null ? "" : imeiEdit.getText().toString().trim();
                 // 升级服务器域名：0=国行 CN（默认），1=海外 GLOBAL（同步自上游 Domain 枚举）
-                VivoOtaClient.Domain domain = (domainSpinner != null && domainSpinner.getSelectedItemPosition() == 1)
-                        ? VivoOtaClient.Domain.GLOBAL : VivoOtaClient.Domain.CN;
-                VivoOtaClient.VivoResult result = new VivoOtaClient(this).query(
+                com.mytiantian.updater.vivo.VivoOtaClient.Domain domain = (domainSpinner != null && domainSpinner.getSelectedItemPosition() == 1)
+                        ? com.mytiantian.updater.vivo.VivoOtaClient.Domain.GLOBAL : com.mytiantian.updater.vivo.VivoOtaClient.Domain.CN;
+                // 初始化加密模块
+                com.mytiantian.updater.vivo.VivoOtaClient client = new com.mytiantian.updater.vivo.VivoOtaClient(this);
+                if (!client.initCrypto()) {
+                    runOnUiThread(() -> status.setText("加密模块初始化失败，请检查网络或加密库"));
+                    return;
+                }
+                com.mytiantian.updater.vivo.VivoOtaResult result = client.query(
                         pd, v, version, android, isPhone, isFull, serial, imei, channel, domain);
                 final boolean manualMode = (currentTab == 2);
                 final String domainName = domain.name();
@@ -1156,7 +1162,7 @@ public final class VivoActivity extends BaseActivity {
                     // 判定条件：服务端目标版本存在且与当前版本不同（去掉 .V000L1 后缀比较）。
                     if (isRealUpdate(version, result)) {
                         // 历史里记录的包类型优先取服务端实际返回值（ext.isFull）
-                        boolean effectiveFull = result.isFullPackage != null ? result.isFullPackage : isFull;
+                        boolean effectiveFull = result.isFullPackage() != null ? result.isFullPackage() : isFull;
                         saveHistory(modelName, pd, v, version, android, effectiveFull, channel.name(), domainName, manualMode, result);
                     }
                 });
@@ -1171,9 +1177,9 @@ public final class VivoActivity extends BaseActivity {
      * vivo 服务器对已是最新版的设备同样会回包信息（版本=当前版本），仅凭"有版本号"判断
      * 会导致每次查询都保存历史。这里要求：目标版本非空且去掉 .V000L1 后缀后与当前版本不同。
      */
-    private boolean isRealUpdate(String baseVersion, VivoOtaClient.VivoResult result) {
+    private boolean isRealUpdate(String baseVersion, com.mytiantian.updater.vivo.VivoOtaResult result) {
         if (result == null) return false;
-        String target = result.version == null ? "" : result.version.trim();
+        String target = result.getUpdateVersion() == null ? "" : result.getUpdateVersion().trim();
         if (target.isEmpty() || "(Not found)".equals(target)) return false;
         String base = baseVersion == null ? "" : baseVersion.trim();
         if (target.endsWith(".V000L1")) {
@@ -1192,18 +1198,18 @@ public final class VivoActivity extends BaseActivity {
         return normalized.startsWith("V") ? normalized : "V" + normalized;
     }
 
-    private void renderResult(String modelName, String pd, String v, VivoOtaClient.VivoResult result,
-                             int androidVer, VivoOtaClient.QueryChannel channel, String currentVersion,
+    private void renderResult(String modelName, String pd, String v, com.mytiantian.updater.vivo.VivoOtaResult result,
+                             int androidVer, com.mytiantian.updater.vivo.VivoOtaClient.QueryChannel channel, String currentVersion,
                              boolean isFull, String domainName) {
         results.removeAllViews();
         
         // 如果没有完整下载链接但有文件名，则拼接下载链接
         final String downloadUrl;
-        if (result.downloadUrl.isEmpty() && !result.filename.isEmpty()) {
-            downloadUrl = "https://sysuptxdl.vivo.com.cn/upgrade/oem/files/" + result.filename;
+        if (result.getDownloadUrl().isEmpty() && !result.getFilename().isEmpty()) {
+            downloadUrl = "https://sysuptxdl.vivo.com.cn/upgrade/oem/files/" + result.getFilename();
             android.util.Log.d("VivoActivity", "拼接下载链接: " + downloadUrl);
         } else {
-            downloadUrl = result.downloadUrl;
+            downloadUrl = result.getDownloadUrl();
         }
         
         boolean available = !downloadUrl.isEmpty();
@@ -1232,11 +1238,11 @@ public final class VivoActivity extends BaseActivity {
         // 响应未携带该标志时回退到查询时选择的类型；两者不一致时标注"服务端返回"，
         // 让"选了完整包但服务器实际给增量包"的情况一目了然
         String packageTypeDisplay;
-        if (result.isFullPackage != null) {
-            packageTypeDisplay = result.isFullPackage ? "完整包" : "增量包";
-            if (result.fullFallback) {
+        if (result.isFullPackage() != null) {
+            packageTypeDisplay = result.isFullPackage() ? "完整包" : "增量包";
+            if (result.getFullFallback()) {
                 packageTypeDisplay += "（自动降级）";
-            } else if (result.isFullPackage != isFull) {
+            } else if (result.isFullPackage() != isFull) {
                 packageTypeDisplay += "（服务端返回）";
             }
         } else {
@@ -1248,7 +1254,7 @@ public final class VivoActivity extends BaseActivity {
         // 实测结论（X200 全链路对照）：vivo 仅对"基准=最新版"的请求下发同版本全量重刷包，
         // 新机型全量包通常晚于增量包数天至数周上架，届时用"完整包"重查即可。
         // v3.9.19：补充官方数据损坏修复通道（recovery 系统修复模式会自动拉取全量修复包）。
-        if (result.fullFallback) {
+        if (result.getFullFallback()) {
             TextView fallbackWarn = label("⚠ 未获得完整包：vivo 服务器暂未上架该版本的全量包（新机型常见），已自动改查增量包。全量重刷包通常在增量包发布后数天至数周上架，稍后用\"完整包\"重新查询即可。\n\n如设备系统数据损坏需立即修复，可用官方恢复模式：关机后同时按住\"电源键+音量+键\"进入 FASTBOOT，选择【系统修复模式】>【下载最新版本并安装】，手机将自动从服务器下载全量修复包（该模式仅刷全量包，正好适用数据损坏场景）。", 12, 0xffb3541e);
             fallbackWarn.setLineSpacing(dp(3), 1f);
             fallbackWarn.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -1256,39 +1262,39 @@ public final class VivoActivity extends BaseActivity {
         }
         
         // 两两并排显示：查询模式和服务端目标版本
-        String serverVersion = result.version.isEmpty() ? "未获取" : result.version;
+        String serverVersion = result.getUpdateVersion().isEmpty() ? "未获取" : result.getUpdateVersion();
         addPairRow(card, "查询模式", channel.name().toLowerCase(), "服务端目标版本", serverVersion);
 
         // v3.9.20：公测/内测通道信息（逆向自 vivo17 系统升级 APP /beta/queryBetaOrTaste.do）
-        if (result.betaOrTasteType == 1) {
+        if (result.getBetaOrTasteType() == 1) {
             // 公测招募：该接口只返回招募信息，不含升级包
-            String hint = result.betaRecruitHint.isEmpty()
-                    ? "该机型当前有公测招募（未开放升级包下载）" : result.betaRecruitHint;
+            String hint = result.getBetaRecruitHint().isEmpty()
+                    ? "该机型当前有公测招募（未开放升级包下载）" : result.getBetaRecruitHint();
             TextView recruit = label("📢 公测招募中：" + hint
                     + "\n（来自系统升级 APP 公测/内测查询通道；招募期内可在 手机设置-系统升级 内报名）", 12, 0xff1e6fb3);
             recruit.setLineSpacing(dp(3), 1f);
             recruit.setPadding(dp(12), dp(10), dp(12), dp(10));
             card.addView(recruit, margins(-1, -2, 10, 0, 0));
-        } else if (result.betaOrTasteType == 2) {
+        } else if (result.getBetaOrTasteType() == 2) {
             addPair(card, "查询通道", "queryBetaOrTaste（系统升级 APP 内测/尝鲜入口）");
         }
-        if (!result.filename.isEmpty()) {
-            addPair(card, "文件名", result.filename);
+        if (!result.getFilename().isEmpty()) {
+            addPair(card, "文件名", result.getFilename());
         }
-        if (!result.size.isEmpty()) {
-            long sizeBytes = parseSizeBytes(result.size);
+        if (!result.getFileSizeMb().isEmpty()) {
+            long sizeBytes = parseSizeBytes(result.getFileSizeMb());
             // v3.8.5：字节数 + 换算单位（1556685Byte (1.48 MB) 样式）
-            String sizeDisplay = sizeBytes > 0 ? sizeBytesDisplay(sizeBytes) : result.size;
+            String sizeDisplay = sizeBytes > 0 ? sizeBytesDisplay(sizeBytes) : result.getFileSizeMb();
             addPair(card, "文件大小", sizeDisplay);
         }
-        if (!result.md5.isEmpty()) {
-            addPair(card, "MD5", result.md5);
+        if (!result.getMd5().isEmpty()) {
+            addPair(card, "MD5", result.getMd5());
         }
-        if (!result.securityPatch.isEmpty()) {
-            addPair(card, "安全补丁", result.securityPatch);
+        if (!result.getSecurityPatch().isEmpty()) {
+            addPair(card, "安全补丁", result.getSecurityPatch());
         }
-        if (!result.updateTime.isEmpty()) {
-            addPair(card, "更新时间", result.updateTime);
+        if (!result.getUpdateDate().isEmpty()) {
+            addPair(card, "更新时间", result.getUpdateDate());
         }
         addPair(card, "升级服务器", "GLOBAL".equals(domainName) ? "海外服务器" : "国行服务器");
 
@@ -1297,7 +1303,7 @@ public final class VivoActivity extends BaseActivity {
             buttonRow.setOrientation(LinearLayout.HORIZONTAL);
 
             Button download = glassButton("下载此版本", 13);
-            download.setOnClickListener(v1 -> startDownload(downloadUrl, result.filename));
+            download.setOnClickListener(v1 -> startDownload(downloadUrl, result.getFilename()));
             buttonRow.addView(download, new LinearLayout.LayoutParams(0, dp(46), 1));
 
             LinearLayout spacer = new LinearLayout(this);
@@ -1308,7 +1314,7 @@ public final class VivoActivity extends BaseActivity {
             buttonRow.addView(copyLink, new LinearLayout.LayoutParams(0, dp(46), 1));
 
             card.addView(buttonRow, margins(-1, -2, 12, 0, 0));
-        } else if (!result.version.isEmpty()) {
+        } else if (!result.getUpdateVersion().isEmpty()) {
             // 有版本信息但无法拼接下载链接
             TextView hint = label("无法生成下载链接，可能需要手动查询", 12, 0xffff5722);
             hint.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -1318,7 +1324,7 @@ public final class VivoActivity extends BaseActivity {
         }
 
         // 更新日志折叠区（下载 / 复制按钮下方）：默认收起，点击展开直接加载正文，不提供链接跳转
-        if (!result.changelogUrl.isEmpty() && !"(Not found)".equals(result.changelogUrl)) {
+        if (!result.getChangelogUrl().isEmpty() && !"(Not found)".equals(result.getChangelogUrl())) {
             LinearLayout changelogHeader = new LinearLayout(this);
             changelogHeader.setOrientation(LinearLayout.HORIZONTAL);
             changelogHeader.setGravity(Gravity.CENTER_VERTICAL);
@@ -1362,7 +1368,7 @@ public final class VivoActivity extends BaseActivity {
                         String content = null;
                         try {
                             content = new com.mytiantian.updater.vivo.VivoOtaClient(getApplicationContext())
-                                    .fetchChangelog(result.changelogUrl);
+                                    .fetchChangelog(result.getChangelogUrl());
                         } catch (Exception ignored) { }
                         final String text = (content == null || content.isEmpty())
                                 ? "更新日志加载失败，请稍后重试" : content;
@@ -1479,7 +1485,7 @@ public final class VivoActivity extends BaseActivity {
     /** 查询成功后保存历史（同步自上游 QueryHistoryEntry 字段，同签名去重、上限 20 条）。 */
     private void saveHistory(String modelName, String pd, String v, String version, int android,
                              boolean isFull, String channelName, String domainName, boolean manualMode,
-                             VivoOtaClient.VivoResult result) {
+                             com.mytiantian.updater.vivo.VivoOtaResult result) {
         try {
             org.json.JSONObject entry = new org.json.JSONObject()
                     .put("timestamp", System.currentTimeMillis())
@@ -1487,9 +1493,9 @@ public final class VivoActivity extends BaseActivity {
                     .put("codename", pd)
                     .put("swVersion", version)
                     .put("model_sw_ver", v)
-                    .put("resultVersion", result.version)
-                    .put("fileSize", result.size)
-                    .put("downloadUrl", result.downloadUrl)
+                    .put("resultVersion", result.getUpdateVersion())
+                    .put("fileSize", result.getFileSizeMb())
+                    .put("downloadUrl", result.getDownloadUrl())
                     .put("channel", channelName)
                     .put("querySoftwareVersion", version)
                     .put("manualMode", manualMode)
@@ -1501,7 +1507,7 @@ public final class VivoActivity extends BaseActivity {
                     .put("isFullPackage", isFull)
                     .put("queryChannel", channelName)
                     .put("queryDomain", domainName)
-                    .put("changelogUrl", result.changelogUrl);
+                    .put("changelogUrl", result.getChangelogUrl());
             // 同签名去重：同条件查询只保留最新一条（与上游一致）
             String sig = historySignature(entry);
             for (int i = historyEntries.size() - 1; i >= 0; i--) {
@@ -1703,8 +1709,8 @@ public final class VivoActivity extends BaseActivity {
         int androidPos = Math.max(0, Math.min(5, 17 - android));
         int channelPos = 0;
         try {
-            channelPos = VivoOtaClient.QueryChannel.valueOf(
-                    e.optString("queryChannel", VivoOtaClient.QueryChannel.NORMAL.name())).ordinal();
+            channelPos = com.mytiantian.updater.vivo.VivoOtaClient.QueryChannel.valueOf(
+                    e.optString("queryChannel", com.mytiantian.updater.vivo.VivoOtaClient.QueryChannel.NORMAL.name())).ordinal();
         } catch (IllegalArgumentException ignored) { }
         boolean full = e.optBoolean("isFullPackage", true);
         int domainPos = "GLOBAL".equals(e.optString("queryDomain")) ? 1 : 0;
