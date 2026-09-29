@@ -239,50 +239,106 @@ public class AdbManager {
     }
 
     /**
-     * 读取本机所有分区
+     * 获取本机分区列表
+     * 参考：by_name.log 脚本逻辑
      */
     public List<PartitionInfo> getLocalPartitions() {
         List<PartitionInfo> partitions = new ArrayList<>();
         
-        // 方法1：从 /dev/block/by-name/ 读取（推荐）
-        Shell.Result byNameResult = Shell.cmd("ls -l /dev/block/by-name/").exec();
-        if (byNameResult.isSuccess()) {
-            for (String line : byNameResult.getOut()) {
-                if (line.contains("->")) {
-                    String[] parts = line.split("\\s+");
-                    if (parts.length >= 11) {
-                        String name = parts[8];
-                        String target = parts[10];
-                        String blockDevice = "/dev/block/by-name/" + name;
-                        
-                        // 获取分区大小
-                        Shell.Result sizeResult = Shell.cmd("blockdev --getsize64 " + blockDevice).exec();
-                        long size = 0;
-                        if (sizeResult.isSuccess() && !sizeResult.getOut().isEmpty()) {
-                            try {
-                                size = Long.parseLong(sizeResult.getOut().get(0).trim());
-                            } catch (Exception ignored) {}
+        // 方法1：从 /dev/block 查找符号链接
+        Shell.Result findResult = Shell.cmd(
+            "find /dev/block -mindepth 1 -type l 2>/dev/null | while read o; do " +
+            "  c=$(basename \"$o\"); " +
+            "  case \"$o\" in " +
+            "    *uuid/*|*mapper/com.*|*/sd*|*/loop*) continue ;; " +
+            "  esac; " +
+            "  echo \"$c\"; " +
+            "done | sort -u"
+        ).exec();
+        
+        if (findResult.isSuccess() && !findResult.getOut().isEmpty()) {
+            for (String partName : findResult.getOut()) {
+                if (partName.trim().isEmpty()) continue;
+                
+                // 查找实际设备路径
+                Shell.Result blockResult = Shell.cmd("find /dev/block -name " + partName + " | head -n 1").exec();
+                if (!blockResult.isSuccess() || blockResult.getOut().isEmpty()) continue;
+                
+                String blockDevice = blockResult.getOut().get(0).trim();
+                if (blockDevice.isEmpty()) continue;
+                
+                // 过滤：跳过 uuid/, mapper/com.*, sd* 等
+                if (blockDevice.contains("uuid/") || 
+                    blockDevice.contains("mapper/com.") || 
+                    blockDevice.matches(".*/sd[a-z].*")) {
+                    continue;
+                }
+                
+                // 获取分区大小
+                Shell.Result sizeResult = Shell.cmd("blockdev --getsize64 " + blockDevice + " 2>/dev/null").exec();
+                long size = 0;
+                if (sizeResult.isSuccess() && !sizeResult.getOut().isEmpty()) {
+                    try {
+                        size = Long.parseLong(sizeResult.getOut().get(0).trim());
+                    } catch (Exception ignored) {}
+                }
+                
+                if (size > 0) {
+                    partitions.add(new PartitionInfo(partName, blockDevice, size));
+                }
+            }
+        }
+        
+        // 备用方法：优先使用 /dev/block/by-name/ 下的分区
+        if (partitions.isEmpty()) {
+            Shell.Result byNameResult = Shell.cmd("ls -l /dev/block/by-name/ 2>/dev/null").exec();
+            if (byNameResult.isSuccess() && !byNameResult.getOut().isEmpty()) {
+                for (String line : byNameResult.getOut()) {
+                    if (line.contains("->") && line.contains("/dev/block/")) {
+                        String[] parts = line.split("\\s+");
+                        if (parts.length >= 9) {
+                            String name = parts[8];
+                            String blockDevice = "/dev/block/by-name/" + name;
+                            
+                            // 获取分区大小
+                            Shell.Result sizeResult = Shell.cmd("blockdev --getsize64 " + blockDevice + " 2>/dev/null").exec();
+                            long size = 0;
+                            if (sizeResult.isSuccess() && !sizeResult.getOut().isEmpty()) {
+                                try {
+                                    size = Long.parseLong(sizeResult.getOut().get(0).trim());
+                                } catch (Exception ignored) {}
+                            }
+                            
+                            if (size > 0) {
+                                partitions.add(new PartitionInfo(name, blockDevice, size));
+                            }
                         }
-                        
-                        partitions.add(new PartitionInfo(name, blockDevice, size));
                     }
                 }
             }
         }
         
-        // 方法2：如果方法1失败，尝试从 /proc/partitions 读取
+        // 最后备用：从 /proc/partitions 读取 mmcblk 分区
         if (partitions.isEmpty()) {
             Shell.Result procResult = Shell.cmd("cat /proc/partitions").exec();
             if (procResult.isSuccess()) {
                 for (String line : procResult.getOut()) {
                     String[] parts = line.trim().split("\\s+");
                     if (parts.length >= 4 && !parts[0].equals("major")) {
-                        try {
-                            long blocks = Long.parseLong(parts[2]);
-                            String name = parts[3];
-                            String blockDevice = "/dev/block/" + name;
-                            partitions.add(new PartitionInfo(name, blockDevice, blocks * 1024));
-                        } catch (Exception ignored) {}
+                        String name = parts[3];
+                        
+                        // 只读取 mmcblk 分区（手机内部存储）
+                        if (name.matches("^mmcblk\\d+p\\d+$")) {
+                            try {
+                                long blocks = Long.parseLong(parts[2]);
+                                long size = blocks * 1024;
+                                
+                                if (size > 0) {
+                                    String blockDevice = "/dev/block/" + name;
+                                    partitions.add(new PartitionInfo(name, blockDevice, size));
+                                }
+                            } catch (Exception ignored) {}
+                        }
                     }
                 }
             }
@@ -295,14 +351,14 @@ public class AdbManager {
      * 提取分区镜像到文件
      */
     public Shell.Result extractPartition(String blockDevice, String outputPath) {
-        return Shell.cmd("dd if=" + blockDevice + " of=" + outputPath + " bs=4M").exec();
+        return Shell.cmd("dd if=" + blockDevice + " of=" + outputPath).exec();
     }
 
     /**
      * 刷入镜像到分区
      */
     public Shell.Result flashPartition(String imagePath, String blockDevice) {
-        return Shell.cmd("dd if=" + imagePath + " of=" + blockDevice + " bs=4M").exec();
+        return Shell.cmd("dd if=" + imagePath + " of=" + blockDevice).exec();
     }
 
     /**

@@ -48,6 +48,10 @@ public class MainActivity extends BaseActivity {
     private static final int PICK_REPLACEMENT = 30;
     private static final int PICK_ROOTFS = 40;
     private static final int PICK_FASTBOOT_IMAGE = 50;
+    private static final int REQUEST_FLASH_IMAGE_FILE = 60;
+    private static final int REQUEST_OTG_SINGLE_IMAGE = 70;
+    private static final int REQUEST_OTG_FULL_PACKAGE = 71;
+    private static final int REQUEST_OTG_ADB_PUSH = 72;
     private String replacementPartition;
     private String replacementBackingImage;
     private String replacementSlot;
@@ -88,6 +92,7 @@ public class MainActivity extends BaseActivity {
     // OTG 页面相关
     private AdbManager adbManager;
     private EditText fastbootFilePathInput;
+    private EditText fastbootImagePathInput;  // 用于 Fastboot 刷机面板的镜像路径输入
     private Button[] otgTabs;
     private LinearLayout otgTabItems;
     private LiquidGlassIndicator otgTabIndicator;
@@ -174,7 +179,7 @@ public class MainActivity extends BaseActivity {
         applyWindowTransparency(isTransparent);
         bindRootService();
         if (!rootAuthorized) refreshRootStatus();
-        if (currentTab == 3) refreshMorePage();
+        if (currentTab == 4) refreshMorePage();
     }
 
     @Override protected void onPause() {
@@ -918,13 +923,32 @@ public class MainActivity extends BaseActivity {
                  if (tab == 4) refreshMorePage();
                 return;
             }
-            View next = tab == 0 ? homeScroll : tab == 1 ? buildSettingsPage() : tab == 2 ? buildRomPage() : tab == 3 ? buildOtgPage() : buildMorePage();
-          if (tab != 0) {
-              ScrollView pageScroll = new ScrollView(this);
-              pageScroll.setFillViewport(true);
-              pageScroll.addView(next);
-              next = pageScroll;
-          }
+            View next;
+            if (tab == 3) {
+                // OTG 页：内容可滚动 + FAB 悬浮在视口右下角（不随内容滚动）
+                FrameLayout otgRoot = new FrameLayout(this);
+                ScrollView pageScroll = new ScrollView(this);
+                pageScroll.setFillViewport(false);  // 改为 false，允许内层 ScrollView 滚动
+                pageScroll.addView(buildOtgPage());
+                otgRoot.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
+                
+                partitionFab = buildPartitionFab();
+                FrameLayout.LayoutParams fabLp = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+                fabLp.bottomMargin = dp(84);
+                fabLp.rightMargin = dp(16);
+                otgRoot.addView(partitionFab, fabLp);
+                partitionFab.setVisibility(View.GONE); // 初始隐藏，selectOtgTab 控制显示
+                
+                next = otgRoot;
+            } else {
+                next = tab == 0 ? homeScroll : tab == 1 ? buildSettingsPage() : tab == 2 ? buildRomPage() : buildMorePage();
+                if (tab != 0) {
+                    ScrollView pageScroll = new ScrollView(this);
+                    pageScroll.setFillViewport(true);
+                    pageScroll.addView(next);
+                    next = pageScroll;
+                }
+            }
           pageHost.removeAllViews();
           FrameLayout.LayoutParams nextParams = new FrameLayout.LayoutParams(-1, -1);
            pageHost.addView(next, nextParams);
@@ -1363,7 +1387,7 @@ public class MainActivity extends BaseActivity {
           otgTabItems.setClipChildren(false);
           tabs.addView(otgTabItems, new FrameLayout.LayoutParams(-1, dp(64)));
           
-          String[] tabLabels = {t("设备", "Device"), t("文件", "Files"), t("应用", "Apps"), t("命令", "Shell"), t("Fastboot", "Fastboot")};
+          String[] tabLabels = {t("设备", "Device"), t("文件管理", "Files"), t("本机分区", "Partitions"), t("刷机助手", "Flash Tool")};
           otgTabs = new Button[tabLabels.length];
           for (int i = 0; i < tabLabels.length; i++) {
               final int index = i;
@@ -1389,10 +1413,9 @@ public class MainActivity extends BaseActivity {
           // 内容面板
           otgPanels = new LinearLayout[tabLabels.length];
           otgPanels[0] = buildOtgDevicePanel();
-          otgPanels[1] = buildOtgFilesPanel();
-          otgPanels[2] = buildOtgAppsPanel();
-          otgPanels[3] = buildOtgShellPanel();
-          otgPanels[4] = buildOtgBackupPanel();
+          otgPanels[1] = buildOtgFilesAndAppsPanel();  // 合并文件+应用
+          otgPanels[2] = buildOtgPartitionPanel();     // 本机分区管理
+          otgPanels[3] = buildOtgFastbootPanel();      // 刷机助手
           for (LinearLayout panel : otgPanels) {
               LinearLayout.LayoutParams panelLp = new LinearLayout.LayoutParams(-1, -2);
               panelLp.setMargins(0, 0, 0, dp(10));
@@ -1478,6 +1501,10 @@ public class MainActivity extends BaseActivity {
           }
           moveOtgTabIndicator(index, true);
           otgCurrentTab = index;
+          // 控制分区面板 FAB 显示/隐藏（仅在本机分区 tab 显示）
+          if (partitionFab != null) {
+              partitionFab.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
+          }
       }
 
       private void moveOtgTabIndicator(int index, boolean animated) {
@@ -1553,153 +1580,7 @@ public class MainActivity extends BaseActivity {
       private LinearLayout buildOtgDevicePanel() {
           LinearLayout panel = new LiquidGlassPanel(this, 14f);
           panel.setOrientation(LinearLayout.VERTICAL);
-          panel.setPadding(dp(16), dp(16), dp(16), dp(16));
-
-          // 启动 ADB Server 按钮
-          Button startServer = new Button(this);
-          startServer.setText(t("启动 ADB Server", "Start ADB Server"));
-          startServer.setTextSize(14);
-          startServer.setTextColor(Color.WHITE);
-          startServer.setBackgroundResource(R.drawable.liquid_glass_panel);
-          startServer.setPadding(dp(20), dp(12), dp(20), dp(12));
-          startServer.setOnClickListener(v -> {
-              new Thread(() -> {
-                  com.topjohnwu.superuser.Shell.Result result = adbManager.startAdbServer();
-                  runOnUiThread(() -> {
-                      if (result.isSuccess()) {
-                          Toast.makeText(this, t("ADB Server 已启动", "ADB Server started"), Toast.LENGTH_SHORT).show();
-                      } else {
-                          Toast.makeText(this, t("启动失败", "Failed to start"), Toast.LENGTH_SHORT).show();
-                      }
-                  });
-              }).start();
-          });
-          panel.addView(startServer, new LinearLayout.LayoutParams(-1, -2));
-
-          // 刷新设备列表按钮
-          Button refreshDevices = new Button(this);
-          refreshDevices.setText(t("刷新设备列表", "Refresh Devices"));
-          refreshDevices.setTextSize(14);
-          refreshDevices.setTextColor(Color.WHITE);
-          refreshDevices.setBackgroundResource(R.drawable.liquid_glass_panel);
-          refreshDevices.setPadding(dp(20), dp(12), dp(20), dp(12));
-          LinearLayout.LayoutParams refreshLp = new LinearLayout.LayoutParams(-1, -2);
-          refreshLp.topMargin = dp(10);
-          panel.addView(refreshDevices, refreshLp);
-
-          // 设备列表容器
-          LinearLayout deviceList = new LinearLayout(this);
-          deviceList.setOrientation(LinearLayout.VERTICAL);
-          LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(-1, -2);
-          listLp.topMargin = dp(16);
-          panel.addView(deviceList, listLp);
-
-          refreshDevices.setOnClickListener(v -> {
-              deviceList.removeAllViews();
-              new Thread(() -> {
-                  java.util.List<String> devices = adbManager.getDevices();
-                  runOnUiThread(() -> {
-                      if (devices.isEmpty()) {
-                          TextView empty = new TextView(this);
-                          empty.setText(t("未检测到设备", "No devices found"));
-                          empty.setTextSize(14);
-                          empty.setTextColor(0xff1a2332);
-                          empty.setGravity(Gravity.CENTER);
-                          empty.setPadding(0, dp(20), 0, 0);
-                          deviceList.addView(empty);
-                      } else {
-                          for (String deviceId : devices) {
-                              TextView deviceItem = new TextView(this);
-                              deviceItem.setText("📱 " + deviceId);
-                              deviceItem.setTextSize(14);
-                              deviceItem.setTextColor(0xff0d1824);
-                              deviceItem.setPadding(dp(12), dp(10), dp(12), dp(10));
-                              deviceItem.setBackgroundResource(R.drawable.liquid_glass_panel);
-                              LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
-                              itemLp.topMargin = dp(8);
-                              deviceList.addView(deviceItem, itemLp);
-                          }
-                      }
-                  });
-              }).start();
-          });
-
-          // 无线调试配对区域
-          TextView wirelessTitle = new TextView(this);
-          wirelessTitle.setText(t("无线调试配对", "Wireless Debugging"));
-          wirelessTitle.setTextSize(16);
-          wirelessTitle.setTextColor(0xff0d1824);
-          wirelessTitle.setTypeface(null, 1);
-          LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
-          titleLp.topMargin = dp(24);
-          panel.addView(wirelessTitle, titleLp);
-
-          EditText hostInput = new EditText(this);
-          hostInput.setHint(t("IP 地址", "IP Address"));
-          hostInput.setTextSize(14);
-          hostInput.setTextColor(0xff0d1824);
-          hostInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-          hostInput.setBackgroundResource(R.drawable.liquid_glass_panel);
-          LinearLayout.LayoutParams hostLp = new LinearLayout.LayoutParams(-1, -2);
-          hostLp.topMargin = dp(10);
-          panel.addView(hostInput, hostLp);
-
-          EditText portInput = new EditText(this);
-          portInput.setHint(t("端口号", "Port"));
-          portInput.setTextSize(14);
-          portInput.setTextColor(0xff0d1824);
-          portInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-          portInput.setBackgroundResource(R.drawable.liquid_glass_panel);
-          LinearLayout.LayoutParams portLp = new LinearLayout.LayoutParams(-1, -2);
-          portLp.topMargin = dp(8);
-          panel.addView(portInput, portLp);
-
-          EditText codeInput = new EditText(this);
-          codeInput.setHint(t("配对码", "Pairing Code"));
-          codeInput.setTextSize(14);
-          codeInput.setTextColor(0xff0d1824);
-          codeInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-          codeInput.setBackgroundResource(R.drawable.liquid_glass_panel);
-          LinearLayout.LayoutParams codeLp = new LinearLayout.LayoutParams(-1, -2);
-          codeLp.topMargin = dp(8);
-          panel.addView(codeInput, codeLp);
-
-          Button pairButton = new Button(this);
-          pairButton.setText(t("配对", "Pair"));
-          pairButton.setTextSize(14);
-          pairButton.setTextColor(Color.WHITE);
-          pairButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          pairButton.setPadding(dp(20), dp(12), dp(20), dp(12));
-          pairButton.setOnClickListener(v -> {
-              String host = hostInput.getText().toString().trim();
-              String port = portInput.getText().toString().trim();
-              String code = codeInput.getText().toString().trim();
-              if (host.isEmpty() || port.isEmpty() || code.isEmpty()) {
-                  Toast.makeText(this, t("请填写完整信息", "Please fill all fields"), Toast.LENGTH_SHORT).show();
-                  return;
-              }
-              new Thread(() -> {
-                  com.topjohnwu.superuser.Shell.Result result = adbManager.pairWireless(host, port, code);
-                  runOnUiThread(() -> {
-                      if (result.isSuccess()) {
-                          Toast.makeText(this, t("配对成功", "Paired successfully"), Toast.LENGTH_SHORT).show();
-                      } else {
-                          Toast.makeText(this, t("配对失败: ", "Failed: ") + (result.getOut().isEmpty() ? "" : result.getOut().get(0)), Toast.LENGTH_LONG).show();
-                      }
-                  });
-              }).start();
-          });
-          LinearLayout.LayoutParams pairLp = new LinearLayout.LayoutParams(-1, -2);
-          pairLp.topMargin = dp(10);
-          panel.addView(pairButton, pairLp);
-
-          return panel;
-      }
-
-      private LinearLayout buildOtgFilesPanel() {
-          LinearLayout panel = new LiquidGlassPanel(this, 14f);
-          panel.setOrientation(LinearLayout.VERTICAL);
-          panel.setPadding(dp(16), dp(16), dp(16), dp(16));
+          panel.setPadding(dp(16), dp(16), dp(16), dp(96));  // 底部留出导航栏空间
 
           // 设备选择
           TextView deviceLabel = new TextView(this);
@@ -1786,6 +1667,123 @@ public class MainActivity extends BaseActivity {
           });
 
           return panel;
+      }
+
+      private LinearLayout buildOtgFilesAndAppsPanel() {
+          LinearLayout content = new LinearLayout(this);
+          content.setOrientation(LinearLayout.VERTICAL);
+          content.setPadding(0, 0, 0, dp(96));  // 底部留出导航栏空间
+
+          // 设备输入（共用）
+          LinearLayout deviceCard = new LiquidGlassPanel(this, 14f);
+          deviceCard.setOrientation(LinearLayout.VERTICAL);
+          deviceCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+          TextView deviceLabel = new TextView(this);
+          deviceLabel.setText(t("设备 ID", "Device ID"));
+          deviceLabel.setTextSize(14);
+          deviceLabel.setTextColor(0xff000000);
+          deviceLabel.setTypeface(null, 1);
+          deviceCard.addView(deviceLabel);
+
+          EditText deviceInput = new EditText(this);
+          deviceInput.setHint(t("输入设备 ID", "Enter device ID"));
+          deviceInput.setTextSize(14);
+          deviceInput.setTextColor(0xff000000);
+          deviceInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          deviceInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams deviceInputLp = new LinearLayout.LayoutParams(-1, -2);
+          deviceInputLp.topMargin = dp(8);
+          deviceCard.addView(deviceInput, deviceInputLp);
+
+          LinearLayout.LayoutParams deviceCardLp = new LinearLayout.LayoutParams(-1, -2);
+          deviceCardLp.bottomMargin = dp(10);
+          content.addView(deviceCard, deviceCardLp);
+
+          // 文件浏览区域
+          LinearLayout fileCard = new LiquidGlassPanel(this, 14f);
+          fileCard.setOrientation(LinearLayout.VERTICAL);
+          fileCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+          TextView fileTitle = new TextView(this);
+          fileTitle.setText(t("文件浏览", "File Browser"));
+          fileTitle.setTextSize(16);
+          fileTitle.setTextColor(0xff000000);
+          fileTitle.setTypeface(null, 1);
+          fileCard.addView(fileTitle);
+
+          EditText pathInput = new EditText(this);
+          pathInput.setHint(t("路径 (默认: /sdcard)", "Path (default: /sdcard)"));
+          pathInput.setText("/sdcard");
+          pathInput.setTextSize(14);
+          pathInput.setTextColor(0xff000000);
+          pathInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+          pathInput.setBackgroundResource(R.drawable.liquid_glass_panel);
+          LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
+          pathLp.topMargin = dp(10);
+          fileCard.addView(pathInput, pathLp);
+
+          Button browseButton = new Button(this);
+          browseButton.setText(t("📁 浏览文件", "📁 Browse Files"));
+          browseButton.setTextSize(14);
+          browseButton.setTextColor(0xff000000);
+          browseButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          browseButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          LinearLayout.LayoutParams browseLp = new LinearLayout.LayoutParams(-1, -2);
+          browseLp.topMargin = dp(10);
+          fileCard.addView(browseButton, browseLp);
+
+          LinearLayout.LayoutParams fileCardLp = new LinearLayout.LayoutParams(-1, -2);
+          fileCardLp.bottomMargin = dp(10);
+          content.addView(fileCard, fileCardLp);
+
+          // 应用管理区域
+          LinearLayout appCard = new LiquidGlassPanel(this, 14f);
+          appCard.setOrientation(LinearLayout.VERTICAL);
+          appCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+          TextView appTitle = new TextView(this);
+          appTitle.setText(t("应用管理", "App Management"));
+          appTitle.setTextSize(16);
+          appTitle.setTextColor(0xff000000);
+          appTitle.setTypeface(null, 1);
+          appCard.addView(appTitle);
+
+          Button listAppsButton = new Button(this);
+          listAppsButton.setText(t("📦 列出已安装应用", "📦 List Apps"));
+          listAppsButton.setTextSize(14);
+          listAppsButton.setTextColor(0xff000000);
+          listAppsButton.setBackgroundResource(R.drawable.liquid_glass_panel);
+          listAppsButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+          LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(-1, -2);
+          listLp.topMargin = dp(10);
+          appCard.addView(listAppsButton, listLp);
+
+          content.addView(appCard, new LinearLayout.LayoutParams(-1, -2));
+
+          // 事件处理
+          browseButton.setOnClickListener(v -> {
+              String deviceId = deviceInput.getText().toString().trim();
+              String path = pathInput.getText().toString().trim();
+              if (deviceId.isEmpty()) {
+                  Toast.makeText(this, t("请输入设备 ID", "Please enter device ID"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              Toast.makeText(this, t("浏览: ", "Browse: ") + path, Toast.LENGTH_SHORT).show();
+              // TODO: 实现文件浏览
+          });
+
+          listAppsButton.setOnClickListener(v -> {
+              String deviceId = deviceInput.getText().toString().trim();
+              if (deviceId.isEmpty()) {
+                  Toast.makeText(this, t("请输入设备 ID", "Please enter device ID"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              Toast.makeText(this, t("列出应用", "List apps"), Toast.LENGTH_SHORT).show();
+              // TODO: 实现应用列表
+          });
+
+          return content;
       }
 
       private LinearLayout buildOtgAppsPanel() {
@@ -2013,10 +2011,473 @@ public class MainActivity extends BaseActivity {
           return panel;
       }
 
-      private LinearLayout buildOtgBackupPanel() {
+
+      // OTG 刷机助手变量
+      private TextView flashDeviceText, flashProtocolText, flashLogText;
+      private ScrollView flashLogScroll;
+      private EditText flashCmdInput;
+      private boolean flashDeviceConnected = false;
+      private boolean flashRefreshing = false;
+      private OtgFlashHelper otgFlashHelper;
+      
+      private LinearLayout buildOtgFastbootPanel() {
+          ScrollView scroll = new ScrollView(this);
+          LinearLayout content = new LinearLayout(this);
+          content.setOrientation(LinearLayout.VERTICAL);
+          content.setPadding(dp(4), dp(20), dp(4), dp(96));
+          
+          // 设备状态卡片（标题带刷新按钮）
+          content.addView(buildFlashDeviceCard());
+          
+          // 输入命令卡片
+          content.addView(buildFlashCommandCard());
+          
+          // 功能按钮网格
+          content.addView(buildFlashActionsGrid());
+          
+          // 输出日志卡片
+          content.addView(buildFlashLogCard());
+          
+          scroll.addView(content);
+          
+          // 初始化
+          flashAppendLog("正在初始化...\n");
+          flashRefreshDevices();
+          
+          LinearLayout wrapper = new LinearLayout(this);
+          wrapper.setOrientation(LinearLayout.VERTICAL);
+          wrapper.addView(scroll);
+          return wrapper;
+      }
+      
+      private LinearLayout buildFlashDeviceCard() {
+          LinearLayout card = new LiquidGlassPanel(this, 20f);
+          card.setOrientation(LinearLayout.VERTICAL);
+          card.setPadding(dp(28), dp(24), dp(28), dp(24));
+          
+          // 渐变背景
+          android.graphics.drawable.GradientDrawable gradient = new android.graphics.drawable.GradientDrawable(
+              android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+              new int[]{0x12d1fae5, 0x08a7f3d0}
+          );
+          gradient.setCornerRadius(dp(20));
+          card.setBackground(gradient);
+          
+          // 标题行（带刷新按钮）
+          LinearLayout titleRow = new LinearLayout(this);
+          titleRow.setOrientation(LinearLayout.HORIZONTAL);
+          titleRow.setGravity(Gravity.CENTER_VERTICAL);
+          
+          TextView title = new TextView(this);
+          title.setText(t("📱 设备状态", "📱 Device Status"));
+          title.setTextSize(13);  // 缩小到13sp
+          title.setTextColor(0xff000000);
+          title.setTypeface(null, 1);
+          LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1f);
+          titleRow.addView(title, titleLp);
+          
+          Button btnRefresh = new Button(this);
+          btnRefresh.setText(t("刷新", "Refresh"));
+          btnRefresh.setTextSize(12);  // 缩小到12sp
+          btnRefresh.setTextColor(0xff000000);
+          btnRefresh.setBackground(createRoundRect(0x18000000, dp(10)));
+          btnRefresh.setPadding(dp(16), dp(10), dp(16), dp(10));
+          btnRefresh.setOnClickListener(v -> {
+              Haptics.perform(v);  // 添加震动
+              flashRefreshDevices();
+          });
+          titleRow.addView(btnRefresh);
+          
+          card.addView(titleRow);
+          
+          // 设备列表
+          flashDeviceText = new TextView(this);
+          flashDeviceText.setText(t("未找到 USB 设备", "No USB device"));
+          flashDeviceText.setTextSize(12);  // 缩小到12sp
+          flashDeviceText.setTextColor(0xff64748b);
+          flashDeviceText.setPadding(0, dp(16), 0, 0);
+          flashDeviceText.setMaxLines(8);
+          flashDeviceText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+          card.addView(flashDeviceText);
+          
+          // 协议检测
+          flashProtocolText = new TextView(this);
+          flashProtocolText.setText("ADB: —\nFastboot: —");
+          flashProtocolText.setTextSize(11);  // 缩小到11sp
+          flashProtocolText.setTextColor(0xff94a3b8);
+          flashProtocolText.setTypeface(android.graphics.Typeface.MONOSPACE);
+          flashProtocolText.setPadding(0, dp(14), 0, 0);
+          card.addView(flashProtocolText);
+          
+          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+          lp.bottomMargin = dp(24);
+          card.setLayoutParams(lp);
+          return card;
+      }
+      
+      private LinearLayout buildFlashCommandCard() {
+          LinearLayout card = new LiquidGlassPanel(this, 20f);
+          card.setOrientation(LinearLayout.VERTICAL);
+          card.setPadding(dp(28), dp(24), dp(28), dp(24));
+          
+          // 渐变背景
+          android.graphics.drawable.GradientDrawable gradient = new android.graphics.drawable.GradientDrawable(
+              android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+              new int[]{0x12e0f2fe, 0x08bae6fd}
+          );
+          gradient.setCornerRadius(dp(20));
+          card.setBackground(gradient);
+          
+          TextView title = new TextView(this);
+          title.setText(t("⌨️ 输入命令", "⌨️ Input Command"));
+          title.setTextSize(13);  // 缩小到13sp
+          title.setTextColor(0xff000000);
+          title.setTypeface(null, 1);
+          card.addView(title);
+          
+          flashCmdInput = new EditText(this);
+          flashCmdInput.setHint(t("例如: adb devices / fastboot getvar all", "e.g: adb devices / fastboot getvar all"));
+          flashCmdInput.setTextSize(12);  // 缩小到12sp
+          flashCmdInput.setTextColor(0xff000000);
+          flashCmdInput.setHintTextColor(0xff94a3b8);
+          flashCmdInput.setBackground(createRoundRect(0x18000000, dp(16)));
+          flashCmdInput.setPadding(dp(20), dp(16), dp(20), dp(16));
+          LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(-1, -2);
+          inputLp.topMargin = dp(16);
+          card.addView(flashCmdInput, inputLp);
+          
+          Button execBtn = new Button(this);
+          execBtn.setText(t("执行命令", "Execute"));
+          execBtn.setTextSize(13);  // 缩小到13sp
+          execBtn.setTextColor(0xffffffff);
+          execBtn.setTypeface(null, 1);
+          execBtn.setBackground(createRoundRect(0xff3b82f6, dp(16)));
+          execBtn.setOnClickListener(v -> {
+              Haptics.perform(v);  // 添加震动
+              executeFlashCommand();
+          });
+          LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(-1, dp(56));
+          btnLp.topMargin = dp(16);
+          card.addView(execBtn, btnLp);
+          
+          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+          lp.bottomMargin = dp(24);
+          card.setLayoutParams(lp);
+          return card;
+      }
+      
+      private LinearLayout buildFlashActionsGrid() {
+          LinearLayout grid = new LinearLayout(this);
+          grid.setOrientation(LinearLayout.VERTICAL);
+          
+          // 第一行
+          LinearLayout row1 = new LinearLayout(this);
+          row1.setOrientation(LinearLayout.HORIZONTAL);
+          row1.addView(createFlashActionBtn(t("读取分区表", "Read Partitions"), 0xfff59e0b, () -> flashReadPartitions()), new LinearLayout.LayoutParams(0, dp(70), 1));
+          row1.addView(new android.view.View(this), new LinearLayout.LayoutParams(dp(16), 1));
+          row1.addView(createFlashActionBtn(t("单分区刷写", "Flash Single"), 0xff10b981, () -> flashChooseSingle()), new LinearLayout.LayoutParams(0, dp(70), 1));
+          grid.addView(row1, new LinearLayout.LayoutParams(-1, -2));
+          
+          // 第二行
+          android.view.View space1 = new android.view.View(this);
+          grid.addView(space1, new LinearLayout.LayoutParams(-1, dp(16)));
+          
+          LinearLayout row2 = new LinearLayout(this);
+          row2.setOrientation(LinearLayout.HORIZONTAL);
+          row2.addView(createFlashActionBtn(t("全量包刷写", "Flash Full"), 0xffef4444, () -> flashChooseFull()), new LinearLayout.LayoutParams(0, dp(70), 1));
+          row2.addView(new android.view.View(this), new LinearLayout.LayoutParams(dp(16), 1));
+          row2.addView(createFlashActionBtn(t("高级重启", "Advanced Reboot"), 0xff8b5cf6, () -> flashShowRebootMenu()), new LinearLayout.LayoutParams(0, dp(70), 1));
+          grid.addView(row2, new LinearLayout.LayoutParams(-1, -2));
+          
+          // 第三行
+          android.view.View space2 = new android.view.View(this);
+          grid.addView(space2, new LinearLayout.LayoutParams(-1, dp(16)));
+          
+          LinearLayout row3 = new LinearLayout(this);
+          row3.setOrientation(LinearLayout.HORIZONTAL);
+          row3.addView(createFlashActionBtn(t("ADB 推送", "ADB Push"), 0xff06b6d4, () -> flashChoosePush()), new LinearLayout.LayoutParams(0, dp(70), 1));
+          row3.addView(new android.view.View(this), new LinearLayout.LayoutParams(dp(16), 1));
+          row3.addView(createFlashActionBtn(t("ADB 设备信息", "ADB Info"), 0xff64748b, () -> flashShowDeviceInfo()), new LinearLayout.LayoutParams(0, dp(70), 1));
+          grid.addView(row3, new LinearLayout.LayoutParams(-1, -2));
+          
+          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+          lp.bottomMargin = dp(24);
+          grid.setLayoutParams(lp);
+          return grid;
+      }
+      
+      private Button createFlashActionBtn(String text, int color, Runnable onClick) {
+          Button btn = new Button(this);
+          btn.setText(text);
+          btn.setTextSize(13);  // 缩小到13sp
+          btn.setTextColor(0xffffffff);
+          btn.setTypeface(null, 1);
+          
+          // 渐变背景
+          android.graphics.drawable.GradientDrawable gradient = new android.graphics.drawable.GradientDrawable(
+              android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+              new int[]{color, adjustBrightness(color, 0.8f)}
+          );
+          gradient.setCornerRadius(dp(16));
+          btn.setBackground(gradient);
+          
+          btn.setOnClickListener(v -> {
+              Haptics.perform(v);  // 添加震动
+              onClick.run();
+          });
+          return btn;
+      }
+      
+      private int adjustBrightness(int color, float factor) {
+          int a = (color >> 24) & 0xff;
+          int r = (int) (((color >> 16) & 0xff) * factor);
+          int g = (int) (((color >> 8) & 0xff) * factor);
+          int b = (int) ((color & 0xff) * factor);
+          return (a << 24) | (r << 16) | (g << 8) | b;
+      }
+      
+      private LinearLayout buildFlashLogCard() {
+          LinearLayout card = new LiquidGlassPanel(this, 20f);
+          card.setOrientation(LinearLayout.VERTICAL);
+          card.setPadding(dp(28), dp(24), dp(28), dp(24));
+          
+          // 渐变背景
+          android.graphics.drawable.GradientDrawable gradient = new android.graphics.drawable.GradientDrawable(
+              android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+              new int[]{0x12fef3c7, 0x08fde68a}
+          );
+          gradient.setCornerRadius(dp(20));
+          card.setBackground(gradient);
+          
+          TextView title = new TextView(this);
+          title.setText(t("📜 输出日志", "📜 Output Log"));
+          title.setTextSize(13);  // 缩小到13sp
+          title.setTextColor(0xff000000);
+          title.setTypeface(null, 1);
+          card.addView(title);
+          
+          flashLogScroll = new ScrollView(this);
+          flashLogScroll.setVerticalScrollBarEnabled(true);
+          flashLogScroll.setScrollbarFadingEnabled(false);
+          flashLogScroll.setFillViewport(false);
+          flashLogScroll.setNestedScrollingEnabled(false);  // 禁用嵌套滚动
+          // 阻止父容器拦截触摸事件，允许滚动
+          flashLogScroll.setOnTouchListener((view, event) -> {
+              ViewParent parent = view.getParent();
+              if (parent != null) {
+                  int action = event.getActionMasked();
+                  parent.requestDisallowInterceptTouchEvent(action != android.view.MotionEvent.ACTION_UP && action != android.view.MotionEvent.ACTION_CANCEL);
+              }
+              return false;
+          });
+          
+          flashLogText = new TextView(this);
+          flashLogText.setText("");
+          flashLogText.setTextSize(12);  // 缩小到12sp
+          flashLogText.setTextColor(0xff475569);
+          flashLogText.setTypeface(android.graphics.Typeface.MONOSPACE);
+          flashLogText.setPadding(dp(18), dp(16), dp(18), dp(16));
+          flashLogText.setBackground(createRoundRect(0x12000000, dp(14)));
+          flashLogScroll.addView(flashLogText);
+          
+          LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, dp(200));  // 缩小到200dp
+          scrollLp.topMargin = dp(16);
+          card.addView(flashLogScroll, scrollLp);
+          
+          // 初始化 OtgFlashHelper
+          otgFlashHelper = new OtgFlashHelper(this, flashLogText, flashLogScroll);
+          
+          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+          card.setLayoutParams(lp);
+          return card;
+      }
+      
+      private void flashRefreshDevices() {
+          if (flashRefreshing) return;
+          flashRefreshing = true;
+          flashAppendLog("\n正在扫描设备...\n");
+          
+          new Thread(() -> {
+              // 获取 USB 设备列表
+              android.hardware.usb.UsbManager usbManager = (android.hardware.usb.UsbManager) getSystemService(Context.USB_SERVICE);
+              StringBuilder usbText = new StringBuilder();
+              int deviceCount = 0;
+              
+              if (usbManager != null && !usbManager.getDeviceList().isEmpty()) {
+                  deviceCount = usbManager.getDeviceList().size();
+                  int shown = 0;
+                  for (android.hardware.usb.UsbDevice dev : usbManager.getDeviceList().values()) {
+                      if (shown >= 8) break;
+                      usbText.append(String.format("VID:%04x PID:%04x %s\n",
+                              dev.getVendorId(), dev.getProductId(), dev.getDeviceName()));
+                      shown++;
+                  }
+                  if (deviceCount > 8) {
+                      usbText.append("...共 ").append(deviceCount).append(" 个设备");
+                  }
+              }
+              
+              // ADB 设备检测
+              String adbOut = execShell("adb devices");
+              String fbOut = execShell("fastboot devices");
+              
+              boolean hasAdb = adbOut.contains("\tdevice");
+              boolean hasFb = fbOut.contains("\t");
+              
+              final int finalDeviceCount = deviceCount;
+              final String deviceListText = deviceCount > 0 ? usbText.toString() : t("未找到 USB 设备", "No USB device");
+              final String adbStatus = hasAdb ? "✅ 已连接" : "未发现设备";
+              final String fbStatus = hasFb ? "✅ 已连接" : "未发现设备";
+              
+              runOnUiThread(() -> {
+                  flashDeviceText.setText(deviceListText);
+                  flashProtocolText.setText("ADB: " + adbStatus + "\nFastboot: " + fbStatus);
+                  
+                  if (finalDeviceCount > 0) {
+                      flashAppendLog("发现 " + finalDeviceCount + " 个设备\n");
+                  } else {
+                      flashAppendLog("未发现设备\n");
+                  }
+                  flashAppendLog("协议检测：ADB=" + hasAdb + "，Fastboot=" + hasFb + "\n");
+                  
+                  flashDeviceConnected = hasAdb || hasFb;
+                  flashRefreshing = false;
+              });
+          }).start();
+      }
+      
+      private void startFlashDeviceMonitor() {
+          // 已删除，改用手动刷新
+      }
+      
+      private void executeFlashCommand() {
+          String cmd = flashCmdInput.getText().toString().trim();
+          if (cmd.isEmpty()) {
+              Toast.makeText(this, t("请输入命令", "Enter command"), 0).show();
+              return;
+          }
+          
+          flashAppendLog("\n$ " + cmd);
+          new Thread(() -> {
+              String result = execShell(cmd);
+              runOnUiThread(() -> flashAppendLog(result));
+          }).start();
+      }
+      
+      private void flashAppendLog(String text) {
+          flashLogText.append(text + "\n");
+          flashLogScroll.post(() -> flashLogScroll.fullScroll(ScrollView.FOCUS_DOWN));
+      }
+      
+      private List<OtgAssistantCore.PartitionInfo> parsedPartitions = new ArrayList<>();
+      private String selectedPartition = null;
+
+      private void flashReadPartitions() {
+          if (otgFlashHelper != null) {
+              otgFlashHelper.readPartitions();
+          }
+      }
+      
+      private void flashChooseSingle() {
+          if (otgFlashHelper != null) {
+              otgFlashHelper.chooseSinglePartition();
+          }
+      }
+      
+      private void flashChooseFull() {
+          if (otgFlashHelper != null) {
+              otgFlashHelper.chooseFirmwareDirectory();
+          }
+      }
+      
+      private void flashShowRebootMenu() {
+          if (otgFlashHelper != null) {
+              otgFlashHelper.showRebootMenu();
+          }
+      }
+      
+      private void flashChoosePush() {
+          if (otgFlashHelper != null) {
+              otgFlashHelper.chooseAdbPushFile();
+          }
+      }
+      
+      private void flashShowDeviceInfo() {
+          if (otgFlashHelper != null) {
+              otgFlashHelper.showAdbDeviceInfo();
+          }
+      }
+      
+      private android.graphics.drawable.GradientDrawable createRoundRect(int color, int radius) {
+          android.graphics.drawable.GradientDrawable drawable = new android.graphics.drawable.GradientDrawable();
+          drawable.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+          drawable.setColor(color);
+          drawable.setCornerRadius(radius);
+          return drawable;
+      }
+      
+      private String execShell(String cmd) {
+          try {
+              com.topjohnwu.superuser.Shell.Result result = com.topjohnwu.superuser.Shell.cmd(cmd).exec();
+              if (result.isSuccess()) {
+                  StringBuilder sb = new StringBuilder();
+                  for (String line : result.getOut()) {
+                      sb.append(line).append("\n");
+                  }
+                  return sb.toString();
+              }
+              return "";
+          } catch (Exception e) {
+              return "Error: " + e.getMessage();
+          }
+      }
+      
+      private void flashDeleteOtaDir() {
+          new Thread(() -> {
+              try {
+                  java.io.File otaRoot = new java.io.File(getFilesDir(), "ota");
+                  if (otaRoot.exists()) deleteRecursive(otaRoot);
+              } catch (Exception ignored) {}
+          }).start();
+      }
+
+      private void deleteRecursive(java.io.File f) {
+          if (f.isDirectory()) {
+              java.io.File[] children = f.listFiles();
+              if (children != null) for (java.io.File c : children) deleteRecursive(c);
+          }
+          f.delete();
+      }
+
+      private Button flashActionBtn(String text) {
+          Button btn = new Button(this);
+          btn.setText(text);
+          btn.setTextSize(13);
+          btn.setTextColor(0xff000000);
+          btn.setTypeface(null, 1);
+          btn.setBackgroundResource(R.drawable.liquid_glass_panel);
+          btn.setPadding(0, dp(9), 0, dp(9));
+          return btn;
+      }
+
+      private LinearLayout flashGridRow(View a, View b) {
+          LinearLayout row = new LinearLayout(this);
+          row.setOrientation(LinearLayout.HORIZONTAL);
+          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+          lp.bottomMargin = dp(6);
+          row.setLayoutParams(lp);
+          LinearLayout.LayoutParams lpA = new LinearLayout.LayoutParams(0, dp(44), 1f);
+          lpA.rightMargin = dp(6);
+          row.addView(a, lpA);
+          LinearLayout.LayoutParams lpB = new LinearLayout.LayoutParams(0, dp(44), 1f);
+          row.addView(b, lpB);
+          return row;
+      }
+
+      private LinearLayout buildOtgPartitionPanel() {
           LinearLayout panel = new LiquidGlassPanel(this, 14f);
           panel.setOrientation(LinearLayout.VERTICAL);
-          panel.setPadding(dp(16), dp(16), dp(16), dp(16));
+          panel.setPadding(dp(16), dp(16), dp(16), dp(96));
 
           // 顶部模式切换按钮
           LinearLayout modeSwitch = new LinearLayout(this);
@@ -2032,15 +2493,16 @@ public class MainActivity extends BaseActivity {
               Button btn = new Button(this);
               btn.setText(modeLabels[i]);
               btn.setTextSize(14);
-              btn.setTextColor(i == 0 ? Color.WHITE : 0xff1a2332);
-              btn.setBackgroundResource(R.drawable.liquid_glass_panel);
+              btn.setTextColor(i == 0 ? Color.WHITE : 0xff000000);
+              btn.setBackgroundResource(i == 0 ? R.drawable.button_blue : R.drawable.liquid_glass_panel);
               btn.setPadding(dp(24), dp(12), dp(24), dp(12));
               btn.setTypeface(null, i == 0 ? 1 : 0);
               LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(0, -2, 1f);
               if (i > 0) btnLp.leftMargin = dp(12);
               btn.setOnClickListener(v -> {
                   for (int j = 0; j < modeButtons.length; j++) {
-                      modeButtons[j].setTextColor(j == index ? Color.WHITE : 0xff1a2332);
+                      modeButtons[j].setTextColor(j == index ? Color.WHITE : 0xff000000);
+                      modeButtons[j].setBackgroundResource(j == index ? R.drawable.button_blue : R.drawable.liquid_glass_panel);
                       modeButtons[j].setTypeface(null, j == index ? 1 : 0);
                   }
                   rebuildPartitionList(index == 0);
@@ -2053,7 +2515,7 @@ public class MainActivity extends BaseActivity {
           EditText searchBox = new EditText(this);
           searchBox.setHint(t("🔍 搜索分区名称", "🔍 Search partition"));
           searchBox.setTextSize(14);
-          searchBox.setTextColor(0xff0d1824);
+          searchBox.setTextColor(0xff000000);
           searchBox.setPadding(dp(16), dp(12), dp(16), dp(12));
           searchBox.setBackgroundResource(R.drawable.liquid_glass_panel);
           searchBox.setSingleLine(true);
@@ -2085,7 +2547,7 @@ public class MainActivity extends BaseActivity {
               Button btn = new Button(this);
               btn.setText(slotLabels[i]);
               btn.setTextSize(12);
-              btn.setTextColor(i == 0 ? 0xff0d1824 : 0xff1a2332);
+              btn.setTextColor(i == 0 ? 0xff000000 : 0xff2d3748);
               btn.setBackgroundResource(R.drawable.liquid_glass_panel);
               btn.setPadding(dp(16), dp(8), dp(16), dp(8));
               btn.setTypeface(null, i == 0 ? 1 : 0);
@@ -2093,7 +2555,7 @@ public class MainActivity extends BaseActivity {
               if (i > 0) btnLp.leftMargin = dp(8);
               btn.setOnClickListener(v -> {
                   for (int j = 0; j < slotButtons.length; j++) {
-                      slotButtons[j].setTextColor(j == index ? 0xff0d1824 : 0xff1a2332);
+                      slotButtons[j].setTextColor(j == index ? 0xff000000 : 0xff2d3748);
                       slotButtons[j].setTypeface(null, j == index ? 1 : 0);
                   }
                   filterPartitionsBySlot(index);
@@ -2112,7 +2574,7 @@ public class MainActivity extends BaseActivity {
           Button selectAllBtn = new Button(this);
           selectAllBtn.setText(t("全选", "Select All"));
           selectAllBtn.setTextSize(12);
-          selectAllBtn.setTextColor(0xff1a2332);
+          selectAllBtn.setTextColor(0xff000000);
           selectAllBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
           selectAllBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
           selectAllBtn.setOnClickListener(v -> selectAllPartitions(true));
@@ -2121,7 +2583,7 @@ public class MainActivity extends BaseActivity {
           Button deselectAllBtn = new Button(this);
           deselectAllBtn.setText(t("反选", "Invert"));
           deselectAllBtn.setTextSize(12);
-          deselectAllBtn.setTextColor(0xff1a2332);
+          deselectAllBtn.setTextColor(0xff000000);
           deselectAllBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
           deselectAllBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
           deselectAllBtn.setOnClickListener(v -> invertSelection());
@@ -2132,7 +2594,7 @@ public class MainActivity extends BaseActivity {
           Button viewSelectedBtn = new Button(this);
           viewSelectedBtn.setText(t("仅看已选", "Show Selected"));
           viewSelectedBtn.setTextSize(12);
-          viewSelectedBtn.setTextColor(0xff1a2332);
+          viewSelectedBtn.setTextColor(0xff000000);
           viewSelectedBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
           viewSelectedBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
           viewSelectedBtn.setOnClickListener(v -> showOnlySelected());
@@ -2140,30 +2602,171 @@ public class MainActivity extends BaseActivity {
           viewLp.leftMargin = dp(8);
           batchActions.addView(viewSelectedBtn, viewLp);
 
-          // 分区列表容器
-          ScrollView scrollView = new ScrollView(this);
-          scrollView.setVerticalScrollBarEnabled(false);
-          LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, 0);
-          scrollLp.topMargin = dp(12);
-          scrollLp.weight = 1;
-          panel.addView(scrollView, scrollLp);
+          // 分区列表标题（带打开位置按钮）
+          LinearLayout partTitleRow = new LinearLayout(this);
+          partTitleRow.setOrientation(LinearLayout.HORIZONTAL);
+          partTitleRow.setGravity(Gravity.CENTER_VERTICAL);
+          
+          TextView partListTitle = new TextView(this);
+          partListTitle.setText(t("分区列表", "Partition List"));
+          partListTitle.setTextSize(14);
+          partListTitle.setTypeface(null, 1);
+          partListTitle.setTextColor(0xff000000);
+          LinearLayout.LayoutParams partTitleLp = new LinearLayout.LayoutParams(0, -2, 1f);
+          partTitleRow.addView(partListTitle, partTitleLp);
+          
+           // 打开文件位置按钮
+          Button btnOpenFolder = new Button(this);
+          btnOpenFolder.setText(t("📂 打开位置", "📂 Open"));
+          btnOpenFolder.setTextSize(12);
+          btnOpenFolder.setTextColor(0xff000000);
+          btnOpenFolder.setBackgroundResource(R.drawable.liquid_glass_panel);  // 液态玻璃背景
+          btnOpenFolder.setPadding(dp(12), dp(8), dp(12), dp(8));
+          btnOpenFolder.setOnClickListener(v -> {
+              Haptics.perform(v);  // 添加震动
+              new Thread(() -> {
+                  try {
+                      String dirPath = "/storage/emulated/0/DsuManager/image";
+                      
+                      // 使用 Shell 命令列出文件
+                      String lsResult = execShell("ls -1 " + dirPath);
+                      if (lsResult == null || lsResult.trim().isEmpty() || lsResult.contains("No such file")) {
+                          runOnUiThread(() -> Toast.makeText(this, t("目录为空或不存在", "Directory empty or not found"), Toast.LENGTH_SHORT).show());
+                          return;
+                      }
+                      
+                      String[] fileNames = lsResult.trim().split("\n");
+                      if (fileNames.length == 0) {
+                          runOnUiThread(() -> Toast.makeText(this, t("目录为空", "Directory is empty"), Toast.LENGTH_SHORT).show());
+                          return;
+                      }
+                      
+                      // 使用第一个文件
+                      File file = new File(dirPath, fileNames[0].trim());
+                      if (!file.exists()) {
+                          runOnUiThread(() -> Toast.makeText(this, t("文件不存在", "File not found"), Toast.LENGTH_SHORT).show());
+                          return;
+                      }
+                      
+                      runOnUiThread(() -> {
+                          try {
+                              android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                                  this, 
+                                  getPackageName() + ".fileprovider", 
+                                  file
+                              );
+                              
+                              String mimeType;
+                              String name = file.getName();
+                              if (name.endsWith(".img")) {
+                                  mimeType = "application/octet-stream";
+                              } else if (name.endsWith(".zip")) {
+                                  mimeType = "application/zip";
+                              } else {
+                                  mimeType = "*/*";
+                              }
+                              
+                              Intent intent = new Intent(Intent.ACTION_VIEW);
+                              intent.setDataAndType(uri, mimeType);
+                              intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                              intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                              
+                              startActivity(Intent.createChooser(intent, t("打开方式", "Open with")));
+                          } catch (Exception e) {
+                              Toast.makeText(this, t("无法打开文件管理器", "Cannot open file manager"), Toast.LENGTH_SHORT).show();
+                          }
+                      });
+                  } catch (Exception e) {
+                      runOnUiThread(() -> Toast.makeText(this, t("操作失败", "Operation failed"), Toast.LENGTH_SHORT).show());
+                  }
+              }).start();
+          });
+          partTitleRow.addView(btnOpenFolder);
+          
+          LinearLayout.LayoutParams partTitleRowLp = new LinearLayout.LayoutParams(-1, -2);
+          partTitleRowLp.topMargin = dp(16);
+          panel.addView(partTitleRow, partTitleRowLp);
 
+           // 分区列表（固定高度400dp，可滚动）
+          ScrollView partitionScroll = new ScrollView(this);
+          partitionScroll.setVerticalScrollBarEnabled(true);
+          partitionScroll.setScrollbarFadingEnabled(false);
+          partitionScroll.setFillViewport(false);
+          partitionScroll.setNestedScrollingEnabled(false);  // 禁用嵌套滚动
+          // 阻止所有父容器拦截触摸事件，允许滚动
+          partitionScroll.setOnTouchListener((view, event) -> {
+              int action = event.getActionMasked();
+              boolean disallow = (action != android.view.MotionEvent.ACTION_UP && action != android.view.MotionEvent.ACTION_CANCEL);
+              
+              // 递归通知所有父容器
+              ViewParent parent = view.getParent();
+              while (parent != null) {
+                  parent.requestDisallowInterceptTouchEvent(disallow);
+                  if (parent instanceof View) {
+                      parent = ((View) parent).getParent();
+                  } else {
+                      break;
+                  }
+              }
+              return false;
+          });
+          
           LinearLayout partitionList = new LinearLayout(this);
           partitionList.setOrientation(LinearLayout.VERTICAL);
-          scrollView.addView(partitionList, new LinearLayout.LayoutParams(-1, -2));
+          partitionScroll.addView(partitionList);
+          LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, dp(400));
+          scrollLp.topMargin = dp(8);
+          panel.addView(partitionScroll, scrollLp);
 
-          // 底部执行按钮
-          executePartitionButton = new Button(this);
-          executePartitionButton.setText(t("⚡ 提取选中分区", "⚡ Extract Selected"));
-          executePartitionButton.setTextSize(16);
-          executePartitionButton.setTextColor(Color.WHITE);
-          executePartitionButton.setBackgroundResource(R.drawable.liquid_glass_panel);
-          executePartitionButton.setPadding(dp(20), dp(14), dp(20), dp(14));
-          executePartitionButton.setTypeface(null, 1);
-          executePartitionButton.setOnClickListener(v -> executePartitionOperation());
-          LinearLayout.LayoutParams execLp = new LinearLayout.LayoutParams(-1, -2);
-          execLp.topMargin = dp(12);
-          panel.addView(executePartitionButton, execLp);
+          // 操作日志卡（固定高度200dp，可滚动，在底部）
+          LinearLayout logCard = new LiquidGlassPanel(this, 10f);
+          logCard.setOrientation(LinearLayout.VERTICAL);
+          logCard.setPadding(dp(12), dp(10), dp(12), dp(10));
+          
+          // 添加渐变背景
+          android.graphics.drawable.GradientDrawable logGradient = new android.graphics.drawable.GradientDrawable(
+              android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+              new int[]{0x10fef3c7, 0x05fde68a}
+          );
+          logGradient.setCornerRadius(dp(10));
+          logCard.setBackground(logGradient);
+          
+          LinearLayout.LayoutParams logCardLp = new LinearLayout.LayoutParams(-1, -2);
+          logCardLp.topMargin = dp(12);
+          panel.addView(logCard, logCardLp);
+
+          TextView logTitle = new TextView(this);
+          logTitle.setText(t("📜 操作日志", "📜 Operation Log"));
+          logTitle.setTextSize(14);
+          logTitle.setTypeface(null, 1);
+          logTitle.setTextColor(0xff000000);
+          logCard.addView(logTitle);
+
+          partitionLogScroll = new ScrollView(this);
+          partitionLogScroll.setVerticalScrollBarEnabled(true);
+          partitionLogScroll.setScrollbarFadingEnabled(false);
+          partitionLogScroll.setFillViewport(false);
+          // 阻止父容器拦截触摸事件，允许滚动
+          partitionLogScroll.setOnTouchListener((view, event) -> {
+              ViewParent parent = view.getParent();
+              if (parent != null) {
+                  int action = event.getActionMasked();
+                  parent.requestDisallowInterceptTouchEvent(action != android.view.MotionEvent.ACTION_UP && action != android.view.MotionEvent.ACTION_CANCEL);
+              }
+              return false;
+          });
+          
+          partitionLogView = new TextView(this);
+          partitionLogView.setText(t("等待操作...\n", "Waiting for operation...\n"));
+          partitionLogView.setTextSize(12);
+          partitionLogView.setTypeface(android.graphics.Typeface.MONOSPACE);
+          partitionLogView.setTextColor(0xff000000);
+          partitionLogView.setPadding(dp(10), dp(10), dp(10), dp(10));
+          partitionLogView.setBackgroundResource(R.drawable.liquid_glass_panel);
+          partitionLogScroll.addView(partitionLogView);
+          LinearLayout.LayoutParams logScrollLp = new LinearLayout.LayoutParams(-1, dp(250));
+          logScrollLp.topMargin = dp(10);
+          logCard.addView(partitionLogScroll, logScrollLp);
 
           // 初始化分区列表
           loadPartitionList(partitionList, true);
@@ -2178,6 +2781,9 @@ public class MainActivity extends BaseActivity {
       private int currentSlotFilter = 0;
       private String currentSearchQuery = "";
       private Button executePartitionButton;
+      private Button partitionFab;
+      private TextView partitionLogView;
+      private ScrollView partitionLogScroll;
 
       private void loadPartitionList(LinearLayout container, boolean extractMode) {
           this.partitionListContainer = container;
@@ -2261,14 +2867,14 @@ public class MainActivity extends BaseActivity {
           TextView nameText = new TextView(this);
           nameText.setText(partition.name);
           nameText.setTextSize(16);
-          nameText.setTextColor(0xff0d1824);
+          nameText.setTextColor(0xff000000);
           nameText.setTypeface(null, 1);
           textInfo.addView(nameText);
 
           TextView infoText = new TextView(this);
           infoText.setText(partition.slot + " · " + t("大小: ", "Size: ") + partition.getSizeMB() + "MB");
           infoText.setTextSize(12);
-          infoText.setTextColor(0xff1a2332);
+          infoText.setTextColor(0xff2d3748);
           LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(-2, -2);
           infoLp.topMargin = dp(4);
           textInfo.addView(infoText, infoLp);
@@ -2283,7 +2889,7 @@ public class MainActivity extends BaseActivity {
 
           // 右侧勾选框
           android.widget.CheckBox checkBox = new android.widget.CheckBox(this);
-          checkBox.setButtonDrawable(android.R.drawable.checkbox_on_background);
+          checkBox.setChecked(false);  // 显式设置为未选中
           checkBox.setTag(partition);
           item.addView(checkBox, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
@@ -2294,10 +2900,10 @@ public class MainActivity extends BaseActivity {
 
       private void rebuildPartitionList(boolean extractMode) {
           currentExtractMode = extractMode;
-          if (executePartitionButton != null) {
-              executePartitionButton.setText(extractMode ? 
-                  t("⚡ 提取选中分区", "⚡ Extract Selected") : 
-                  t("⚡ 刷入选中分区", "⚡ Flash Selected"));
+          if (partitionFab != null) {
+              partitionFab.setText(extractMode ?
+                  t("⚡ 提取", "⚡ Extract") :
+                  t("⚡ 刷入", "⚡ Flash"));
           }
           refreshPartitionList();
       }
@@ -2351,32 +2957,74 @@ public class MainActivity extends BaseActivity {
       }
 
       private void extractPartitions(List<AdbManager.PartitionInfo> partitions) {
-          String outputDir = "/sdcard/partition_backups";
+          String outputDir = "/storage/emulated/0/DsuManager/image";
+          
+          // 构建分区列表提示（最多显示前8个）
+          StringBuilder partListBuilder = new StringBuilder();
+          int displayCount = Math.min(8, partitions.size());
+          for (int i = 0; i < displayCount; i++) {
+              partListBuilder.append("• ").append(partitions.get(i).name);
+              if (partitions.get(i).sizeBytes > 0) {
+                  long sizeMb = partitions.get(i).sizeBytes / (1024 * 1024);
+                  partListBuilder.append(" (").append(sizeMb).append(" MB)");
+              }
+              partListBuilder.append("\n");
+          }
+          if (partitions.size() > displayCount) {
+              partListBuilder.append("...(").append(t("共", "Total ")).append(partitions.size()).append(t("个", " partitions")).append(")");
+          }
           
           new android.app.AlertDialog.Builder(this)
               .setTitle(t("确认提取", "Confirm Extract"))
-              .setMessage(t("将提取 ", "Extract ") + partitions.size() + t(" 个分区到:\n", " partitions to:\n") + outputDir)
+              .setMessage(t("将提取以下分区:\n\n", "Extract the following partitions:\n\n") + 
+                         partListBuilder.toString() + 
+                         "\n" + t("保存到: ", "Save to: ") + outputDir)
               .setPositiveButton(t("提取", "Extract"), (dialog, which) -> {
                   new Thread(() -> {
+                      runOnUiThread(() -> {
+                          if (partitionLogView != null) partitionLogView.setText("");
+                      });
+                      partitionAppendLog(t("=== 开始提取分区 ===\n", "=== Start Extracting Partitions ===\n"));
+                      partitionAppendLog(t("目标目录: ", "Target directory: ") + outputDir + "\n\n");
+                      
                       com.topjohnwu.superuser.Shell.cmd("mkdir -p " + outputDir).exec();
                       int success = 0;
                       int failed = 0;
+                      final int total = partitions.size();
                       
-                      for (AdbManager.PartitionInfo partition : partitions) {
-                          runOnUiThread(() -> Toast.makeText(this, t("正在提取: ", "Extracting: ") + partition.name, Toast.LENGTH_SHORT).show());
-                          
+                      for (int i = 0; i < partitions.size(); i++) {
+                          AdbManager.PartitionInfo partition = partitions.get(i);
                           String outputPath = outputDir + "/" + partition.name + ".img";
-                          com.topjohnwu.superuser.Shell.Result result = adbManager.extractPartition(partition.blockDevice, outputPath);
+                          
+                          final int currentIndex = i + 1;
+                          partitionAppendLog(t("【", "[") + currentIndex + "/" + total + t("】开始提取", "] Start extracting ") + partition.name + t(" 分区\n", " partition\n"));
+                          
+                          // 执行 dd 命令，捕获标准输出和标准错误
+                          com.topjohnwu.superuser.Shell.Result result = com.topjohnwu.superuser.Shell.cmd(
+                              "dd if=" + partition.blockDevice + " of=" + outputPath + " 2>&1"
+                          ).exec();
+                          
+                          // 输出 dd 的详细信息（包括 records in/out）
+                          for (String line : result.getOut()) {
+                              partitionAppendLog(line + "\n");
+                          }
                           
                           if (result.isSuccess()) {
                               success++;
+                              partitionAppendLog(t("- 已提取", "- Extracted ") + partition.name + 
+                                               t(" 分区到：", " partition to: ") + outputPath + "\n\n");
                           } else {
                               failed++;
+                              partitionAppendLog(t("- 提取", "- Extract ") + partition.name + t(" 失败\n\n", " failed\n\n"));
                           }
                       }
                       
                       final int finalSuccess = success;
                       final int finalFailed = failed;
+                      partitionAppendLog(t("=== 提取完成 ===\n", "=== Extract Complete ===\n"));
+                      partitionAppendLog(t("成功: ", "Success: ") + finalSuccess + "\n");
+                      partitionAppendLog(t("失败: ", "Failed: ") + finalFailed + "\n");
+                      
                       runOnUiThread(() -> {
                           new android.app.AlertDialog.Builder(this)
                               .setTitle(t("提取完成", "Extract Complete"))
@@ -2392,50 +3040,110 @@ public class MainActivity extends BaseActivity {
               .show();
       }
 
+      // 刷入模式：保存待刷入的分区
+      private AdbManager.PartitionInfo pendingFlashPartition = null;
+      
       private void flashPartitions(List<AdbManager.PartitionInfo> partitions) {
-          String inputDir = "/sdcard/partition_backups";
+          // 刷入模式只支持单个分区
+          if (partitions.size() != 1) {
+              Toast.makeText(this, t("刷入模式只能选择一个分区", "Flash mode: select only one partition"), Toast.LENGTH_SHORT).show();
+              return;
+          }
+          
+          pendingFlashPartition = partitions.get(0);
+          
+          // 打开文件选择器
+          Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+          intent.setType("*/*");
+          intent.addCategory(Intent.CATEGORY_OPENABLE);
+          startActivityForResult(Intent.createChooser(intent, 
+              t("选择 " + pendingFlashPartition.name + " 镜像文件", "Select " + pendingFlashPartition.name + " image")), 
+              REQUEST_FLASH_IMAGE_FILE);
+      }
+      
+      private void flashSinglePartitionWithFile(Uri fileUri) {
+          if (pendingFlashPartition == null) return;
+          
+          final AdbManager.PartitionInfo partition = pendingFlashPartition;
+          String imagePath = getPath(fileUri, "flash_temp.img");
+          
+          if (imagePath.isEmpty()) {
+              Toast.makeText(this, t("无法获取文件路径", "Cannot get file path"), Toast.LENGTH_SHORT).show();
+              return;
+          }
           
           new android.app.AlertDialog.Builder(this)
-              .setTitle(t("⚠️ 危险操作", "⚠️ Dangerous Operation"))
-              .setMessage(t("即将刷入 ", "About to flash ") + partitions.size() + t(" 个分区！\n此操作有风险，请确保镜像文件正确！\n\n镜像目录: ", " partitions!\nThis is risky! Ensure images are correct!\n\nImage directory: ") + inputDir)
-              .setPositiveButton(t("确认刷入", "Confirm Flash"), (dialog, which) -> {
+              .setTitle(t("⚠️ 确认刷入", "⚠️ Confirm Flash"))
+              .setMessage(t("分区: ", "Partition: ") + partition.name + "\n" +
+                         t("大小: ", "Size: ") + partition.getSizeMB() + " MB\n" +
+                         t("设备: ", "Device: ") + partition.blockDevice + "\n\n" +
+                         t("镜像文件: ", "Image file: ") + imagePath + "\n\n" +
+                         t("⚠️ 刷入错误的镜像可能导致设备无法启动！", "⚠️ Flashing wrong image may brick your device!"))
+              .setPositiveButton(t("确认刷入", "Confirm"), (dialog, which) -> {
                   new Thread(() -> {
-                      int success = 0;
-                      int failed = 0;
+                      runOnUiThread(() -> {
+                          if (partitionLogView != null) partitionLogView.setText("");
+                      });
                       
-                      for (AdbManager.PartitionInfo partition : partitions) {
-                          runOnUiThread(() -> Toast.makeText(this, t("正在刷入: ", "Flashing: ") + partition.name, Toast.LENGTH_SHORT).show());
-                          
-                          String imagePath = inputDir + "/" + partition.name + ".img";
-                          com.topjohnwu.superuser.Shell.Result checkFile = com.topjohnwu.superuser.Shell.cmd("test -f " + imagePath).exec();
-                          if (!checkFile.isSuccess()) {
-                              failed++;
-                              continue;
-                          }
-                          
-                          com.topjohnwu.superuser.Shell.Result result = adbManager.flashPartition(imagePath, partition.blockDevice);
-                          
-                          if (result.isSuccess()) {
-                              success++;
-                          } else {
-                              failed++;
-                          }
+                      partitionAppendLog(t("=== 开始刷入分区 ===\n", "=== Start Flashing Partition ===\n"));
+                      partitionAppendLog(t("分区: ", "Partition: ") + partition.name + "\n");
+                      partitionAppendLog(t("镜像: ", "Image: ") + imagePath + "\n\n");
+                      
+                      partitionAppendLog(t("- 开始刷入 ", "- Start flashing ") + partition.name + t(" 分区\n", " partition\n"));
+                      
+                      // 执行 dd 命令
+                      com.topjohnwu.superuser.Shell.Result result = com.topjohnwu.superuser.Shell.cmd(
+                          "dd if=" + imagePath + " of=" + partition.blockDevice + " 2>&1"
+                      ).exec();
+                      
+                      // 输出 dd 的详细信息
+                      for (String line : result.getOut()) {
+                          partitionAppendLog(line + "\n");
                       }
                       
-                      final int finalSuccess = success;
-                      final int finalFailed = failed;
-                      runOnUiThread(() -> {
-                          new android.app.AlertDialog.Builder(this)
-                              .setTitle(t("刷入完成", "Flash Complete"))
-                              .setMessage(t("成功: ", "Success: ") + finalSuccess + "\n" + 
-                                        t("失败: ", "Failed: ") + finalFailed)
-                              .setPositiveButton(t("确定", "OK"), null)
-                              .show();
-                      });
+                      if (result.isSuccess()) {
+                          partitionAppendLog(t("\n✅ 已刷入 ", "\n✅ Flashed ") + partition.name + 
+                                           t(" 分区成功\n", " partition successfully\n"));
+                          partitionAppendLog(t("=== 刷入完成 ===\n", "=== Flash Complete ===\n"));
+                          
+                          runOnUiThread(() -> {
+                              Toast.makeText(this, t("刷入成功", "Flash successful"), Toast.LENGTH_SHORT).show();
+                          });
+                      } else {
+                          partitionAppendLog(t("\n❌ 刷入 ", "\n❌ Flash ") + partition.name + t(" 失败\n", " failed\n"));
+                          partitionAppendLog(t("=== 刷入失败 ===\n", "=== Flash Failed ===\n"));
+                          
+                          runOnUiThread(() -> {
+                              Toast.makeText(this, t("刷入失败", "Flash failed"), Toast.LENGTH_SHORT).show();
+                          });
+                      }
                   }).start();
               })
               .setNegativeButton(t("取消", "Cancel"), null)
               .show();
+      }
+
+      private void partitionAppendLog(String text) {
+          if (partitionLogView == null) return;
+          runOnUiThread(() -> {
+              if (partitionLogView == null) return;
+              partitionLogView.append(text);
+              if (partitionLogScroll != null) partitionLogScroll.post(() -> partitionLogScroll.fullScroll(View.FOCUS_DOWN));
+          });
+      }
+
+      private Button buildPartitionFab() {
+          Button fab = new Button(this);
+          fab.setText(currentExtractMode ? t("⚡ 提取", "⚡ Extract") : t("⚡ 刷入", "⚡ Flash"));
+          fab.setTextSize(14);
+          fab.setTextColor(Color.WHITE);
+          fab.setBackgroundResource(R.drawable.button_blue);
+          fab.setPadding(dp(22), dp(14), dp(22), dp(14));
+          fab.setTypeface(null, 1);
+          fab.setStateListAnimator(null);
+          fab.setElevation(dp(6));
+          fab.setOnClickListener(v -> executePartitionOperation());
+          return fab;
       }
 
       private LinearLayout buildMorePage() {
@@ -3263,7 +3971,8 @@ public class MainActivity extends BaseActivity {
          installWithDsuSideloaderFlow(pendingInstallZip);
      }
      private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
-        @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } else if(r==PICK_FASTBOOT_IMAGE){ String path=getPath(u,"fastboot.img"); if(!path.isEmpty() && fastbootFilePathInput != null){ fastbootFilePathInput.setText(path); } } }
+     @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } else if(r==PICK_FASTBOOT_IMAGE){ String path=getPath(u,"fastboot.img"); if(!path.isEmpty()){ if(fastbootImagePathInput != null) fastbootImagePathInput.setText(path); else if(fastbootFilePathInput != null) fastbootFilePathInput.setText(path); } } else if(r==REQUEST_FLASH_IMAGE_FILE){ flashSinglePartitionWithFile(u); } else if(r==REQUEST_OTG_SINGLE_IMAGE){ String path=getPath(u,"otg_single.img"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareSingleImage(path); } } else if(r==REQUEST_OTG_FULL_PACKAGE){ String path=getPath(u,"otg_full.zip"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.extractAndScanOta(path); } } else if(r==REQUEST_OTG_ADB_PUSH){ String path=getPath(u,"otg_push_file"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareAdbPush(path); } } }
+
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
              if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
