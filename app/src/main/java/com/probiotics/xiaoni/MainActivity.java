@@ -937,7 +937,8 @@ public class MainActivity extends BaseActivity {
                 fabLp.bottomMargin = dp(84);
                 fabLp.rightMargin = dp(16);
                 otgRoot.addView(partitionFab, fabLp);
-                partitionFab.setVisibility(View.GONE); // 初始隐藏，selectOtgTab 控制显示
+                // buildOtgPage 内部首次 selectOtgTab 时 FAB 尚未加入父容器，需在加入后按当前页补一次显示状态。
+                partitionFab.setVisibility(otgCurrentTab == 0 ? View.VISIBLE : View.GONE);
                 
                 next = otgRoot;
             } else {
@@ -1368,7 +1369,7 @@ public class MainActivity extends BaseActivity {
           heading.setGravity(Gravity.CENTER);
           title.addView(heading, new LinearLayout.LayoutParams(-1, dp(32)));
           TextView subtitle = new TextView(this);
-          subtitle.setText(t("ADB / Fastboot / 文件管理", "ADB / Fastboot / File Manager"));
+          subtitle.setText(t("本机分区 / 刷机助手", "Partitions / Flash Tool"));
           subtitle.setTextSize(11);
           subtitle.setTextColor(0xff2d4a66);
           subtitle.setGravity(Gravity.CENTER);
@@ -1387,7 +1388,7 @@ public class MainActivity extends BaseActivity {
           otgTabItems.setClipChildren(false);
           tabs.addView(otgTabItems, new FrameLayout.LayoutParams(-1, dp(64)));
           
-          String[] tabLabels = {t("设备", "Device"), t("文件管理", "Files"), t("本机分区", "Partitions"), t("刷机助手", "Flash Tool")};
+          String[] tabLabels = {t("本机分区", "Partitions"), t("刷机助手", "Flash Tool")};
           otgTabs = new Button[tabLabels.length];
           for (int i = 0; i < tabLabels.length; i++) {
               final int index = i;
@@ -1412,10 +1413,8 @@ public class MainActivity extends BaseActivity {
 
           // 内容面板
           otgPanels = new LinearLayout[tabLabels.length];
-          otgPanels[0] = buildOtgDevicePanel();
-          otgPanels[1] = buildOtgFilesAndAppsPanel();  // 合并文件+应用
-          otgPanels[2] = buildOtgPartitionPanel();     // 本机分区管理
-          otgPanels[3] = buildOtgFastbootPanel();      // 刷机助手
+          otgPanels[0] = buildOtgPartitionPanel();     // 本机分区管理
+          otgPanels[1] = buildOtgFastbootPanel();      // 刷机助手
           for (LinearLayout panel : otgPanels) {
               LinearLayout.LayoutParams panelLp = new LinearLayout.LayoutParams(-1, -2);
               panelLp.setMargins(0, 0, 0, dp(10));
@@ -1503,7 +1502,8 @@ public class MainActivity extends BaseActivity {
           otgCurrentTab = index;
           // 控制分区面板 FAB 显示/隐藏（仅在本机分区 tab 显示）
           if (partitionFab != null) {
-              partitionFab.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
+              // OTG 现在只保留：本机分区（0）和刷机助手（1）。
+              partitionFab.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
           }
       }
 
@@ -2564,43 +2564,30 @@ public class MainActivity extends BaseActivity {
               slotFilter.addView(btn, btnLp);
           }
 
-          // 批量操作按钮
-          LinearLayout batchActions = new LinearLayout(this);
-          batchActions.setOrientation(LinearLayout.HORIZONTAL);
-          LinearLayout.LayoutParams batchLp = new LinearLayout.LayoutParams(-1, -2);
-          batchLp.topMargin = dp(12);
-          panel.addView(batchActions, batchLp);
-
-          Button selectAllBtn = new Button(this);
-          selectAllBtn.setText(t("全选", "Select All"));
-          selectAllBtn.setTextSize(12);
-          selectAllBtn.setTextColor(0xff000000);
-          selectAllBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
-          selectAllBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
-          selectAllBtn.setOnClickListener(v -> selectAllPartitions(true));
-          batchActions.addView(selectAllBtn, new LinearLayout.LayoutParams(0, -2, 1f));
-
-          Button deselectAllBtn = new Button(this);
-          deselectAllBtn.setText(t("反选", "Invert"));
-          deselectAllBtn.setTextSize(12);
-          deselectAllBtn.setTextColor(0xff000000);
-          deselectAllBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
-          deselectAllBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
-          deselectAllBtn.setOnClickListener(v -> invertSelection());
-          LinearLayout.LayoutParams deselectLp = new LinearLayout.LayoutParams(0, -2, 1f);
-          deselectLp.leftMargin = dp(8);
-          batchActions.addView(deselectAllBtn, deselectLp);
-
-          Button viewSelectedBtn = new Button(this);
-          viewSelectedBtn.setText(t("仅看已选", "Show Selected"));
-          viewSelectedBtn.setTextSize(12);
-          viewSelectedBtn.setTextColor(0xff000000);
-          viewSelectedBtn.setBackgroundResource(R.drawable.liquid_glass_panel);
-          viewSelectedBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
+          // 本机系统高级重启：仅看已选与前三个操作按钮同排等宽显示。
+          LinearLayout rebootActions = new LinearLayout(this);
+          rebootActions.setOrientation(LinearLayout.VERTICAL);
+          LinearLayout.LayoutParams rebootRowLp = new LinearLayout.LayoutParams(-1, -2);
+          rebootRowLp.topMargin = dp(6);
+          panel.addView(rebootActions, rebootRowLp);
+          LinearLayout rebootRowOne = new LinearLayout(this);
+          rebootRowOne.setOrientation(LinearLayout.HORIZONTAL);
+          rebootActions.addView(rebootRowOne);
+          Button viewSelectedBtn = buildCompactPartitionActionButton(t("仅看已选", "Show Selected"), true);
           viewSelectedBtn.setOnClickListener(v -> showOnlySelected());
-          LinearLayout.LayoutParams viewLp = new LinearLayout.LayoutParams(0, -2, 1f);
-          viewLp.leftMargin = dp(8);
-          batchActions.addView(viewSelectedBtn, viewLp);
+          rebootRowOne.addView(viewSelectedBtn, new LinearLayout.LayoutParams(0, -2, 1f));
+          addPartitionRebootButton(rebootRowOne, t("关机", "Shutdown"), "sync;svc power shutdown || reboot -p;", true, true);
+          addPartitionRebootButton(rebootRowOne, t("重启", "Reboot"), "sync;svc power reboot || reboot;", true, true);
+          addPartitionRebootButton(rebootRowOne, t("热重启", "Hot reboot"), "sync;am restart || busybox killall system_server;", true, true);
+          LinearLayout rebootRowTwo = new LinearLayout(this);
+          rebootRowTwo.setOrientation(LinearLayout.HORIZONTAL);
+          LinearLayout.LayoutParams rebootRowTwoLp = new LinearLayout.LayoutParams(-1, -2);
+          rebootRowTwoLp.topMargin = dp(3);
+          rebootActions.addView(rebootRowTwo, rebootRowTwoLp);
+          addPartitionRebootButton(rebootRowTwo, "FASTBOOT", "sync;reboot bootloader;", true, false);
+          addPartitionRebootButton(rebootRowTwo, "RECOVERY", "sync;reboot recovery;", true, false);
+          addPartitionRebootButton(rebootRowTwo, "9008\n(EDL)", "sync;reboot edl;", true, false);
+          addPartitionRebootButton(rebootRowTwo, "FASTBOOT\nD", "sync;reboot fastboot;", true, false);
 
           // 分区列表标题（带打开位置按钮）
           LinearLayout partTitleRow = new LinearLayout(this);
@@ -2615,8 +2602,9 @@ public class MainActivity extends BaseActivity {
           LinearLayout.LayoutParams partTitleLp = new LinearLayout.LayoutParams(0, -2, 1f);
           partTitleRow.addView(partListTitle, partTitleLp);
           
-           // 打开文件位置按钮
+           // 提取模式打开位置；刷入模式选择 .img
           Button btnOpenFolder = new Button(this);
+          partitionImagePickerButton = btnOpenFolder;
           btnOpenFolder.setText(t("📂 打开位置", "📂 Open"));
           btnOpenFolder.setTextSize(12);
           btnOpenFolder.setTextColor(0xff000000);
@@ -2624,6 +2612,10 @@ public class MainActivity extends BaseActivity {
           btnOpenFolder.setPadding(dp(12), dp(8), dp(12), dp(8));
           btnOpenFolder.setOnClickListener(v -> {
               Haptics.perform(v);  // 添加震动
+              if (!currentExtractMode) {
+                  choosePartitionImageFile();
+                  return;
+              }
               new Thread(() -> {
                   try {
                       String dirPath = "/storage/emulated/0/DsuManager/image";
@@ -2687,26 +2679,24 @@ public class MainActivity extends BaseActivity {
           partTitleRowLp.topMargin = dp(16);
           panel.addView(partTitleRow, partTitleRowLp);
 
-           // 分区列表（固定高度400dp，可滚动）
+           // 分区列表（固定高度400dp，可滚动）。使用平台 ScrollView，避免部分
+           // Android 17 ROM 在 NestedScrollView 绘制空 ScrollBarDrawable 时崩溃。
           ScrollView partitionScroll = new ScrollView(this);
-          partitionScroll.setVerticalScrollBarEnabled(true);
-          partitionScroll.setScrollbarFadingEnabled(false);
-          partitionScroll.setFillViewport(false);
-          partitionScroll.setNestedScrollingEnabled(false);  // 禁用嵌套滚动
-          // 阻止所有父容器拦截触摸事件，允许滚动
+          // 关闭系统滚动条绘制，仅隐藏滚动条，不影响真实的上下滑动。
+          partitionScroll.setVerticalScrollBarEnabled(false);
+          partitionScroll.setFillViewport(true);
+          partitionScroll.setNestedScrollingEnabled(true);
+          partitionScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+          // 手指在分区列表内滑动时禁止外层页面拦截，抬手后恢复。
           partitionScroll.setOnTouchListener((view, event) -> {
               int action = event.getActionMasked();
-              boolean disallow = (action != android.view.MotionEvent.ACTION_UP && action != android.view.MotionEvent.ACTION_CANCEL);
-              
-              // 递归通知所有父容器
+              boolean disallow = action != android.view.MotionEvent.ACTION_UP
+                      && action != android.view.MotionEvent.ACTION_CANCEL;
               ViewParent parent = view.getParent();
               while (parent != null) {
                   parent.requestDisallowInterceptTouchEvent(disallow);
-                  if (parent instanceof View) {
-                      parent = ((View) parent).getParent();
-                  } else {
-                      break;
-                  }
+                  if (parent instanceof View) parent = ((View) parent).getParent();
+                  else break;
               }
               return false;
           });
@@ -2782,6 +2772,7 @@ public class MainActivity extends BaseActivity {
       private String currentSearchQuery = "";
       private Button executePartitionButton;
       private Button partitionFab;
+      private Button partitionImagePickerButton;
       private TextView partitionLogView;
       private ScrollView partitionLogScroll;
 
@@ -2904,6 +2895,11 @@ public class MainActivity extends BaseActivity {
               partitionFab.setText(extractMode ?
                   t("⚡ 提取", "⚡ Extract") :
                   t("⚡ 刷入", "⚡ Flash"));
+          }
+          if (partitionImagePickerButton != null) {
+              partitionImagePickerButton.setText(extractMode
+                  ? t("📂 打开位置", "📂 Open")
+                  : t("📥 选择 .img", "📥 Choose .img"));
           }
           refreshPartitionList();
       }
@@ -3042,6 +3038,8 @@ public class MainActivity extends BaseActivity {
 
       // 刷入模式：保存待刷入的分区
       private AdbManager.PartitionInfo pendingFlashPartition = null;
+      private String pendingFlashImagePath = "";
+      private String pendingFlashImageName = "";
       
       private void flashPartitions(List<AdbManager.PartitionInfo> partitions) {
           // 刷入模式只支持单个分区
@@ -3049,35 +3047,53 @@ public class MainActivity extends BaseActivity {
               Toast.makeText(this, t("刷入模式只能选择一个分区", "Flash mode: select only one partition"), Toast.LENGTH_SHORT).show();
               return;
           }
-          
+          if (pendingFlashImagePath == null || pendingFlashImagePath.isEmpty()) {
+              Toast.makeText(this, t("请先点击上方“选择 .img”选择镜像", "Please choose a .img above first"), Toast.LENGTH_SHORT).show();
+              return;
+          }
           pendingFlashPartition = partitions.get(0);
-          
-          // 打开文件选择器
-          Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-          intent.setType("*/*");
+          flashSinglePartitionWithPath(pendingFlashImagePath, pendingFlashImageName, pendingFlashPartition);
+      }
+
+      private void choosePartitionImageFile() {
+          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+          intent.setType("application/octet-stream");
+          intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+              "application/octet-stream", "application/img", "image/*", "*/*"
+          });
           intent.addCategory(Intent.CATEGORY_OPENABLE);
-          startActivityForResult(Intent.createChooser(intent, 
-              t("选择 " + pendingFlashPartition.name + " 镜像文件", "Select " + pendingFlashPartition.name + " image")), 
+          startActivityForResult(Intent.createChooser(intent,
+              t("选择 .img 镜像文件", "Select .img image")),
               REQUEST_FLASH_IMAGE_FILE);
       }
       
-      private void flashSinglePartitionWithFile(Uri fileUri) {
-          if (pendingFlashPartition == null) return;
-          
-          final AdbManager.PartitionInfo partition = pendingFlashPartition;
+      private void preparePartitionImage(Uri fileUri) {
+          String selectedName = displayName(fileUri);
+          if (selectedName == null || !selectedName.toLowerCase(Locale.ROOT).endsWith(".img")) {
+              Toast.makeText(this, t("请选择 .img 镜像文件", "Please select a .img image"), Toast.LENGTH_SHORT).show();
+              return;
+          }
           String imagePath = getPath(fileUri, "flash_temp.img");
           
           if (imagePath.isEmpty()) {
               Toast.makeText(this, t("无法获取文件路径", "Cannot get file path"), Toast.LENGTH_SHORT).show();
               return;
           }
+          pendingFlashImagePath = imagePath;
+          pendingFlashImageName = selectedName;
+          partitionAppendLog(t("已选择刷入镜像: ", "Selected flash image: ") + selectedName + "\n" + imagePath + "\n");
+          Toast.makeText(this, t("已选择镜像，请在列表中选择一个分区后点击“刷入”", "Image selected; choose one partition and tap Flash"), Toast.LENGTH_LONG).show();
+      }
+
+      private void flashSinglePartitionWithPath(String imagePath, String selectedName, AdbManager.PartitionInfo partition) {
+          if (partition == null || imagePath == null || imagePath.isEmpty()) return;
           
           new android.app.AlertDialog.Builder(this)
               .setTitle(t("⚠️ 确认刷入", "⚠️ Confirm Flash"))
               .setMessage(t("分区: ", "Partition: ") + partition.name + "\n" +
                          t("大小: ", "Size: ") + partition.getSizeMB() + " MB\n" +
                          t("设备: ", "Device: ") + partition.blockDevice + "\n\n" +
-                         t("镜像文件: ", "Image file: ") + imagePath + "\n\n" +
+                         t("镜像文件: ", "Image file: ") + selectedName + "\n" + imagePath + "\n\n" +
                          t("⚠️ 刷入错误的镜像可能导致设备无法启动！", "⚠️ Flashing wrong image may brick your device!"))
               .setPositiveButton(t("确认刷入", "Confirm"), (dialog, which) -> {
                   new Thread(() -> {
@@ -3130,6 +3146,89 @@ public class MainActivity extends BaseActivity {
               partitionLogView.append(text);
               if (partitionLogScroll != null) partitionLogScroll.post(() -> partitionLogScroll.fullScroll(View.FOCUS_DOWN));
           });
+      }
+
+      private void addPartitionRebootButton(LinearLayout row, String label, String command, boolean needsConfirm, boolean iconAbove) {
+          Button button = buildCompactPartitionActionButton(label, iconAbove);
+          button.setOnClickListener(v -> {
+              Haptics.perform(v);
+              if (needsConfirm) {
+                  new android.app.AlertDialog.Builder(this)
+                      .setTitle(t("确认操作", "Confirm action"))
+                      .setMessage(t(rebootDescription(label), rebootDescriptionEnglish(label)))
+                      .setPositiveButton(t("确认", "Confirm"), (dialog, which) -> executePartitionReboot(command, label))
+                      .setNegativeButton(t("取消", "Cancel"), null)
+                      .show();
+              } else {
+                  executePartitionReboot(command, label);
+              }
+          });
+          LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(0, -2, 1f);
+          if (row.getChildCount() > 0) buttonLp.leftMargin = dp(8);
+          row.addView(button, buttonLp);
+      }
+
+      private Button buildCompactPartitionActionButton(String label, boolean iconAbove) {
+          Button button = new Button(this);
+          button.setText(iconAbove ? "⚡\n" + label : "⚡ " + label);
+          if (iconAbove) {
+              button.setSingleLine(false);
+              button.setGravity(Gravity.CENTER);
+              button.setLines(2);
+          }
+          button.setTextSize(12);
+          button.setTextColor(0xff000000);
+          button.setBackgroundResource(R.drawable.liquid_glass_panel);
+          button.setPadding(dp(16), dp(8), dp(16), dp(8));
+          button.setMinWidth(0);
+          button.setMinimumWidth(0);
+          button.setAllCaps(false);
+          return button;
+      }
+
+      private String rebootDescription(String label) {
+          if (label.contains("关机")) return "正常关机";
+          if (label.equals("重启")) return "正常重启";
+          if (label.contains("热重启")) return "只重启系统界面而不重新引导系统（可能引发 Bug）";
+          if (label.contains("RECOVERY")) return "重启到 Recovery 模式（俗称卡刷模式）";
+          if (label.contains("FASTBOOTD")) return "重启到 FastbootD 模式";
+          if (label.contains("FASTBOOT")) return "重启到 Fastboot 模式（俗称 USB 线刷模式）";
+          if (label.contains("9008")) return "重启到 9008 模式，此模式仅限部分骁龙设备可用";
+          return "设备可能立即重启。";
+      }
+
+      private String rebootDescriptionEnglish(String label) {
+          if (label.contains("关机")) return "Normal shutdown";
+          if (label.equals("重启")) return "Normal reboot";
+          if (label.contains("热重启")) return "Restart the system interface without rebooting the system (may cause bugs)";
+          if (label.contains("RECOVERY")) return "Reboot to Recovery mode";
+          if (label.contains("FASTBOOTD")) return "Reboot to FastbootD mode";
+          if (label.contains("FASTBOOT")) return "Reboot to Fastboot mode";
+          if (label.contains("9008")) return "Reboot to 9008 (EDL), supported only on some Snapdragon devices";
+          return "The device may reboot immediately.";
+      }
+
+      private void executePartitionReboot(String command, String label) {
+          partitionAppendLog("\n=== " + label + " ===\n");
+          partitionAppendLog("命令: " + command + "\n");
+          new Thread(() -> {
+              com.topjohnwu.superuser.Shell.Result rootCheck = com.topjohnwu.superuser.Shell.cmd("id").exec();
+              String identity = String.join("\n", rootCheck.getOut());
+              if (!rootCheck.isSuccess() || !identity.contains("uid=0")) {
+                  partitionAppendLog("❌ ROOT 未授权，未执行操作。\n");
+                  runOnUiThread(() -> Toast.makeText(this, t("ROOT 未授权", "ROOT permission unavailable"), Toast.LENGTH_SHORT).show());
+                  return;
+              }
+              partitionAppendLog("ROOT 已确认，正在执行...\n");
+              com.topjohnwu.superuser.Shell.Result result = com.topjohnwu.superuser.Shell.cmd(command + " 2>&1").exec();
+              for (String line : result.getOut()) partitionAppendLog(line + "\n");
+              if (!result.isSuccess()) {
+                  partitionAppendLog("❌ 执行失败\n");
+                  runOnUiThread(() -> Toast.makeText(this, t(label + "失败", label + " failed"), Toast.LENGTH_SHORT).show());
+              } else {
+                  partitionAppendLog("✅ 命令已发送\n");
+              }
+          }).start();
       }
 
       private Button buildPartitionFab() {
@@ -3971,7 +4070,7 @@ public class MainActivity extends BaseActivity {
          installWithDsuSideloaderFlow(pendingInstallZip);
      }
      private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
-     @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } else if(r==PICK_FASTBOOT_IMAGE){ String path=getPath(u,"fastboot.img"); if(!path.isEmpty()){ if(fastbootImagePathInput != null) fastbootImagePathInput.setText(path); else if(fastbootFilePathInput != null) fastbootFilePathInput.setText(path); } } else if(r==REQUEST_FLASH_IMAGE_FILE){ flashSinglePartitionWithFile(u); } else if(r==REQUEST_OTG_SINGLE_IMAGE){ String path=getPath(u,"otg_single.img"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareSingleImage(path); } } else if(r==REQUEST_OTG_FULL_PACKAGE){ String path=getPath(u,"otg_full.zip"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.extractAndScanOta(path); } } else if(r==REQUEST_OTG_ADB_PUSH){ String path=getPath(u,"otg_push_file"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareAdbPush(path); } } }
+     @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK||d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } else if(r==PICK_FASTBOOT_IMAGE){ String path=getPath(u,"fastboot.img"); if(!path.isEmpty()){ if(fastbootImagePathInput != null) fastbootImagePathInput.setText(path); else if(fastbootFilePathInput != null) fastbootFilePathInput.setText(path); } } else if(r==REQUEST_FLASH_IMAGE_FILE){ preparePartitionImage(u); } else if(r==REQUEST_OTG_SINGLE_IMAGE){ String path=getPath(u,"otg_single.img"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareSingleImage(path); } } else if(r==REQUEST_OTG_FULL_PACKAGE){ String path=getPath(u,"otg_full.zip"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.extractAndScanOta(path); } } else if(r==REQUEST_OTG_ADB_PUSH){ String path=getPath(u,"otg_push_file"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareAdbPush(path); } } }
 
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {

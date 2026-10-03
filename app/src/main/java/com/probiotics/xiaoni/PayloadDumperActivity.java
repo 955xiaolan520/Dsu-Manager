@@ -569,7 +569,6 @@ public final class PayloadDumperActivity extends BaseActivity {
         onlineLogDisplay.setTypeface(android.graphics.Typeface.MONOSPACE);
         onlineLogDisplay.setBackgroundColor(0);
         onlineLogDisplay.setPadding(dp(8), dp(8), dp(8), dp(8));
-        // 不设置 setTextIsSelectable，否则会阻止滚动
         
         onlineLogScroll.addView(onlineLogDisplay, new ScrollView.LayoutParams(-1, -2));
         
@@ -690,7 +689,6 @@ public final class PayloadDumperActivity extends BaseActivity {
         localLogDisplay.setTypeface(android.graphics.Typeface.MONOSPACE);
         localLogDisplay.setBackgroundColor(0);
         localLogDisplay.setPadding(dp(8), dp(8), dp(8), dp(8));
-        // 不设置 setTextIsSelectable，否则会阻止滚动
         
         localLogScroll.addView(localLogDisplay, new ScrollView.LayoutParams(-1, -2));
         
@@ -700,7 +698,7 @@ public final class PayloadDumperActivity extends BaseActivity {
         
         return logPanel;
     }
-    
+
     private void startOnlineExtract() {
         String url = onlineUrlInput.getText().toString().trim();
         if (url.isEmpty()) {

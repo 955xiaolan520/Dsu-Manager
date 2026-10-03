@@ -575,7 +575,6 @@ public class OtaMergeActivity extends BaseActivity {
         logText.setTextColor(0xE6FFFFFF);
         logText.setTypeface(Typeface.MONOSPACE);
         logText.setPadding(dp(8), dp(8), dp(8), dp(8));
-        // 不设置 setTextIsSelectable，否则会阻止滚动
         
         logScroll.addView(logText, new ScrollView.LayoutParams(-1, -2));
         
