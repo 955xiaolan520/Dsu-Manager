@@ -31,22 +31,51 @@ class OtgFlashHelper(
     private var selectedPartition: String? = null
     private var fullImages = mutableListOf<OtgAssistantCore.ImageInfo>()
     private val confirmationPhrase = "我确认固件包匹配当前设备，并允许清除全部用户数据"
+
+    private val singleImageRequest = 402
+    private val otaRequest = 403
+    private val adbPushRequest = 404
+
+    private fun launchBuiltInPicker(requestCode: Int, title: String, ext: String = "", all: Boolean = true) {
+        activity.startActivityForResult(android.content.Intent(activity, RootfsFilesActivity::class.java).apply {
+            putExtra(RootfsFilesActivity.EXTRA_PICK, true)
+            putExtra(RootfsFilesActivity.EXTRA_TITLE, title)
+            if (all) putExtra(RootfsFilesActivity.EXTRA_EXT_ALL, true)
+            else putExtra(RootfsFilesActivity.EXTRA_EXT, ext)
+        }, requestCode)
+    }
+
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        if (resultCode != Activity.RESULT_OK) return
+        val path = data?.getStringExtra(RootfsFilesActivity.RESULT_FILE_PATH) ?: return
+        when (requestCode) {
+            singleImageRequest -> prepareSingleImage(path)
+            otaRequest -> extractAndScanOta(path)
+            adbPushRequest -> prepareAdbPush(path)
+        }
+    }
     
     // ==================== 读取分区表 ====================
     
     fun readPartitions() {
         if (operationActive) return
+        setOperationActive(true)
         appendLog("\n>fastboot getvar all\n")
         Thread {
-            val output = StringBuilder()
-            OtgAssistantCore.executeCommandDetailed(OtgAssistantCore.getFastbootPath(ctx), "fastboot getvar all") { line ->
-                synchronized(output) { output.append(line).append('\n') }
-                postUi { appendLog("$line\n") }
-            }
-            val partitions = OtgAssistantCore.parseFastbootPartitions(output.toString())
-            postUi {
-                parsedPartitions = partitions
-                appendLog("解析到 ${partitions.size} 个分区\n")
+            try {
+                val output = StringBuilder()
+                val result = OtgAssistantCore.executeCommandDetailed(OtgAssistantCore.getFastbootPath(ctx), "fastboot getvar all") { line ->
+                    synchronized(output) { output.append(line).append('\n') }
+                    postUi { appendLog("$line\n") }
+                }
+                val partitions = OtgAssistantCore.parseFastbootPartitions(output.toString())
+                postUi {
+                    parsedPartitions = partitions
+                    appendLog("解析到 ${partitions.size} 个分区，退出码 ${result.exitCode}\n")
+                    setOperationActive(false)
+                }
+            } catch (e: Exception) {
+                postUi { appendLog("读取分区表失败：${e.message}\n"); setOperationActive(false) }
             }
         }.start()
     }
@@ -65,10 +94,7 @@ class OtgFlashHelper(
             .setItems(names) { _, which ->
                 selectedPartition = names[which]
                 // 启动文件选择器
-                val intent = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT)
-                intent.type = "*/*"
-                intent.addCategory(android.content.Intent.CATEGORY_OPENABLE)
-                activity.startActivityForResult(intent, 70) // REQUEST_OTG_SINGLE_IMAGE
+                launchBuiltInPicker(singleImageRequest, "选择单分区镜像", ".img,.bin,.dat", false)
             }
             .show()
     }
@@ -117,10 +143,7 @@ class OtgFlashHelper(
     fun chooseFirmwareDirectory() {
         if (operationActive) return
         // 启动文件选择器
-        val intent = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT)
-        intent.type = "application/zip"
-        intent.addCategory(android.content.Intent.CATEGORY_OPENABLE)
-        activity.startActivityForResult(intent, 71) // REQUEST_OTG_FULL_PACKAGE
+        launchBuiltInPicker(otaRequest, "选择 OTA 全量包（payload.bin / zip）")
     }
     
     fun extractAndScanOta(filePath: String) {
@@ -351,10 +374,7 @@ class OtgFlashHelper(
     fun chooseAdbPushFile() {
         if (operationActive) return
         // 启动文件选择器
-        val intent = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT)
-        intent.type = "*/*"
-        intent.addCategory(android.content.Intent.CATEGORY_OPENABLE)
-        activity.startActivityForResult(intent, 72) // REQUEST_OTG_ADB_PUSH
+        launchBuiltInPicker(adbPushRequest, "选择要推送的文件")
     }
     
     fun prepareAdbPush(filePath: String) {
