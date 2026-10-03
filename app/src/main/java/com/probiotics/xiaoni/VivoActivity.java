@@ -1203,14 +1203,8 @@ public final class VivoActivity extends BaseActivity {
                              boolean isFull, String domainName) {
         results.removeAllViews();
         
-        // 如果没有完整下载链接但有文件名，则拼接下载链接
-        final String downloadUrl;
-        if (result.getDownloadUrl().isEmpty() && !result.getFilename().isEmpty()) {
-            downloadUrl = "https://sysuptxdl.vivo.com.cn/upgrade/oem/files/" + result.getFilename();
-            android.util.Log.d("VivoActivity", "拼接下载链接: " + downloadUrl);
-        } else {
-            downloadUrl = result.getDownloadUrl();
-        }
+        // Kotlin 端已经处理了下载链接的构建（包括 fallback 和 sign 参数）
+        final String downloadUrl = result.getDownloadUrl();
         
         boolean available = !downloadUrl.isEmpty();
         status.setText(available ? "查询成功，发现可用更新" : "查询完成，当前没有可用更新");
@@ -1366,19 +1360,75 @@ public final class VivoActivity extends BaseActivity {
                     loaded[0] = true;
                     executor.execute(() -> {
                         String content = null;
+                        String changelogUrl = result.getChangelogUrl();
+                        
+                        // 检查 changelogUrl 是否为空
+                        if (changelogUrl == null || changelogUrl.isEmpty()) {
+                            final String text = "该版本未提供更新日志";
+                            runOnUiThread(() -> changelogText.setText(text));
+                            return;
+                        }
+                        
                         try {
                             content = new com.mytiantian.updater.vivo.VivoOtaClient(getApplicationContext())
-                                    .fetchChangelog(result.getChangelogUrl());
-                        } catch (Exception ignored) { }
+                                    .fetchChangelog(changelogUrl);
+                        } catch (Exception e) {
+                            android.util.Log.e("VivoActivity", "Changelog fetch error: " + e.getMessage());
+                        }
                         final String text = (content == null || content.isEmpty())
-                                ? "更新日志加载失败，请稍后重试" : content;
-                        runOnUiThread(() -> changelogText.setText(text));
+                                ? "更新日志加载失败：" + changelogUrl : content;
+                        runOnUiThread(() -> {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                                changelogText.setText(android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_COMPACT));
+                            } else {
+                                changelogText.setText(android.text.Html.fromHtml(text));
+                            }
+                        });
                     });
                 }
             });
             card.addView(changelogHeader, margins(-1, 44, 12, 0, 0));
             card.addView(changelogBody, margins(-1, -2, 8, 0, 0));
         }
+
+        // 调试日志折叠区：显示查询过程的详细日志
+        LinearLayout debugHeader = new LinearLayout(this);
+        debugHeader.setOrientation(LinearLayout.HORIZONTAL);
+        debugHeader.setGravity(Gravity.CENTER_VERTICAL);
+        debugHeader.setPadding(dp(16), 0, dp(16), 0);
+        debugHeader.setBackgroundResource(R.drawable.liquid_glass_panel);
+        TextView debugTitle = label("▸ 调试日志", 14, 0xff705515);
+        debugTitle.setTypeface(null, 1);
+        debugTitle.setGravity(Gravity.CENTER);
+        debugHeader.addView(debugTitle, new LinearLayout.LayoutParams(0, dp(46), 1));
+        TextView debugHint = label("点击查看详细日志", 11, 0xff8c7d4a);
+        debugHint.setGravity(Gravity.CENTER_VERTICAL);
+        debugHeader.addView(debugHint, new LinearLayout.LayoutParams(-2, dp(46)));
+
+        LinearLayout debugBody = new LinearLayout(this);
+        debugBody.setOrientation(LinearLayout.VERTICAL);
+        debugBody.setPadding(dp(16), dp(12), dp(16), dp(12));
+        debugBody.setBackgroundResource(R.drawable.liquid_glass_panel);
+        debugBody.setVisibility(View.GONE);
+        TextView debugText = label(result.getDebugLog().isEmpty() ? "无调试日志" : result.getDebugLog(), 12, 0xff334b66);
+        debugText.setLineSpacing(dp(2), 1f);
+        debugText.setTextIsSelectable(true);
+        debugText.setTypeface(android.graphics.Typeface.MONOSPACE);
+        debugBody.addView(debugText, new LinearLayout.LayoutParams(-1, -2));
+
+        debugHeader.setOnClickListener(vh -> {
+            Haptics.perform(vh);
+            boolean expanding = debugBody.getVisibility() != View.VISIBLE;
+            debugBody.setVisibility(expanding ? View.VISIBLE : View.GONE);
+            debugTitle.setText(expanding ? "▾ 调试日志" : "▸ 调试日志");
+            debugHint.setText(expanding ? "点击收起" : "点击查看详细日志");
+            if (expanding) {
+                debugBody.setAlpha(0f);
+                debugBody.animate().alpha(1f).setDuration(220).start();
+            }
+        });
+        card.addView(debugHeader, margins(-1, 44, 12, 0, 0));
+        card.addView(debugBody, margins(-1, -2, 8, 0, 0));
 
         results.addView(card, margins(-1, -2, 0, 0, 16));
         pageScroll.post(() -> pageScroll.smoothScrollTo(0, results.getTop()));

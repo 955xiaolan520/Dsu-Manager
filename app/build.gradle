@@ -11,7 +11,7 @@ android { namespace 'com.probiotics.xiaoni'; compileSdk 37
     kotlinOptions {
         jvmTarget = '17'
     }
-    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 520; versionName '3.11.1' }
+    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 559; versionName '3.26.9' }
     signingConfigs { release { storeFile file('release-keystore.jks'); storePassword 'changeit'; keyAlias 'tianming-release'; keyPassword 'changeit' } }
     signingConfigs.release {
         enableV1Signing true

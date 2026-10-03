@@ -1187,13 +1187,13 @@ public class MainActivity extends BaseActivity {
            titleRow.addView(downloadManager, new LinearLayout.LayoutParams(-2, dp(44)));
            page.addView(titleRow, new LinearLayout.LayoutParams(-1, dp(48)));
            TextView subtitle = text(t("小米 / Redmi / POCO 系统更新查询与下载", "Xiaomi / Redmi / POCO update lookup and downloads"), 13, 0xffe5edf7);
-           page.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
-            page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.vendor_glass_blue, "xiaomi"));
-            page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.vendor_glass_purple, "vivo"));
-            page.addView(romVendorCard("OPPO / 一加 / 真我", "ColorOS · 官方系统更新查询", R.drawable.vendor_glass_orange, "oppo"));
-            page.addView(romVendorCard("提取镜像", "在线直链 / 本地 ROM 包 · payload.bin 分区镜像提取", R.drawable.vendor_glass_green, "extract"));
-            page.addView(romVendorCard("OTA 合并工具", "通用增量包合并 · 小米 / OPPO / vivo 等全机型支持", R.drawable.vendor_glass_cyan, "otamerge"));
-            return page;
+            page.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
+             page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.vendor_glass_blue, "xiaomi"));
+             page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.vendor_glass_purple, "vivo"));
+              page.addView(romVendorCard("OPPO / 一加 / 真我", "ColorOS · 官方系统更新查询", R.drawable.vendor_glass_orange, "oppo"));
+              page.addView(romVendorCard("提取镜像", "在线直链 / 本地 ROM 包 · payload.bin 分区镜像提取", R.drawable.vendor_glass_green, "extract"));
+             page.addView(romVendorCard("OTA 合并工具", "通用增量包合并 · 小米 / OPPO / vivo 等全机型支持", R.drawable.vendor_glass_cyan, "otamerge"));
+             return page;
         }
 
        private View romVendorCard(String heading, String detail, int glassBackground, String vendorId) {
@@ -1227,21 +1227,21 @@ public class MainActivity extends BaseActivity {
            enterBg.setStroke(Math.max(1, dp(1)), 0xFFFFFFFF);
            enter.setBackground(enterBg);
            enter.setElevation(dp(5));
-            enter.setOnClickListener(v -> {
-                Haptics.perform(v);
-                 Intent intent = new Intent(this,
-                         "oppo".equals(vendorId) ? OPlusLookupActivity.class
-                                 : "vivo".equals(vendorId) ? VivoActivity.class
-                                 : "extract".equals(vendorId) ? PayloadDumperActivity.class
-                                 : "otamerge".equals(vendorId) ? OtaMergeActivity.class
-                                 : RomActivity.class);
-                if (!"extract".equals(vendorId) && !"otamerge".equals(vendorId)) intent.putExtra("vendor", vendorId);
-                startActivity(intent);
-                // 不同厂商使用不同的炸裂转场动画
-                if ("oppo".equals(vendorId)) {
-                    // OPPO: 爆炸式缩放 + 旋转进入
-                    overridePendingTransition(R.anim.explode_in, R.anim.explode_out);
-                } else if ("vivo".equals(vendorId)) {
+              enter.setOnClickListener(v -> {
+                  Haptics.perform(v);
+                   Intent intent = new Intent(this,
+                           "oppo".equals(vendorId) ? OPlusLookupActivity.class
+                                   : "vivo".equals(vendorId) ? VivoActivity.class
+                                   : "extract".equals(vendorId) ? PayloadDumperActivity.class
+                                   : "otamerge".equals(vendorId) ? OtaMergeActivity.class
+                                   : RomActivity.class);
+                  if (!"extract".equals(vendorId) && !"otamerge".equals(vendorId)) intent.putExtra("vendor", vendorId);
+                  startActivity(intent);
+                  // 不同厂商使用不同的炸裂转场动画
+                  if ("oppo".equals(vendorId)) {
+                     // OPPO: 爆炸式缩放 + 旋转进入
+                     overridePendingTransition(R.anim.explode_in, R.anim.explode_out);
+                 } else if ("vivo".equals(vendorId)) {
                     // Vivo: 3D 翻转进入
                     overridePendingTransition(R.anim.flip_in, R.anim.flip_out);
                 } else if ("extract".equals(vendorId)) {

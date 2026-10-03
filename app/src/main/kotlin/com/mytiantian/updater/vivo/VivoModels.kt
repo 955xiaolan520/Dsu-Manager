@@ -43,7 +43,9 @@ data class VivoOtaResult(
     val betaOrTasteType: Int = 0,
     /** type=1 时的公测招募摘要（项目版本/推送计划等），供 UI 展示。 */
     val betaRecruitHint: String = "",
-    val rawResponse: String = ""
+    val rawResponse: String = "",
+    /** 调试日志：记录查询过程的关键信息，供故障排查使用。 */
+    val debugLog: String = ""
 )
 
 data class QueryHistoryEntry(

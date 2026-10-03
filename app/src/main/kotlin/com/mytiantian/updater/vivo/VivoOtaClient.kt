@@ -26,7 +26,7 @@ class VivoOtaClient(private val context: Context) {
         private const val TAG = "VivoOtaClient"
         private const val TOKEN_NATIVE = "jnisgmain_v2@com.bbk.updater"
         /** redirPost 未返回地址时的兜底下载地址前缀（后接 pkName）。 */
-        private const val PK_BASE_URL = "https://sysupdxdl.vivo.com.cn/upgrade/oem/files/"
+        private const val PK_BASE_URL = "http://sysuptxdl.vivo.com.cn/upgrade/oem/files/"
 
         /**
          * h5Url 页面地址 → 日志数据文件地址：H5 页面内容由 JS 从 data/CN.js 加载，
@@ -75,10 +75,19 @@ class VivoOtaClient(private val context: Context) {
         channel: QueryChannel = QueryChannel.NORMAL,
         domain: Domain = Domain.CN
     ): VivoOtaResult {
+        // 全量包查询：如果用户输入的是最新版本号，自动回退到上一个小版本
+        val adjustedSwVersion = if (isFull && swVersion == modelSwVer) {
+            val decremented = decrementVersion(swVersion)
+            Log.d(TAG, "Full package query with latest version, auto-decrement: $swVersion -> $decremented")
+            decremented
+        } else {
+            swVersion
+        }
+        
         val hwVer = codename + "MA"
-        val fullSwVersion = if (swVersion.contains(".W")) "$swVersion.V000L1" else swVersion
-        val fullVer = if (swVersion.contains(".W")) "${codename}_A_$swVersion.V000L1" else "${codename}_A_$swVersion"
-        val versionLong = if (swVersion.contains(".W")) "${codename}_N_${codename}MA_$swVersion.V000L1" else "${codename}_N_${codename}MA_$swVersion"
+        val fullSwVersion = if (adjustedSwVersion.contains(".W")) "$adjustedSwVersion.V000L1" else adjustedSwVersion
+        val fullVer = if (adjustedSwVersion.contains(".W")) "${codename}_A_$adjustedSwVersion.V000L1" else "${codename}_A_$adjustedSwVersion"
+        val versionLong = if (adjustedSwVersion.contains(".W")) "${codename}_N_${codename}MA_$adjustedSwVersion.V000L1" else "${codename}_N_${codename}MA_$adjustedSwVersion"
 
         val ts = SimpleDateFormat("yy_MM_dd-HH_mm_ss").format(Date())
         val random = Random()
@@ -120,17 +129,52 @@ class VivoOtaClient(private val context: Context) {
         p["isMan"] = 1
         p["isFull"] = isFullInt
         p["protocalversion"] = "1.0"
+        
+        // Virtual A/B 设备的全量包查询必须添加 disDownable 参数
+        if (isFull && isPhone) {
+            p["disDownable"] = 0  // 官方 APP: o0.a.w() 检查 ro.virtual_ab.enabled
+        }
+        
         p["checkTrige"] = "MANUL"
         p["isstlifeover"] = "false"
         p["hwFingerprint"] = ""
+        
+        // === 方案 4：添加所有触发全量包的参数 ===
+        if (isFull) {
+            // 1. 模拟"升级失败"状态 - 官方会在升级失败后添加这个参数
+            // 参考：HttpUtils.java 第 610-613 行
+            p["alwaysFailedVersion"] = adjustedSwVersion
+            
+            // 2. 升级失败次数 - 可能影响服务器判断
+            // 参考：PrefsUtils.Updating.KEY_SP_MAIN_UPDATE_FAILED_TIMES
+            p["update_failed_times"] = 3
+            
+            // 3. 系统损坏标志 - 尝试所有可能的参数名
+            // 参考：PrefsUtils.Updating.KEY_IS_SYSTEM_BROKEN
+            p["is_system_broken"] = 1
+            p["system_broken"] = 1
+            
+            // 4. 二进制错误导致的升级失败
+            // 参考：PrefsUtils.Updating.KEY_UPDATE_FAILED_FOR_BINARY_ERROR
+            p["update_failed_for_binary_error"] = true
+            
+            // 5. 系统解锁状态
+            // 参考：CommonUtils.isSystemBroken() 中的 SETTINGS_KEY_SYSTEM_UNLOCK_STATE
+            p["unlock_state"] = 1
+            p["system_unlock_state"] = 1
+            
+            // 6. 强制全量包标志（实验性）
+            p["force_full"] = 1
+            p["need_full"] = 1
+        }
 
         if (isPhone) {
+            // 增量包和全量包使用相同的基础参数
             p["vgcCu"] = "V000"
             p["sf"] = 1
             p["si"] = "null"
             p["dType"] = "phone"
             p["s_n"] = "null"
-            // vivo17 APP 必发参数（新版服务器校验，镜像 y/c.java 拼接顺序）
             p["logVersionNegotiation"] = 5360
             p["ram"] = 16
             p["rom"] = 512
@@ -138,7 +182,7 @@ class VivoOtaClient(private val context: Context) {
             p["st1"] = 100000 + random.nextInt(60000)
             p["imei"] = effectiveImei
             p["ms"] = 0
-            p["mtype"] = "no"
+            p["mtype"] = "no"  // 默认 no，官方从 ro.vivo.op.entry 读取
             p["radiotype"] = "L"
         } else {
             p["romVersion"] = "Funtouch $androidVersion.0"
@@ -248,23 +292,96 @@ class VivoOtaClient(private val context: Context) {
         // 实测结论：vivo 仅对"基准=最新版"下发同版本全量重刷包（X200 对照验证），
         // 新机型全量包通常晚于增量包上架，此处降级后由 UI 提示用户。
         var fullFallback = false
+        var firstFullQueryLog = "" // 记录第一次全量包查询的日志
+        Log.d(TAG, "Before fallback check: isFull=$isFull, isTaste=$isTaste, hasPackage=${responseHasPackage(updateResponse)}")
         if (isFull && !isTaste && !responseHasPackage(updateResponse)) {
             val firstRetCode = extractRetCode(updateResponse)
-            Log.d(TAG, "isFull=1 got no package (retcode=$firstRetCode), fallback to isFull=0")
-            p["isFull"] = 0
-            val retryResponse = sendFreshEncryptedRequest(joinParams(p), domain)
-            if (!retryResponse.startsWith("[Error]") && responseHasPackage(retryResponse)) {
-                Log.d(TAG, "Fallback query succeeded (retcode=${extractRetCode(retryResponse)})")
-                updateResponse = retryResponse
-                fullFallback = true
-            } else {
-                // 增量也查不到：还原 isFull=1 的原始响应与参数集
-                Log.d(TAG, "Fallback query got no package either, keep isFull=1 response")
-                p["isFull"] = 1
+            val firstPkName = extractJsonStr(updateResponse, "pkName\":\"")
+            
+            // 记录第一次全量包查询的详细信息
+            val firstLog = StringBuilder()
+            firstLog.append("=== 第一次全量包查询（失败） ===\n")
+            firstLog.append("isFull: 1\n")
+            firstLog.append("model: ${p["model"]}\n")
+            firstLog.append("swVer: ${p["swVer"]}\n")
+            firstLog.append("mtype: ${p["mtype"]}\n")
+            firstLog.append("retCode: $firstRetCode\n")
+            firstLog.append("pkName: $firstPkName\n")
+            
+            // 输出所有参数
+            firstLog.append("\n完整参数列表:\n")
+            p.forEach { (key, value) ->
+                firstLog.append("  $key: $value\n")
             }
+            firstLog.append("\n")
+            
+            Log.d(TAG, "isFull=1 got no package (retcode=$firstRetCode, pkName='$firstPkName')")
+            Log.d(TAG, "Full response preview: ${updateResponse.take(500)}")
+            
+            // 检查服务器是否返回 local_install_allow=1
+            val localInstallAllow = extractField(updateResponse, listOf("local_install_allow"))
+            firstLog.append("local_install_allow: $localInstallAllow\n")
+            firstLog.append("响应预览: ${updateResponse.take(300)}\n")
+            firstLog.append("\n")
+            firstFullQueryLog = firstLog.toString()
+            
+            Log.d(TAG, "local_install_allow from first response: '$localInstallAllow'")
+            
+            // Recovery 模式：mtype=FULL_SC 时不降级，直接返回失败
+            val currentMtype = p["mtype"] as? String
+            Log.d(TAG, "Current mtype: $currentMtype")
+            
+            if (localInstallAllow == "1" && currentMtype != "FULL_SC") {
+                // 服务器允许Recovery本地安装，尝试用Recovery参数查询
+                Log.d(TAG, "Server allows recovery install, try mtype=FULL_SC")
+                p["mtype"] = "FULL_SC"
+                p["oem"] = "${p["model"]}_CN-ZH_FULL_SC_NULL"
+                val recoveryResponse = sendFreshEncryptedRequest(joinParams(p), domain)
+                if (!recoveryResponse.startsWith("[Error]") && responseHasPackage(recoveryResponse)) {
+                    Log.d(TAG, "Recovery query succeeded (retcode=${extractRetCode(recoveryResponse)})")
+                    updateResponse = recoveryResponse
+                    // 不设置 fullFallback，这是正常的Recovery查询
+                } else {
+                    Log.d(TAG, "Recovery query failed, fallback to isFull=0")
+                    p["isFull"] = 0
+                    p["mtype"] = "no"
+                    val retryResponse = sendFreshEncryptedRequest(joinParams(p), domain)
+                    if (!retryResponse.startsWith("[Error]") && responseHasPackage(retryResponse)) {
+                        Log.d(TAG, "Fallback query succeeded (retcode=${extractRetCode(retryResponse)})")
+                        updateResponse = retryResponse
+                        fullFallback = true
+                    } else {
+                        Log.d(TAG, "Fallback query got no package either, keep isFull=1 response")
+                        p["isFull"] = 1
+                        p["mtype"] = "no"
+                    }
+                }
+            } else if (currentMtype == "FULL_SC") {
+                Log.d(TAG, "Recovery mode (mtype=FULL_SC), do not fallback to isFull=0")
+            } else {
+                Log.d(TAG, "Normal mode (mtype=$currentMtype), fallback to isFull=0")
+                p["isFull"] = 0
+                p["mtype"] = "no"  // 降级时改回 no
+                val retryResponse = sendFreshEncryptedRequest(joinParams(p), domain)
+                if (!retryResponse.startsWith("[Error]") && responseHasPackage(retryResponse)) {
+                    Log.d(TAG, "Fallback query succeeded (retcode=${extractRetCode(retryResponse)})")
+                    updateResponse = retryResponse
+                    fullFallback = true
+                } else {
+                    // 增量也查不到：还原 isFull=1 的原始响应与参数集
+                    Log.d(TAG, "Fallback query got no package either, keep isFull=1 response")
+                    p["isFull"] = 1
+                    p["mtype"] = "no"
+                }
+            }
+        } else if (isFull && !isTaste) {
+            val retCode = extractRetCode(updateResponse)
+            val pkName = extractJsonStr(updateResponse, "pkName\":\"")
+            Log.d(TAG, "isFull=1 query succeeded: retcode=$retCode, pkName='$pkName'")
         }
+        Log.d(TAG, "After fallback: isFull=${p["isFull"]}, mtype=${p["mtype"]}")
 
-        return parseResult(updateResponse, p, channel, domain, fullFallback, betaOrTasteType, betaRecruitHint)
+        return parseResult(updateResponse, p, channel, domain, fullFallback, betaOrTasteType, betaRecruitHint, firstFullQueryLog)
     }
 
     /** 公测/内测共用参数集，与 PC 版 buildBetaBaseParams 对应。 */
@@ -293,18 +410,88 @@ class VivoOtaClient(private val context: Context) {
         domain: Domain = Domain.CN,
         fullFallback: Boolean = false,
         betaOrTasteType: Int = 0,
-        betaRecruitHint: String = ""
-    ): VivoOtaResult {
+        betaRecruitHint: String = "",
+        firstFullQueryLog: String = ""
+     ): VivoOtaResult {
         Log.d(TAG, "Raw OTA response: $updateResponse")
+        
+        // 收集调试日志
+        val debugLog = StringBuilder()
+        
+        // 如果有第一次全量包查询的日志，先显示
+        if (firstFullQueryLog.isNotEmpty()) {
+            debugLog.append(firstFullQueryLog)
+        }
+        
+        // 添加降级检查日志到界面
+        debugLog.append("=== 降级检查 ===\n")
+        debugLog.append("查询前 isFull: ${queryParams["isFull"]}\n")
+        debugLog.append("查询前 mtype: ${queryParams["mtype"]}\n")
+        debugLog.append("update_failed_times: ${queryParams["update_failed_times"]}\n")
+        debugLog.append("fullFallback: $fullFallback\n")
+        debugLog.append("\n")
+        
+        debugLog.append("=== 查询参数 ===\n")
+        debugLog.append("API: ${if (channel == QueryChannel.NORMAL) "/vgc/v2/getVgcAndPatch.do" else "/upgrade/trial/getTastePk"}\n")
+        debugLog.append("Domain: ${domain.value}\n")
+        debugLog.append("Channel: ${channel.value}\n")
+        debugLog.append("isFull: ${queryParams["isFull"]}\n")
+        debugLog.append("model: ${queryParams["model"]}\n")
+        debugLog.append("swVer: ${queryParams["swVer"]}\n")
+        debugLog.append("vgcSwVer: ${queryParams["vgcSwVer"]}\n")
+        debugLog.append("dType: ${queryParams["dType"]}\n")
+        debugLog.append("mtype: ${queryParams["mtype"]}\n")
+        debugLog.append("oem: ${queryParams["oem"]}\n")
+        debugLog.append("update_failed_times: ${queryParams["update_failed_times"]}\n")
+        debugLog.append("vgcCu: ${queryParams["vgcCu"]}\n")
+        debugLog.append("sf: ${queryParams["sf"]}\n")
+        debugLog.append("ms: ${queryParams["ms"]}\n")
+        debugLog.append("radiotype: ${queryParams["radiotype"]}\n")
+        debugLog.append("\n=== 响应信息 ===\n")
 
         val updateVersion = extractJsonStr(updateResponse, "version\":\"")
         val pkName = extractJsonStr(updateResponse, "pkName\":\"")
-        val pkLen = extractJsonStr(updateResponse, "pkLen\":\"")
-        val sizeMb = try { (pkLen.toLong() / 1048576).toString() } catch (_: Exception) { "" }
+        // 提取真实文件名（用于下载链接）
+        val realFileName = extractField(updateResponse, listOf("name", "fileName", "realName", "file", "pkFile"))
+        Log.d(TAG, "pkName: '$pkName', realFileName: '$realFileName'")
+        
+        val retCode = extractRetCode(updateResponse)
+        debugLog.append("retCode: $retCode\n")
+        debugLog.append("updateVersion: $updateVersion\n")
+        debugLog.append("pkName: $pkName\n")
+        debugLog.append("realFileName: $realFileName\n")
+        
+        // 提取 Recovery 本地安装权限标志（提前提取以便在调试日志中显示）
+        val localInstallAllow = extractField(updateResponse, listOf("local_install_allow"))
+        debugLog.append("local_install_allow: $localInstallAllow\n")
+        
+        // 检查 retCode 210（全量包查询失败）时的常见问题
+        if (retCode == 210) {
+            debugLog.append("\n⚠️ retCode 210 表示服务器拒绝了请求\n")
+            debugLog.append("常见原因：\n")
+            debugLog.append("1. 用了最新版本号查询全量包\n")
+            debugLog.append("   → 应该用【当前版本号】而非【目标版本号】\n")
+            debugLog.append("2. 服务器暂无全量包\n")
+            debugLog.append("   → 可尝试降级查询增量包\n")
+        }
+        // pkLen 可能是数字或字符串类型
+        var pkLen = extractJsonStr(updateResponse, "pkLen\":")
+        if (pkLen == "(Not found)" || pkLen.isEmpty()) {
+            pkLen = extractJsonStr(updateResponse, "pkLen\":\"")
+        }
+        // fileSizeMb 存储字节数，供 Java 层格式化
+        val sizeMb = if (pkLen != "(Not found)" && pkLen.isNotEmpty()) {
+            try { 
+                pkLen.toLong().toString() // 存储字节数的字符串
+            } catch (_: Exception) { 
+                "" 
+            }
+        } else {
+            ""
+        }
+        Log.d(TAG, "pkLen: '$pkLen', sizeMb: '$sizeMb'")
         // 服务端实际返回的包类型（ext.isFull）：1=全量 0=增量；无更新/旧服务器可能不带
         val isFullPackage = extractIsFullFlag(updateResponse)
-
-        var downloadUrl = ""
 
         val changelogUrl = extractJsonStr(updateResponse, "h5Url\":\"").let {
             if (it == "(Not found)") "" else it.replace("\\/", "/")
@@ -321,33 +508,126 @@ class VivoOtaClient(private val context: Context) {
 
         Log.d(TAG, "Security patch: '$securityPatch', Update date: '$updateDate', MD5: '$md5'")
         Log.d(TAG, "Package type (ext.isFull): $isFullPackage")
+        Log.d(TAG, "local_install_allow: '$localInstallAllow'")
 
         val pkUrl = extractPkUrl(updateResponse)
+        Log.d(TAG, "pkUrl: '$pkUrl'")
+        
+        // 提取 sign 字段用于构建下载链接
+        // sign 可能在顶层，也可能在 pk URL 的参数中
+        var sign = extractField(updateResponse, listOf("sign", "pkSign", "fileSign"))
+        Log.d(TAG, "Sign from response fields: '$sign'")
+        
+        // 如果顶层没有 sign，尝试从 pk URL 中提取
+        if ((sign.isEmpty() || sign == "(Not found)") && pkUrl != null) {
+            val signMatch = Regex("[?&]sign=([^&]+)").find(pkUrl)
+            if (signMatch != null) {
+                sign = signMatch.groupValues[1]
+                Log.d(TAG, "Extracted sign from pkUrl: '$sign'")
+            } else {
+                Log.d(TAG, "No sign found in pkUrl")
+            }
+        }
+        
+        // 如果还是没有 sign，尝试从 redirPost 响应中提取（稍后）
+        if (sign.isEmpty() || sign == "(Not found)") {
+            Log.w(TAG, "Warning: No sign found in response or pkUrl, download link may be invalid")
+        }
+        
+        Log.d(TAG, "Final download sign: '$sign'")
+        
+        var downloadUrl = ""
+        var tParam = "" // 从 redirPost URL 中提取的 t 参数
+        var redirPostRawUrl = "" // 记录 redirPost 返回的原始 URL
+        
+        debugLog.append("\n=== Sign 提取 ===\n")
+        debugLog.append("sign: $sign\n")
+        
+        // redirPost 请求下载链接（pkUrl 已在前面提取）
         if (pkUrl != null) {
             try {
-                val queryStart = pkUrl.indexOf("?")
-                val redirParams = if (queryStart >= 0) pkUrl.substring(queryStart + 1) else pkUrl
+                // 使用 buildRedirParams 构建完整的 redirPost 参数
+                val redirParams = buildRedirParams(queryParams, pkUrl, updateResponse)
+                Log.d(TAG, "RedirPost params: ${redirParams.take(200)}")
                 val redirRes = requestRedirPost(redirParams, domain)
                 Log.d(TAG, "Redir response: $redirRes")
+                
+                // 尝试从 redirPost 响应中提取 sign
+                if (sign.isEmpty() || sign == "(Not found)") {
+                    val redirSign = extractField(redirRes, listOf("sign", "t", "token"))
+                    if (redirSign.isNotEmpty() && redirSign != "(Not found)") {
+                        sign = redirSign
+                        Log.d(TAG, "Extracted sign from redirPost response: '$sign'")
+                    }
+                }
+                
                 val dataIdx = redirRes.indexOf("\"data\":\"")
                 if (dataIdx >= 0) {
                     val urlStart = dataIdx + 8
                     val urlEnd = redirRes.indexOf("\"", urlStart)
                     if (urlEnd > urlStart) {
-                        downloadUrl = redirRes.substring(urlStart, urlEnd).replace("\\/", "/")
+                        val rawUrl = redirRes.substring(urlStart, urlEnd).replace("\\/", "/")
+                        redirPostRawUrl = rawUrl // 记录原始 URL
+                        
+                        // 无论 URL 格式如何，都尝试从中提取 sign 和 t 参数
+                        val urlSignMatch = Regex("[?&]sign=([^&]+)").find(rawUrl)
+                        if (urlSignMatch != null) {
+                            sign = urlSignMatch.groupValues[1]
+                            Log.d(TAG, "Extracted sign from redirPost URL: '$sign'")
+                        }
+                        val urlTMatch = Regex("[?&]t=([^&]+)").find(rawUrl)
+                        if (urlTMatch != null) {
+                            tParam = urlTMatch.groupValues[1]
+                            Log.d(TAG, "Extracted t parameter from redirPost URL: '$tParam'")
+                        }
+                        
+                        // 检查 URL 格式是否正常（应该包含 /upgrade/ 或 /oem/files/）
+                        if (rawUrl.contains("/upgrade/") || rawUrl.contains("/oem/files/")) {
+                            downloadUrl = rawUrl
+                            Log.d(TAG, "Got valid downloadUrl from redirPost: $downloadUrl")
+                        } else {
+                            // URL 格式不对，但我们已经提取了 sign 和 t 参数，稍后用 fallback 构建正确链接
+                            Log.d(TAG, "RedirPost returned invalid format URL: $rawUrl")
+                            Log.d(TAG, "Will use fallback with extracted sign='$sign' and t='$tParam'")
+                        }
                     }
+                } else {
+                    Log.d(TAG, "redirPost response has no 'data' field")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "redirPost failed: ${e.message}")
             }
         }
-
+        
+        if (redirPostRawUrl.isNotEmpty()) {
+            debugLog.append("\n=== RedirPost 原始 URL ===\n")
+            debugLog.append("$redirPostRawUrl\n")
+        }
+        
         // redirPost 未给出地址（无 pk / 请求失败 / data 缺失）时，按包名回退到固定的 CDN 下载地址
         if (downloadUrl.isEmpty()) {
-            downloadUrl = fallbackDownloadUrl(pkName)
-            if (downloadUrl.isNotEmpty()) {
-                Log.d(TAG, "downloadUrl empty, fallback to: $downloadUrl")
+            // 优先使用真实文件名，如果没有则使用 pkName
+            val fileNameForUrl = if (realFileName.isNotEmpty() && realFileName != "(Not found)") {
+                realFileName
+            } else {
+                pkName
             }
+            downloadUrl = fallbackDownloadUrl(fileNameForUrl, sign, tParam, domain)
+            if (downloadUrl.isNotEmpty()) {
+                Log.d(TAG, "downloadUrl empty, fallback to: $downloadUrl (using fileName: $fileNameForUrl)")
+                debugLog.append("\n=== Fallback 下载链接 ===\n")
+                debugLog.append("使用文件名: $fileNameForUrl\n")
+                debugLog.append("域名: sysuptxdl.vivo.com.cn\n")
+            }
+        }
+
+        debugLog.append("\n=== 最终结果 ===\n")
+        debugLog.append("downloadUrl: $downloadUrl\n")
+        debugLog.append("changelogUrl: $changelogUrl\n")
+        debugLog.append("fullFallback: $fullFallback\n")
+        debugLog.append("isFullPackage: $isFullPackage\n")
+        if (fullFallback) {
+            debugLog.append("\n⚠ 全量包查询失败，已自动降级为增量包\n")
         }
 
         return VivoOtaResult(
@@ -365,7 +645,8 @@ class VivoOtaClient(private val context: Context) {
             fullFallback = fullFallback,
             betaOrTasteType = betaOrTasteType,
             betaRecruitHint = betaRecruitHint,
-            rawResponse = updateResponse
+            rawResponse = updateResponse,
+            debugLog = debugLog.toString()
         )
     }
 
@@ -490,11 +771,34 @@ class VivoOtaClient(private val context: Context) {
         return sb.toString()
     }
 
-    /** 兜底下载地址：`PK_BASE_URL` + 包名。包名缺失/为 "(Not found)" 时返回空串。 */
-    private fun fallbackDownloadUrl(pkName: String): String {
+    /** 兜底下载地址：下载域名 + /upgrade/oem/files/ + 包名 + sign 和 t 参数。包名缺失/为 "(Not found)" 时返回空串。 */
+    private fun fallbackDownloadUrl(pkName: String, sign: String = "", tParam: String = "", domain: Domain = Domain.CN): String {
         val name = pkName.trim().trimStart('/')
         if (name.isEmpty() || name == "(Not found)") return ""
-        return PK_BASE_URL + name
+        
+        // 根据 domain 选择下载域名
+        val downloadHost = if (domain == Domain.GLOBAL) {
+            "sysuptxdl.vivo.com.cn"
+        } else {
+            "sysuptxdl.vivo.com.cn"
+        }
+        
+        val baseUrl = "http://$downloadHost/upgrade/oem/files/$name"
+        
+        // 构建查询参数
+        val params = mutableListOf<String>()
+        if (sign.isNotEmpty() && sign != "(Not found)") {
+            params.add("sign=$sign")
+        }
+        if (tParam.isNotEmpty() && tParam != "(Not found)") {
+            params.add("t=$tParam")
+        }
+        
+        return if (params.isNotEmpty()) {
+            "$baseUrl?${params.joinToString("&")}"
+        } else {
+            baseUrl
+        }
     }
 
     private fun extractPkUrl(json: String): String? {
@@ -508,10 +812,16 @@ class VivoOtaClient(private val context: Context) {
         val start = idx + key.length
         val end = json.indexOf('"', start)
         if (end < 0) {
+            // 数字类型：找到逗号或右大括号作为结束
             val end2 = json.indexOf(',', start)
             val end3 = json.indexOf('}', start)
-            val realEnd = if (end2 in start until end3) end2 else end3
-            return if (realEnd < 0) json.substring(start) else json.substring(start, realEnd).trim()
+            val realEnd = when {
+                end2 < 0 && end3 < 0 -> json.length
+                end2 < 0 -> end3
+                end3 < 0 -> end2
+                else -> minOf(end2, end3)
+            }
+            return json.substring(start, realEnd).trim()
         }
         return json.substring(start, end)
     }
@@ -562,6 +872,8 @@ class VivoOtaClient(private val context: Context) {
     private fun encryptToJvq(plaintext: String): String {
         val encrypted = VivoCrypto.encrypt(plaintext.toByteArray(StandardCharsets.UTF_8))
             ?: throw RuntimeException("Encryption failed")
+        // 官方 APP 使用包类型 5 (PKGTYPE_AES_ENCRYPT)
+        // SecurityUtils.encryptUrlParams() → SecurityKeyCipher.aesEncrypt() → a.aesEncrypt() → f(bArr, 5, keyVersion)
         val pkg = buildProtocolPackage(5, 2, TOKEN_NATIVE, encrypted)
         return base64UrlEncode(pkg)
     }
@@ -781,7 +1093,15 @@ class VivoOtaClient(private val context: Context) {
     fun fetchChangelog(url: String): String? {
         if (url.isEmpty()) return null
         return try {
-            val response = httpGet(url)
+            // 如果是 H5 页面地址，转换为数据文件地址
+            val dataUrl = if (url.contains("/index.html")) {
+                changelogDataUrl(url)
+            } else {
+                url
+            }
+            Log.d(TAG, "Fetching changelog from: $dataUrl")
+            
+            val response = httpGet(dataUrl)
             Log.d(TAG, "Changelog response (${response.length} chars): ${response.take(500)}")
             if (response.trimStart().startsWith("{")) {
                 parseChangelogJson(response)
@@ -866,21 +1186,61 @@ class VivoOtaClient(private val context: Context) {
     }
 
     private fun parseChangelogHtml(html: String): String {
+        // 保留 HTML 格式，只移除 script、style 和 head 标签
         var text = html
         text = text.replace(Regex("<script[^>]*>[\\s\\S]*?</script>", RegexOption.IGNORE_CASE), "")
         text = text.replace(Regex("<style[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE), "")
         text = text.replace(Regex("<head[^>]*>[\\s\\S]*?</head>", RegexOption.IGNORE_CASE), "")
-        text = text.replace(Regex("<(br|/p|/div|/li|/h[1-6]|/tr)[^>]*>", RegexOption.IGNORE_CASE), "\n")
-        text = text.replace(Regex("<[^>]+>"), "")
-        text = text.replace("&nbsp;", " ")
-        text = text.replace("&amp;", "&")
-        text = text.replace("&lt;", "<")
-        text = text.replace("&gt;", ">")
-        text = text.replace("&quot;", "\"")
-        text = text.replace("&#39;", "'")
-        text = text.replace(Regex("&#[0-9]+;"), "")
-        text = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n").trim()
-        return text
+        return text.trim()
+    }
+    
+    /**
+     * 递减版本号：17.0.16.0 -> 17.0.15.9
+     * 用于全量包查询时自动回退到上一个小版本
+     */
+    private fun decrementVersion(version: String): String {
+        // 匹配格式：17.0.16.0 或 17.0.16.0.W10
+        val parts = version.split(".")
+        if (parts.size < 4) return version
+        
+        try {
+            val major = parts[0].toInt()
+            val minor1 = parts[1].toInt()
+            var minor2 = parts[2].toInt()
+            var patch = parts[3].substringBefore(".").substringBefore("W").toInt()
+            
+            // 递减补丁号
+            if (patch > 0) {
+                patch--
+            } else {
+                // 补丁号已是0，递减 minor2
+                patch = 9
+                if (minor2 > 0) {
+                    minor2--
+                } else {
+                    // 已无法继续递减，保持原样
+                    return version
+                }
+            }
+            
+            // 重新组装版本号，保留后缀（如 .W10）
+            val suffix = if (parts[3].contains("W")) {
+                "." + parts[3].substringAfter("W", "")
+            } else {
+                ""
+            }
+            val newVersion = "$major.$minor1.$minor2.$patch$suffix"
+            
+            // 如果还有更多部分（如 .V000L1），附加上去
+            if (parts.size > 4) {
+                return newVersion + "." + parts.subList(4, parts.size).joinToString(".")
+            }
+            
+            return newVersion
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to decrement version: $version", e)
+            return version
+        }
     }
 }
 
