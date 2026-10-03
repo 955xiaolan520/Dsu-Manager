@@ -2249,12 +2249,35 @@ public class MainActivity extends BaseActivity {
           gradient.setCornerRadius(dp(20));
           card.setBackground(gradient);
           
+          LinearLayout logHeader = new LinearLayout(this);
+          logHeader.setOrientation(LinearLayout.HORIZONTAL);
+          logHeader.setGravity(Gravity.CENTER_VERTICAL);
           TextView title = new TextView(this);
-          title.setText(t("📜 输出日志", "📜 Output Log"));
+          title.setText(t("📜 操作日志", "📜 Operation Log"));
           title.setTextSize(13);  // 缩小到13sp
           title.setTextColor(0xff000000);
           title.setTypeface(null, 1);
-          card.addView(title);
+          logHeader.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+          Button copyLogButton = new Button(this);
+          copyLogButton.setText(t("复制全部日志", "Copy All Logs"));
+          copyLogButton.setTextSize(11);
+          copyLogButton.setTextColor(0xff334155);
+          copyLogButton.setAllCaps(false);
+          copyLogButton.setMinHeight(0);
+          copyLogButton.setMinimumHeight(0);
+          copyLogButton.setPadding(dp(10), 0, dp(10), 0);
+          copyLogButton.setBackground(createRoundRect(0x220f766e, dp(12)));
+          copyLogButton.setOnClickListener(v -> {
+              Haptics.perform(v);
+              String content = flashLogText == null ? "" : flashLogText.getText().toString();
+              android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+              if (clipboard != null) {
+                  clipboard.setPrimaryClip(android.content.ClipData.newPlainText("操作日志", content));
+                  Toast.makeText(this, t("已复制全部日志", "All logs copied"), Toast.LENGTH_SHORT).show();
+              }
+          });
+          logHeader.addView(copyLogButton, new LinearLayout.LayoutParams(-2, dp(34)));
+          card.addView(logHeader);
           
           flashLogScroll = new ScrollView(this);
           flashLogScroll.setVerticalScrollBarEnabled(true);
