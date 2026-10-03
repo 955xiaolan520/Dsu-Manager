@@ -426,34 +426,54 @@ class OtgFlashHelper(
     // ==================== 高级重启 ====================
     
     fun showRebootMenu() {
-        val items = arrayOf(
-            "正常重启",
-            "正常关机",
-            "Recovery",
-            "Fastboot",
-            "9008 (EDL)"
-        )
-        val commands = arrayOf(
-            "adb reboot",
-            "adb reboot poweroff",
-            "adb reboot recovery",
-            "adb reboot bootloader",
-            "adb reboot edl"
-        )
+        val items = arrayOf("正常重启", "正常关机", "Recovery", "Fastboot", "9008 (EDL)")
+        val commands = arrayOf("reboot", "reboot poweroff", "reboot recovery", "reboot bootloader", "reboot edl")
         AlertDialog.Builder(activity)
             .setTitle("高级重启")
-            .setItems(items) { _, which ->
-                val cmd = commands[which]
-                setOperationActive(true)
-                Thread {
-                    val result = runToolBlocking(OtgAssistantCore.getAdbPath(ctx), cmd)
-                    postUi {
-                        appendLog("退出码: ${result.exitCode}\n")
-                        setOperationActive(false)
-                    }
-                }.start()
-            }
+            .setItems(items) { _, which -> executeRebootMode(commands[which]) }
             .show()
+    }
+
+    private fun executeRebootMode(target: String) {
+        if (operationActive) return
+        setOperationActive(true)
+        Thread {
+            try {
+                val status = OtgAssistantCore.detectProtocolDevices(ctx)
+                when {
+                    status.adb != "未发现设备" -> {
+                        val result = runToolBlocking(OtgAssistantCore.getAdbPath(ctx), "adb $target")
+                        if (result.exitCode == 0 && target != "reboot") {
+                            postUi { appendLog("设备正在切换启动模式，等待重新枚举\n") }
+                            waitForUsbReenumeration()
+                        }
+                    }
+                    status.fastboot != "未发现设备" -> {
+                        val fastbootTarget = if (target == "reboot bootloader") "reboot-bootloader" else target
+                        runToolBlocking(OtgAssistantCore.getFastbootPath(ctx), "fastboot $fastbootTarget")
+                    }
+                    else -> postUi { appendLog("高级重启失败：未检测到可用的 ADB/Fastboot 设备\n") }
+                }
+            } catch (e: Exception) {
+                postUi { appendLog("高级重启失败：${e.message}\n") }
+            } finally {
+                postUi { setOperationActive(false) }
+            }
+        }.start()
+    }
+
+    private fun waitForUsbReenumeration() {
+        Thread {
+            repeat(8) {
+                Thread.sleep(750)
+                val status = OtgAssistantCore.detectProtocolDevices(ctx)
+                if (status.fastboot != "未发现设备") {
+                    postUi { appendLog("Fastboot 状态：${status.fastboot}\n") }
+                    return@Thread
+                }
+            }
+            postUi { appendLog("切换模式后 Fastboot 未发现设备，请检查连接与 fastboot 输出\n") }
+        }.start()
     }
     
     // ==================== 辅助方法 ====================

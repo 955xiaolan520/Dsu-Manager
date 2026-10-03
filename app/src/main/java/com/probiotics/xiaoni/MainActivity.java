@@ -2296,51 +2296,29 @@ public class MainActivity extends BaseActivity {
           if (flashRefreshing) return;
           flashRefreshing = true;
           flashAppendLog("\n正在扫描设备...\n");
-          
           new Thread(() -> {
-              // 获取 USB 设备列表
-              android.hardware.usb.UsbManager usbManager = (android.hardware.usb.UsbManager) getSystemService(Context.USB_SERVICE);
+              java.util.List<OtgAssistantCore.DeviceInfo> devices = OtgAssistantCore.INSTANCE.listUsbDevices(this);
+              OtgAssistantCore.ProtocolDeviceStatus protocol = OtgAssistantCore.INSTANCE.detectProtocolDevices(this);
               StringBuilder usbText = new StringBuilder();
-              int deviceCount = 0;
-              
-              if (usbManager != null && !usbManager.getDeviceList().isEmpty()) {
-                  deviceCount = usbManager.getDeviceList().size();
-                  int shown = 0;
-                  for (android.hardware.usb.UsbDevice dev : usbManager.getDeviceList().values()) {
-                      if (shown >= 8) break;
-                      usbText.append(String.format("VID:%04x PID:%04x %s\n",
-                              dev.getVendorId(), dev.getProductId(), dev.getDeviceName()));
-                      shown++;
-                  }
-                  if (deviceCount > 8) {
-                      usbText.append("...共 ").append(deviceCount).append(" 个设备");
-                  }
+              int shown = 0;
+              for (OtgAssistantCore.DeviceInfo dev : devices) {
+                  if (shown++ >= 8) break;
+                  usbText.append(String.format("VID:%04x PID:%04x %s\n", dev.getVendorId(), dev.getProductId(), dev.getDeviceName()));
               }
-              
-              // ADB 设备检测
-              String adbOut = execShell("adb devices");
-              String fbOut = execShell("fastboot devices");
-              
-              boolean hasAdb = adbOut.contains("\tdevice");
-              boolean hasFb = fbOut.contains("\t");
-              
-              final int finalDeviceCount = deviceCount;
-              final String deviceListText = deviceCount > 0 ? usbText.toString() : t("未找到 USB 设备", "No USB device");
-              final String adbStatus = hasAdb ? "✅ 已连接" : "未发现设备";
-              final String fbStatus = hasFb ? "✅ 已连接" : "未发现设备";
-              
+              final int finalDeviceCount = devices.size();
+              final String deviceListText = finalDeviceCount > 0 ? usbText.toString() : t("未找到 USB 设备", "No USB device");
+              final String adbStatus = protocol.getAdb();
+              final String fbStatus = protocol.getFastboot();
               runOnUiThread(() -> {
                   flashDeviceText.setText(deviceListText);
                   flashProtocolText.setText("ADB: " + adbStatus + "\nFastboot: " + fbStatus);
-                  
                   if (finalDeviceCount > 0) {
                       flashAppendLog("发现 " + finalDeviceCount + " 个设备\n");
                   } else {
                       flashAppendLog("未发现设备\n");
                   }
-                  flashAppendLog("协议检测：ADB=" + hasAdb + "，Fastboot=" + hasFb + "\n");
-                  
-                  flashDeviceConnected = hasAdb || hasFb;
+                  flashAppendLog("协议检测：ADB=" + !"未发现设备".equals(adbStatus) + "，Fastboot=" + !"未发现设备".equals(fbStatus) + "\n");
+                  flashDeviceConnected = !"未发现设备".equals(adbStatus) || !"未发现设备".equals(fbStatus);
                   flashRefreshing = false;
               });
           }).start();
@@ -2356,11 +2334,17 @@ public class MainActivity extends BaseActivity {
               Toast.makeText(this, t("请输入命令", "Enter command"), 0).show();
               return;
           }
-          
           flashAppendLog("\n$ " + cmd);
           new Thread(() -> {
-              String result = execShell(cmd);
-              runOnUiThread(() -> flashAppendLog(result));
+              String toolPath = cmd.startsWith("fastboot")
+                      ? OtgAssistantCore.INSTANCE.getFastbootPath(this)
+                      : OtgAssistantCore.INSTANCE.getAdbPath(this);
+              OtgAssistantCore.CommandResult result = OtgAssistantCore.INSTANCE.executeCommandDetailed(
+                      toolPath, cmd, 30000, line -> {
+                          runOnUiThread(() -> flashAppendLog(line));
+                          return kotlin.Unit.INSTANCE;
+                      });
+              runOnUiThread(() -> flashAppendLog("退出码: " + result.getExitCode()));
           }).start();
       }
       
