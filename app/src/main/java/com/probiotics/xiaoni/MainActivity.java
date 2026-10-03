@@ -2293,35 +2293,8 @@ public class MainActivity extends BaseActivity {
       }
       
       private void flashRefreshDevices() {
-          if (flashRefreshing) return;
-          flashRefreshing = true;
-          flashAppendLog("\n正在扫描设备...\n");
-          new Thread(() -> {
-              java.util.List<OtgAssistantCore.DeviceInfo> devices = OtgAssistantCore.INSTANCE.listUsbDevices(this);
-              OtgAssistantCore.ProtocolDeviceStatus protocol = OtgAssistantCore.INSTANCE.detectProtocolDevices(this);
-              StringBuilder usbText = new StringBuilder();
-              int shown = 0;
-              for (OtgAssistantCore.DeviceInfo dev : devices) {
-                  if (shown++ >= 8) break;
-                  usbText.append(String.format("VID:%04x PID:%04x %s\n", dev.getVendorId(), dev.getProductId(), dev.getDeviceName()));
-              }
-              final int finalDeviceCount = devices.size();
-              final String deviceListText = finalDeviceCount > 0 ? usbText.toString() : t("未找到 USB 设备", "No USB device");
-              final String adbStatus = protocol.getAdb();
-              final String fbStatus = protocol.getFastboot();
-              runOnUiThread(() -> {
-                  flashDeviceText.setText(deviceListText);
-                  flashProtocolText.setText("ADB: " + adbStatus + "\nFastboot: " + fbStatus);
-                  if (finalDeviceCount > 0) {
-                      flashAppendLog("发现 " + finalDeviceCount + " 个设备\n");
-                  } else {
-                      flashAppendLog("未发现设备\n");
-                  }
-                  flashAppendLog("协议检测：ADB=" + !"未发现设备".equals(adbStatus) + "，Fastboot=" + !"未发现设备".equals(fbStatus) + "\n");
-                  flashDeviceConnected = !"未发现设备".equals(adbStatus) || !"未发现设备".equals(fbStatus);
-                  flashRefreshing = false;
-              });
-          }).start();
+          if (otgFlashHelper == null) return;
+          otgFlashHelper.refreshDevices(flashDeviceText, flashProtocolText);
       }
       
       private void startFlashDeviceMonitor() {
@@ -2334,18 +2307,7 @@ public class MainActivity extends BaseActivity {
               Toast.makeText(this, t("请输入命令", "Enter command"), 0).show();
               return;
           }
-          flashAppendLog("\n$ " + cmd);
-          new Thread(() -> {
-              String toolPath = cmd.startsWith("fastboot")
-                      ? OtgAssistantCore.INSTANCE.getFastbootPath(this)
-                      : OtgAssistantCore.INSTANCE.getAdbPath(this);
-              OtgAssistantCore.CommandResult result = OtgAssistantCore.INSTANCE.executeCommandDetailed(
-                      toolPath, cmd, 30000, line -> {
-                          runOnUiThread(() -> flashAppendLog(line));
-                          return kotlin.Unit.INSTANCE;
-                      });
-              runOnUiThread(() -> flashAppendLog("退出码: " + result.getExitCode()));
-          }).start();
+          if (otgFlashHelper != null) otgFlashHelper.executeCommand(cmd);
       }
       
       private void flashAppendLog(String text) {

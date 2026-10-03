@@ -79,6 +79,59 @@ class OtgFlashHelper(
             }
         }.start()
     }
+
+    /** Linux-Dsu OtgAssistantPage 的设备扫描逻辑；主界面只负责显示结果。 */
+    fun refreshDevices(deviceView: TextView, protocolView: TextView) {
+        if (operationActive) return
+        setOperationActive(true)
+        appendLog("\n正在扫描设备...\n")
+        Thread {
+            try {
+                val devices = OtgAssistantCore.listUsbDevices(ctx)
+                val protocol = OtgAssistantCore.detectProtocolDevices(ctx)
+                postUi {
+                    if (devices.isEmpty()) {
+                        deviceView.text = "未找到 USB 设备"
+                        appendLog("未发现设备\n")
+                    } else {
+                        val shown = devices.take(8).joinToString("\n") { device ->
+                            String.format("VID:%04x  PID:%04x  %s", device.vendorId, device.productId, device.deviceName)
+                        }
+                        deviceView.text = if (devices.size > 8) "$shown\n...共 ${devices.size} 个设备" else shown
+                        appendLog("发现 ${devices.size} 个设备\n")
+                    }
+                    protocolView.text = "ADB: ${protocol.adb}\nFastboot: ${protocol.fastboot}"
+                    appendLog("协议检测：ADB=${protocol.adb != "未发现设备"}，Fastboot=${protocol.fastboot != "未发现设备"}\n")
+                    setOperationActive(false)
+                }
+            } catch (e: Exception) {
+                postUi { appendLog("设备检测失败：${e.message}\n"); setOperationActive(false) }
+            }
+        }.start()
+    }
+
+    /** Linux-Dsu OtgAssistantPage 的命令分流：fastboot 使用 fastboot 工具，其余使用 adb 工具。 */
+    fun executeCommand(command: String) {
+        if (operationActive) return
+        val trimmed = command.trim()
+        if (trimmed.isEmpty()) {
+            toast("请输入命令")
+            return
+        }
+        appendLog("\n>$trimmed\n")
+        setOperationActive(true)
+        Thread {
+            try {
+                val toolPath = if (trimmed.startsWith("fastboot")) OtgAssistantCore.getFastbootPath(ctx) else OtgAssistantCore.getAdbPath(ctx)
+                val output = OtgAssistantCore.executeCommand(toolPath, trimmed) { line ->
+                    postUi { appendLog("$line\n") }
+                }
+                postUi { if (output.isBlank()) appendLog("命令已完成\n"); setOperationActive(false) }
+            } catch (e: Exception) {
+                postUi { appendLog("命令执行失败：${e.message}\n"); setOperationActive(false) }
+            }
+        }.start()
+    }
     
     // ==================== 单分区刷写 ====================
     
