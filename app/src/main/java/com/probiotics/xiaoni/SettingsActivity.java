@@ -171,7 +171,7 @@ public final class SettingsActivity extends BaseActivity {
         languages.setBackgroundResource(R.drawable.rounded_panel);
         root.addView(languages);
 
-        // 关于入口 - 放在语言设置后面
+        // 关于入口 - 放在语言设置后面（v3.30.23：关于内容已并入特别鸣谢页）
         TextView aboutTitle = label(english ? "About" : "关于", 16, Color.rgb(20, 29, 55));
         aboutTitle.setTypeface(null, 1);
         aboutTitle.setTextColor(Color.rgb(78, 87, 151));
@@ -179,27 +179,27 @@ public final class SettingsActivity extends BaseActivity {
         LinearLayout.LayoutParams aboutTitleLp = new LinearLayout.LayoutParams(-1, dp(34));
         aboutTitleLp.setMargins(dp(4), dp(20), dp(4), dp(8));
         root.addView(aboutTitle, aboutTitleLp);
-        
+
         Button aboutButton = new Button(this);
-        aboutButton.setText(english ? "View About" : "查看关于");
+        aboutButton.setText(english ? "View Credits" : "查看关于与鸣谢");
         aboutButton.setAllCaps(false);
         aboutButton.setTextColor(0xffffffff); // 白色文字
         aboutButton.setTextSize(15);
         aboutButton.setTypeface(null, 1); // 加粗
         aboutButton.setBackgroundResource(R.drawable.button_green); // 使用绿色按钮背景
         aboutButton.setOnClickListener(v -> {
-            Intent intent = new Intent(this, AboutActivity.class);
+            Intent intent = new Intent(this, ThanksActivity.class);
             startActivity(intent);
             overridePendingTransition(R.anim.explode_in, R.anim.explode_out);
         });
         LinearLayout.LayoutParams aboutButtonLp = new LinearLayout.LayoutParams(-1, dp(52));
         aboutButtonLp.setMargins(0, 0, 0, dp(8));
         root.addView(aboutButton, aboutButtonLp);
-        
+
         // 关于按钮说明文字
-        TextView aboutHint = label(english 
-                ? "View app information, feature description, version number, and acknowledgements" 
-                : "查看应用信息、功能说明、版本号和致谢内容", 13, Color.rgb(110, 118, 135));
+        TextView aboutHint = label(english
+                ? "View app author, version number, and acknowledgements"
+                : "查看应用作者、版本号和致谢内容", 13, Color.rgb(110, 118, 135));
         aboutHint.setPadding(dp(14), dp(8), dp(14), dp(8));
         aboutHint.setBackgroundResource(R.drawable.rounded_panel);
         LinearLayout.LayoutParams aboutHintLp = new LinearLayout.LayoutParams(-1, -2);

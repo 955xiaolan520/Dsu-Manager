@@ -923,6 +923,18 @@ public class MainActivity extends BaseActivity {
          if (homeScroll != null) homeScroll.smoothScrollTo(0, 0);
      }
 
+     // v3.30.23：内嵌设置页时，系统返回键先回 DNA 主页，而不是直接退出应用
+     @Override
+     public void onBackPressed() {
+         if (dnaSettingsMode) {
+             Haptics.perform(getWindow().getDecorView());
+             dnaSettingsMode = false;
+             swapTabOne();
+             return;
+         }
+         super.onBackPressed();
+     }
+
         private void selectTab(int tab) {
              if (tab == currentTab) {
                  if (tab == 0) scrollToTop();
@@ -1108,6 +1120,38 @@ public class MainActivity extends BaseActivity {
           titleRow.addView(settingsEntry, new LinearLayout.LayoutParams(-2, dp(44)));
           page.addView(titleRow, new LinearLayout.LayoutParams(-1, dp(48)));
 
+          // v3.40.10：置顶提示卡（DNA 打包功能移植来源 + 测试范围声明）
+          LinearLayout pinnedCard = new LinearLayout(this);
+          pinnedCard.setOrientation(LinearLayout.VERTICAL);
+          pinnedCard.setPadding(dp(14), dp(11), dp(14), dp(11));
+          GradientDrawable pinnedBg = new GradientDrawable();
+          pinnedBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+          pinnedBg.setColors(new int[]{0xFFFFD98A, 0xFFF2B04E});
+          pinnedBg.setCornerRadius(dp(18));
+          pinnedBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
+          pinnedCard.setBackground(pinnedBg);
+          pinnedCard.setElevation(dp(4));
+          TextView pinnedTitle = text("📌 " + t("置顶提示", "Pinned"), 14, 0xff6b3d00);
+          pinnedTitle.setTypeface(null, 1);
+          pinnedTitle.setPadding(0, 0, 0, dp(5));
+          pinnedCard.addView(pinnedTitle, new LinearLayout.LayoutParams(-1, -2));
+          String[] pinnedLines = {
+                  t("DNA 打包功能完全移植酷安用户「相见即是缘」的 20260530 版本 DNA",
+                          "DNA packaging is fully ported from Coolapk user XiangJianJiShiYuan's DNA (20260530)"),
+                  t("有什么没修复的 bug 可联系作者；没有 fb 模式，没有备用机的慎重一点点",
+                          "Report unfixed bugs to the author; no fastboot mode, be careful without a backup device"),
+                  t("基础功能测试目前没毛病；分解增量包、格式转换、其他功能里，除「去除 vbmeta 验证」「一键宽容 v2.0」外均未测试",
+                          "Basics tested OK; incremental unpack / convert / more are untested except vbmeta removal & permissive v2.0")};
+          for (String pl : pinnedLines) {
+              TextView line = text(pl, 11, 0xff7a4a10);
+              line.setLineSpacing(dp(2), 1f);
+              line.setPadding(0, 0, 0, dp(3));
+              pinnedCard.addView(line, new LinearLayout.LayoutParams(-1, -2));
+          }
+          LinearLayout.LayoutParams pinnedLp = new LinearLayout.LayoutParams(-1, -2);
+          pinnedLp.topMargin = dp(10);
+          page.addView(pinnedCard, pinnedLp);
+
           // 工具链状态卡（对齐原版「ROM工具未就绪 + 检测」）
           LinearLayout statusCard = new LinearLayout(this);
           statusCard.setOrientation(LinearLayout.HORIZONTAL);
@@ -1236,7 +1280,11 @@ public class MainActivity extends BaseActivity {
                   Haptics.perform(v);
                   if (which == 0) showDnaCreateProject();
                   else if (which == 1) showDnaDeleteProject();
-                  else if (which == 2) showDnaUnzipRom();
+                  else if (which == 2) {
+                      // v3.30.20：解压 ROM 弹窗 → 独立二级页面
+                      startActivity(new Intent(this, DnaUnzipActivity.class));
+                      overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
+                  }
                   else {
                       // v3.28.11：插件管理弹窗 → 独立二级页面
                       startActivity(new Intent(MainActivity.this, DnaModuleActivity.class));
@@ -1262,7 +1310,8 @@ public class MainActivity extends BaseActivity {
 
           // ===== 分解与提取 =====
           dnaSectionTitle(page, t("分解与提取", "Decompose & Extract"), 0xFF35A8C4);
-          dnaMenuItem(page, "🧬", t("分解 bin", "Extract bin"), t("从 payload.bin 提取指定分区", "payload.bin → partitions"), DnaActivity.MODE_BIN, null, 0);
+          dnaMenuItem(page, "🧬", t("分解 bin", "Extract bin"), t("从 payload.bin / OTA zip 提取指定分区", "payload.bin / OTA zip → partitions"), DnaActivity.MODE_BIN, null, 0);
+          dnaMenuItem(page, "⚡", t("分解增量包", "Incremental unpack"), t("delta 增量 OTA + 旧镜像目录 → 新 img", "delta OTA + old images → new img"), "dna_incremental", null, 0);
           dnaMenuItem(page, "🧩", t("分解 br", "Extract br"), t("解包 BR 文件", "Unpack brotli"), DnaActivity.MODE_EXTRACT, "br", 0);
           dnaMenuItem(page, "🧾", t("分解 dat", "Extract dat"), t("解包 DAT 文件", "Unpack dat"), DnaActivity.MODE_EXTRACT, "dat", 0);
           dnaMenuItem(page, "🧱", t("分解 img", "Extract img"), t("解包 IMG 文件（自动识别 erofs / ext4 / f2fs）", "Unpack image (erofs / ext4 / f2fs)"), DnaActivity.MODE_EXTRACT, "img", 0);
@@ -1279,6 +1328,14 @@ public class MainActivity extends BaseActivity {
           dnaMenuItem(page, "🧾", t("img-dat-br 转换", "img → dat / br"), t("镜像转卡刷 dat / br 格式", "img → dat / br"), DnaActivity.MODE_CONVERT, null, 4);
           dnaMenuItem(page, "⚡", t("zst-img 互转", "zst ↔ img"), t("zstd 多线程高速压缩 / 解压", "zstd compress / decompress"), DnaActivity.MODE_ZST, null, 4);
           dnaMenuItem(page, "🧩", t("合并 Sparse 分段", "Merge sparse chunks"), t("将分段 IMG 合并为完整 IMG", "Split images → one"), DnaActivity.MODE_CHUNK, null, 4);
+
+          // ===== 其他功能（v3.30.11：原版 more.xml「其它功能」组，置于声明上方）=====
+          dnaSectionTitle(page, t("其他功能", "More"), 0xFF8E6FD8);
+          dnaMenuItem(page, "🛡", t("去除 vbmeta 验证", "Remove vbmeta"), t("读取 PDNA 根目录 img，去除 AVB 验证（输出 /sdcard/PDNA/out）", "PDNA root img → disable AVB (output /sdcard/PDNA/out)"), DnaActivity.MODE_VBMETA, null, 4);
+          dnaMenuItem(page, "🔓", t("一键宽容 v2.0", "Permissive v2.0"), t("读取 PDNA 根目录 img，注入 SELinux 宽容（输出 /sdcard/PDNA/out）", "PDNA root img → permissive (output /sdcard/PDNA/out)"), DnaActivity.MODE_SELINUX, null, 4);
+          dnaMenuItem(page, "🧬", t("合并 my_ 分区进 system", "Merge my_ into system"), t("分解 my 分区和 system 分区后再执行", "Extract my & system first"), DnaActivity.MODE_MERGE_MY, null, 4);
+          dnaMenuItem(page, "🗂", t("合并分段 super", "Merge split super"), t("合并项目目录下的分段 super 文件", "super.img.N → super.img"), DnaActivity.MODE_MERGE_SUPER, null, 4);
+          dnaMenuItem(page, "📦", t("合并其他分区进 system(内层)", "Merge partitions into system"), t("分解分区和 system 分区后再执行", "Extract partitions & system first"), DnaActivity.MODE_MERGE_PART, null, 4);
 
           // ===== 声明（v3.28.7：白玻璃卡 + 深红字，修复红底红字看不清）=====
           LinearLayout noticeCard = new LinearLayout(this);
@@ -1309,7 +1366,7 @@ public class MainActivity extends BaseActivity {
           page.addView(noticeCard, noticeLp);
 
           // 底部说明
-          TextView note = text(t("DNA 工具链来自原版 DNA 工具箱 · 工程 /sdcard/PDNA/ · 分解输出 /data/PDNA/（产物前缀 PDMA_）", "DNA toolchain from the original DNA Toolbox · /sdcard/PDNA/ + /data/PDNA/ (PDMA_ prefix)"), 12, 0xffdfe9f5);
+          TextView note = text(t("DNA 工具链来自原版 DNA 工具箱 · 工程 /sdcard/PDNA/ · 分解输出 /data/PDNA/（产物前缀 PDNA_）", "DNA toolchain from the original DNA Toolbox · /sdcard/PDNA/ + /data/PDNA/ (PDNA_ prefix)"), 12, 0xffdfe9f5);
           note.setPadding(dp(4), dp(12), dp(4), 0);
           page.addView(note, new LinearLayout.LayoutParams(-1, -2));
           // 异步检测工具链
@@ -1410,6 +1467,18 @@ public class MainActivity extends BaseActivity {
 
       /** 打开 DNA 各功能页（不同功能差异化转场动画） */
       private void openDnaMode(String dnaMode, String filter, int index) {
+          // v3.30.20：分解 bin 独立二级页（JNI 解析/提取，不走 DNA 工作台）
+          if (DnaActivity.MODE_BIN.equals(dnaMode)) {
+              startActivity(new Intent(this, DnaBinActivity.class));
+              overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
+              return;
+          }
+          // v3.30.36：分解增量包独立二级页（payload_dumper --source-dir，root 链路）
+          if ("dna_incremental".equals(dnaMode)) {
+              startActivity(new Intent(this, DnaIncrementalActivity.class));
+              overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
+              return;
+          }
           // v3.28.7：分解 super 门槛 —— 当前工程必须存在 super.img 才能进入（root 异步检测）
           if (DnaActivity.MODE_SUPER_UNPACK.equals(dnaMode)) {
               String cur = DnaTools.currentProject(this);
@@ -1427,7 +1496,11 @@ public class MainActivity extends BaseActivity {
                   runOnUiThread(() -> {
                       if (isFinishing() || isDestroyed()) return;
                       if (has) {
-                          startDnaMode(dnaMode, filter, index);
+                          // v3.30.29：分解 super 独立二级页（解析 → 弹窗勾选 → 提取，对齐分解 bin 交互）
+                          Intent si = new Intent(this, DnaSuperActivity.class);
+                          si.putExtra(DnaSuperActivity.EXTRA_SUPER, path);
+                          startActivity(si);
+                          overridePendingTransition(R.anim.flip_in, R.anim.flip_out);
                       } else {
                           Toast.makeText(this, t("当前工程未检测到 super.img\n请先解压 ROM 或导入 super.img", "No super.img in current project"), Toast.LENGTH_LONG).show();
                       }
@@ -1595,8 +1668,8 @@ public class MainActivity extends BaseActivity {
           titleRow.addView(title, titleLp);
           panel.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
           TextView hint = new TextView(this);
-          hint.setText(t("工程名将添加 PDMA_ 前缀，创建于 /sdcard/PDNA/ 与 /data/PDNA/\n支持中英文、数字（特殊字符自动替换为 _）",
-                  "Name gets PDMA_ prefix at /sdcard/PDNA/ and /data/PDNA/\nLetters, digits, CJK supported"));
+          hint.setText(t("工程名将添加 PDNA_ 前缀，创建于 /sdcard/PDNA/ 与 /data/PDNA/\n支持中英文、数字（特殊字符自动替换为 _）",
+                  "Name gets PDNA_ prefix at /sdcard/PDNA/ and /data/PDNA/\nLetters, digits, CJK supported"));
           hint.setTextSize(11.5f);
           hint.setTextColor(0xff5a6b82);
           hint.setLineSpacing(dp(2), 1f);
@@ -1741,20 +1814,57 @@ public class MainActivity extends BaseActivity {
           bg.setCornerRadius(dp(24));
           bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
           panel.setBackground(bg);
+          // ---- 标题行：渐变图标徽章 + 标题 + 副标题（v3.30.11 美化）----
+          LinearLayout titleRow = new LinearLayout(this);
+          titleRow.setOrientation(LinearLayout.HORIZONTAL);
+          titleRow.setGravity(Gravity.CENTER_VERTICAL);
+          FrameLayout badge = new FrameLayout(this);
+          GradientDrawable badgeBg = new GradientDrawable();
+          badgeBg.setShape(GradientDrawable.OVAL);
+          badgeBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+          badgeBg.setColors(new int[]{0xFF35A8C4, 0xFF0E7D95});
+          badgeBg.setStroke(Math.max(1, dp(1)), 0xB3FFFFFF);
+          badge.setBackground(badgeBg);
+          TextView badgeIcon = new TextView(this);
+          badgeIcon.setText("📦");
+          badgeIcon.setTextSize(17);
+          badgeIcon.setGravity(Gravity.CENTER);
+          badge.addView(badgeIcon, new FrameLayout.LayoutParams(-1, -1));
+          titleRow.addView(badge, new LinearLayout.LayoutParams(dp(42), dp(42)));
+          LinearLayout titleBox = new LinearLayout(this);
+          titleBox.setOrientation(LinearLayout.VERTICAL);
+          titleBox.setPadding(dp(12), 0, 0, 0);
           TextView title = new TextView(this);
-          title.setText(t("解压 ROM（zip → /sdcard/PDNA）", "Unzip ROM (zip → /sdcard/PDNA)"));
-          title.setTextSize(16);
+          title.setText(t("解压 ROM", "Unzip ROM"));
+          title.setTextSize(16.5f);
           title.setTypeface(null, 1);
           title.setTextColor(0xff17334f);
-          title.setPadding(0, 0, 0, dp(10));
-          panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          titleBox.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          TextView subtitle = new TextView(this);
+          subtitle.setText(t("解压 zip 自动创建 DNA_ 新工程", "Unzip zip, auto-create a DNA_ project"));
+          subtitle.setTextSize(11.5f);
+          subtitle.setTextColor(0xff5a6b82);
+          LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
+          subLp.topMargin = dp(2);
+          titleBox.addView(subtitle, subLp);
+          titleRow.addView(titleBox, new LinearLayout.LayoutParams(0, -2, 1f));
+          panel.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+          // ---- zip 列表（玻璃行 + 选中 ✓ 高亮）----
           ScrollView listScroll = new ScrollView(this);
           LinearLayout list = new LinearLayout(this);
           list.setOrientation(LinearLayout.VERTICAL);
           listScroll.addView(list, new ScrollView.LayoutParams(-1, -2));
           java.util.List<String> zips = DnaTools.listProjectFiles(null, "zip");
+          // v3.30.14：同时列出当前工程内的 zip（原版 findfile.sh zip1 只列 PDNA 根，工程内 zip 之前只能手动输入）
+          java.util.List<String> projZips = new java.util.ArrayList<>();
+          String curProj = DnaTools.currentProject(this);
+          if (curProj != null) {
+              for (String n : DnaTools.listProjectFiles(curProj, "zip")) {
+                  if (!zips.contains(n)) projZips.add(n);
+              }
+          }
           final String[] chosen = {null};
-          if (zips.isEmpty()) {
+          if (zips.isEmpty() && projZips.isEmpty()) {
               TextView empty = new TextView(this);
               empty.setText(t("/sdcard/PDNA 下没有 zip，请在下方输入完整路径", "No zip in /sdcard/PDNA, enter full path below"));
               empty.setTextSize(12.5f);
@@ -1762,42 +1872,73 @@ public class MainActivity extends BaseActivity {
               empty.setPadding(0, dp(6), 0, dp(6));
               list.addView(empty, new LinearLayout.LayoutParams(-1, -2));
           }
-          for (String name : zips) {
-              TextView row = new TextView(this);
-              row.setText("📦 " + name);
-              row.setTextSize(13.5f);
-              row.setTextColor(0xff17334f);
-              // v3.28.7：长文件名单行省略（修复弹窗文字溢出）
-              row.setSingleLine(true);
-              row.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+          // v3.30.14：合并渲染 根目录 zip + 工程 zip（工程行显示 工程/前缀，tag 存完整路径）
+          java.util.List<String[]> allZips = new java.util.ArrayList<>();
+          for (String name : zips) allZips.add(new String[]{"🗂 " + name, DnaTools.WORK_ROOT + "/" + name});
+          if (curProj != null) {
+              for (String name : projZips) allZips.add(new String[]{"📂 " + curProj + "/" + name,
+                      DnaTools.WORK_ROOT + "/" + curProj + "/" + name});
+          }
+          for (String[] entry : allZips) {
+              final String disp = entry[0];
+              final String fullPath = entry[1];
+              LinearLayout row = new LinearLayout(this);
+              row.setOrientation(LinearLayout.HORIZONTAL);
               row.setGravity(Gravity.CENTER_VERTICAL);
-              row.setPadding(dp(10), dp(11), dp(10), dp(11));
+              row.setPadding(dp(11), dp(11), dp(11), dp(11));
               GradientDrawable rowBg = new GradientDrawable();
               rowBg.setColor(0x22FFFFFF);
               rowBg.setCornerRadius(dp(14));
+              rowBg.setStroke(Math.max(1, dp(1)), 0x33FFFFFF);
               row.setBackground(rowBg);
+              row.setTag(fullPath);
+              TextView fileName = new TextView(this);
+              fileName.setText(disp);
+              fileName.setTextSize(13.5f);
+              fileName.setTextColor(0xff17334f);
+              // v3.28.7：长文件名单行省略（修复弹窗文字溢出）
+              fileName.setSingleLine(true);
+              fileName.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+              row.addView(fileName, new LinearLayout.LayoutParams(0, -2, 1f));
+              TextView check = new TextView(this);
+              check.setText("✓");
+              check.setTextSize(15);
+              check.setTypeface(null, 1);
+              check.setTextColor(0xff1f7d72);
+              check.setVisibility(View.GONE);
+              row.addView(check, new LinearLayout.LayoutParams(-2, -2));
               LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
               rowLp.bottomMargin = dp(6);
               list.addView(row, rowLp);
               row.setOnClickListener(v -> {
                   Haptics.perform(v);
-                  chosen[0] = DnaTools.WORK_ROOT + "/" + name;
+                  chosen[0] = fullPath;
                   for (int i = 0; i < list.getChildCount(); i++) {
                       View child = list.getChildAt(i);
-                      if (child instanceof TextView && child.getTag() == null) {
+                      if (child instanceof LinearLayout && child.getTag() instanceof String) {
                           GradientDrawable rb = new GradientDrawable();
                           rb.setColor(0x22FFFFFF);
                           rb.setCornerRadius(dp(14));
+                          rb.setStroke(Math.max(1, dp(1)), 0x33FFFFFF);
                           child.setBackground(rb);
+                          ((LinearLayout) child).getChildAt(1).setVisibility(View.GONE);
                       }
                   }
                   GradientDrawable sel = new GradientDrawable();
                   sel.setColor(0x3335A8C4);
                   sel.setCornerRadius(dp(14));
+                  sel.setStroke(Math.max(1, dp(1)), 0xFF35A8C4);
                   row.setBackground(sel);
+                  check.setVisibility(View.VISIBLE);
               });
           }
-          panel.addView(listScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+          LinearLayout.LayoutParams lsLp = new LinearLayout.LayoutParams(-1, 0, 1f);
+          lsLp.topMargin = dp(10);
+          panel.addView(listScroll, lsLp);
+          // ---- 手动路径输入（圆角玻璃框）+ 浏览按钮（v3.30.15：内置文件浏览器）----
+          LinearLayout manRow = new LinearLayout(this);
+          manRow.setOrientation(LinearLayout.HORIZONTAL);
+          manRow.setGravity(Gravity.CENTER_VERTICAL);
           EditText manual = new EditText(this);
           manual.setTextSize(13f);
           manual.setTextColor(0xff17334f);
@@ -1805,10 +1946,65 @@ public class MainActivity extends BaseActivity {
           manual.setHintTextColor(0xff8fa1b8);
           // v3.28.6：垂直居中（修复文字与框不居中）
           manual.setGravity(Gravity.CENTER_VERTICAL);
-          panel.addView(manual, new LinearLayout.LayoutParams(-1, dp(44)));
+          manual.setPadding(dp(12), 0, dp(12), 0);
+          GradientDrawable inputBg = new GradientDrawable();
+          inputBg.setColor(0x66FFFFFF);
+          inputBg.setCornerRadius(dp(14));
+          inputBg.setStroke(Math.max(1, dp(1)), 0x4DFFFFFF);
+          manual.setBackground(inputBg);
+          manRow.addView(manual, new LinearLayout.LayoutParams(0, dp(46), 1f));
+          Button browse = new Button(this, null, 0);
+          browse.setText("📂");
+          browse.setTextSize(15);
+          browse.setAllCaps(false);
+          browse.setMinWidth(0);
+          browse.setMinHeight(0);
+          browse.setGravity(Gravity.CENTER);
+          browse.setPadding(0, 0, 0, 0);
+          browse.setTextColor(0xff172b4d);
+          GradientDrawable browseBg = new GradientDrawable();
+          browseBg.setColor(0x59FFFFFF);
+          browseBg.setCornerRadius(dp(14));
+          browseBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
+          browse.setBackground(browseBg);
+          browse.setStateListAnimator(null);
+          browse.setOnClickListener(v -> {
+              Haptics.perform(v);
+              FileBrowserDialog.show(this, t("选择 ROM 压缩包", "Select ROM zip"),
+                      new String[]{".zip", ".zip2"}, "/storage/emulated/0",
+                      path -> manual.setText(path));
+          });
+          LinearLayout.LayoutParams brLp = new LinearLayout.LayoutParams(dp(46), dp(46));
+          brLp.leftMargin = dp(6);
+          manRow.addView(browse, brLp);
+          LinearLayout.LayoutParams manLp = new LinearLayout.LayoutParams(-1, -2);
+          manLp.topMargin = dp(4);
+          panel.addView(manRow, manLp);
+          // ---- 目标路径提示条 ----
+          // v3.30.16 修复：对齐原版 home.sh「dna unzip --delete $silence $DNA_DIR/$ZIP $DNA_DIR」，
+          // 目标始终是工程根目录（$DNA_DIR），dna 会自动在根目录创建 DNA_<zip名> 新工程；
+          // 之前解压到当前工程目录里是错误的（新工程被嵌进旧工程，且不参与工程名读取）
+          String target = DnaTools.WORK_ROOT;
+          TextView targetHint = new TextView(this);
+          targetHint.setText("➜ " + t("解压到 ", "Extract to ") + target
+                  + t("（自动创建 DNA_ 新工程）", " (auto-create DNA_ project)"));
+          targetHint.setTextSize(11f);
+          targetHint.setTextColor(0xff2f9c8f);
+          targetHint.setSingleLine(true);
+          targetHint.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+          targetHint.setPadding(dp(2), dp(8), dp(2), 0);
+          panel.addView(targetHint, new LinearLayout.LayoutParams(-1, -2));
+          // ---- 删除源文件开关（原版 home.sh：dna unzip --delete $silence，checkbox 值 0/1）----
+          CheckBox deleteSource = new CheckBox(this);
+          deleteSource.setText(t("解压后删除源 zip 文件", "Delete source zip after unzip"));
+          deleteSource.setTextSize(12.5f);
+          deleteSource.setTextColor(0xff17334f);
+          deleteSource.setPadding(dp(2), 0, 0, 0);
+          panel.addView(deleteSource, new LinearLayout.LayoutParams(-1, -2));
+          // ---- 按钮行 ----
           LinearLayout btnRow = new LinearLayout(this);
           btnRow.setOrientation(LinearLayout.HORIZONTAL);
-          btnRow.setPadding(0, dp(8), 0, 0);
+          btnRow.setPadding(0, dp(10), 0, 0);
           Button cancel = new Button(this, null, 0);
           cancel.setText(t("取消", "Cancel"));
           cancel.setAllCaps(false);
@@ -1823,7 +2019,7 @@ public class MainActivity extends BaseActivity {
           cancel.setBackground(cancelBg);
           cancel.setStateListAnimator(null);
           cancel.setOnClickListener(v -> dialog.dismiss());
-          btnRow.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
+          btnRow.addView(cancel, new LinearLayout.LayoutParams(0, dp(46), 1f));
           Button start = new Button(this, null, 0);
           start.setText(t("开始解压", "Unzip"));
           start.setAllCaps(false);
@@ -1833,7 +2029,7 @@ public class MainActivity extends BaseActivity {
           start.setPadding(0, 0, 0, 0);
           start.setBackgroundResource(R.drawable.button_green);
           start.setStateListAnimator(null);
-          LinearLayout.LayoutParams startLp = new LinearLayout.LayoutParams(0, dp(44), 1f);
+          LinearLayout.LayoutParams startLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
           startLp.leftMargin = dp(8);
           btnRow.addView(start, startLp);
           panel.addView(btnRow, new LinearLayout.LayoutParams(-1, -2));
@@ -1846,11 +2042,12 @@ public class MainActivity extends BaseActivity {
                   return;
               }
               dialog.dismiss();
-              // v3.28.3：已选工程 → 解压到工程目录（payload.bin 等直接可分解），否则解到 /sdcard/PDNA 根
-              String current = DnaTools.currentProject(this);
-              String target = current != null ? DnaTools.WORK_ROOT + "/" + current : DnaTools.WORK_ROOT;
+              // v3.30.16：解压目标固定为工程根目录，dna 自动创建 DNA_<zip名> 新工程（对齐原版 home.sh）
+              // v3.30.14 修复：原版 home.sh 是 --delete $silence（checkbox 值 0/1），
+              // 之前传 "false" 导致 dna 参数解析失败 → 立即退出码
               runDnaConsole(t("解压 ROM", "Unzip ROM"),
-                      "dna unzip --delete false " + DnaTools.quote(zip) + " " + DnaTools.quote(target));
+                      "dna unzip --delete " + (deleteSource.isChecked() ? "1" : "0") + " "
+                              + DnaTools.quote(zip) + " " + DnaTools.quote(target));
           });
           dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, dp(460)));
           showWide(dialog, 460);
@@ -1872,7 +2069,8 @@ public class MainActivity extends BaseActivity {
           panel.setOrientation(LinearLayout.VERTICAL);
           panel.setPadding(dp(16), dp(14), dp(16), dp(14));
           GradientDrawable bg = new GradientDrawable();
-          bg.setColor(0xF20b1622);
+          // v3.30.28：控制台弹窗换浅色（对齐解压ROM页面，弃用黑色终端风）
+          bg.setColor(0xF2e9f0f7);
           bg.setCornerRadius(dp(22));
           bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
           panel.setBackground(bg);
@@ -1880,7 +2078,7 @@ public class MainActivity extends BaseActivity {
           TextView console = new TextView(this);
           console.setTypeface(android.graphics.Typeface.MONOSPACE);
           console.setTextSize(11.5f);
-          console.setTextColor(0xFF9fd8b4);
+          console.setTextColor(0xff2c3e57);
           console.setPadding(dp(8), dp(8), dp(8), dp(8));
           LinearLayout consoleHead = new LinearLayout(this);
           consoleHead.setOrientation(LinearLayout.HORIZONTAL);
@@ -1889,23 +2087,23 @@ public class MainActivity extends BaseActivity {
           title.setText(titleText);
           title.setTextSize(15);
           title.setTypeface(null, 1);
-          title.setTextColor(0xff9fd8b4);
+          title.setTextColor(0xff17334f);
           consoleHead.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
           Button copyConsole = new Button(this, null, 0);
           copyConsole.setText("⧉ " + t("复制日志", "Copy"));
           copyConsole.setAllCaps(false);
           copyConsole.setTextSize(11.5f);
           copyConsole.setTypeface(null, 1);
-          copyConsole.setTextColor(0xff9fd8b4);
+          copyConsole.setTextColor(0xff1f7d72);
           copyConsole.setMinWidth(0);
           copyConsole.setMinHeight(0);
           // v3.28.7：显式居中
           copyConsole.setGravity(Gravity.CENTER);
           copyConsole.setPadding(dp(10), 0, dp(10), 0);
           GradientDrawable copyBg = new GradientDrawable();
-          copyBg.setColor(0x33000000);
+          copyBg.setColor(0x55FFFFFF);
           copyBg.setCornerRadius(dp(15));
-          copyBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          copyBg.setStroke(Math.max(1, dp(1)), 0x55FFFFFF);
           copyConsole.setBackground(copyBg);
           copyConsole.setStateListAnimator(null);
           copyConsole.setOnClickListener(v -> {
@@ -1936,14 +2134,14 @@ public class MainActivity extends BaseActivity {
           Button stop = new Button(this, null, 0);
           stop.setText(t("后台运行 / 关闭", "Background / Close"));
           stop.setAllCaps(false);
-          stop.setTextColor(0xff9fd8b4);
+          stop.setTextColor(0xff17334f);
           // v3.28.7：显式居中 + 零内边距
           stop.setGravity(Gravity.CENTER);
           stop.setPadding(0, 0, 0, 0);
           GradientDrawable stopBg = new GradientDrawable();
-          stopBg.setColor(0x33000000);
+          stopBg.setColor(0x55FFFFFF);
           stopBg.setCornerRadius(dp(16));
-          stopBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          stopBg.setStroke(Math.max(1, dp(1)), 0x55FFFFFF);
           stop.setBackground(stopBg);
           stop.setStateListAnimator(null);
           stop.setOnClickListener(v -> {
@@ -3525,7 +3723,9 @@ public class MainActivity extends BaseActivity {
               }
               new Thread(() -> {
                   try {
-                      String dirPath = "/storage/emulated/0/DsuManager/image";
+                      // v3.30.17 修复：对齐提取输出目录（v3.30.13 已改为 /storage/emulated/0/PDNA/image），
+                      // 之前指向旧目录 DsuManager/image → 报"目录为空或不存在"
+                      String dirPath = "/storage/emulated/0/PDNA/image";
                       
                       // 使用 Shell 命令列出文件
                       String lsResult = execShell("ls -1 " + dirPath);
@@ -3860,7 +4060,8 @@ public class MainActivity extends BaseActivity {
       }
 
       private void extractPartitions(List<AdbManager.PartitionInfo> partitions) {
-          String outputDir = "/storage/emulated/0/DsuManager/image";
+          // v3.30.13：提取镜像保存到 /storage/emulated/0/PDNA/image（不再用 DsuManager 文件夹）
+          String outputDir = "/storage/emulated/0/PDNA/image";
           
           // 构建分区列表提示（最多显示前8个）
           StringBuilder partListBuilder = new StringBuilder();
@@ -3963,32 +4164,39 @@ public class MainActivity extends BaseActivity {
       }
 
       private void choosePartitionImageFile() {
-          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-          intent.setType("application/octet-stream");
-          intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
-              "application/octet-stream", "application/img", "image/*", "*/*"
-          });
-          intent.addCategory(Intent.CATEGORY_OPENABLE);
-          startActivityForResult(Intent.createChooser(intent,
-              t("选择 .img 镜像文件", "Select .img image")),
-              REQUEST_FLASH_IMAGE_FILE);
+          // v3.30.15：内置文件浏览器替换系统 SAF（层级深、找文件麻烦）
+          FileBrowserDialog.show(this, t("选择 .img 镜像文件", "Select .img image"),
+                  new String[]{".img"}, "/storage/emulated/0",
+                  path -> preparePartitionImagePath(path));
       }
       
       private void preparePartitionImage(Uri fileUri) {
-          String selectedName = displayName(fileUri);
+          // v3.30.13：优先解析本地真实路径（root dd 可直接读取，无需复制缓存），
+          // 解析失败（非 primary 存储等）才回退复制到应用缓存
+          String imagePath = resolveRealPath(fileUri);
+          if (imagePath == null) imagePath = getPath(fileUri, "flash_temp.img");
+          String name = displayName(fileUri);
+          preparePartitionImagePath(imagePath, name);
+      }
+
+      /** v3.30.15：内置文件浏览器选中（真实绝对路径）—— root dd 直接读取 */
+      private void preparePartitionImagePath(String imagePath) {
+          preparePartitionImagePath(imagePath, new File(imagePath).getName());
+      }
+
+      private void preparePartitionImagePath(String imagePath, String selectedName) {
           if (selectedName == null || !selectedName.toLowerCase(Locale.ROOT).endsWith(".img")) {
               Toast.makeText(this, t("请选择 .img 镜像文件", "Please select a .img image"), Toast.LENGTH_SHORT).show();
               return;
           }
-          String imagePath = getPath(fileUri, "flash_temp.img");
-          
-          if (imagePath.isEmpty()) {
+          if (imagePath == null || imagePath.isEmpty()) {
               Toast.makeText(this, t("无法获取文件路径", "Cannot get file path"), Toast.LENGTH_SHORT).show();
               return;
           }
           pendingFlashImagePath = imagePath;
           pendingFlashImageName = selectedName;
-          partitionAppendLog(t("已选择刷入镜像: ", "Selected flash image: ") + selectedName + "\n" + imagePath + "\n");
+          partitionAppendLog("- " + t("已选择刷入镜像: ", "Selected flash image: ") + selectedName + "\n");
+          partitionAppendLog("- " + t("刷入文件路径：", "Flash file path: ") + imagePath + "\n");
           Toast.makeText(this, t("已选择镜像，请在列表中选择一个分区后点击“刷入”", "Image selected; choose one partition and tap Flash"), Toast.LENGTH_LONG).show();
       }
 
@@ -4009,10 +4217,11 @@ public class MainActivity extends BaseActivity {
                       });
                       
                       partitionAppendLog(t("=== 开始刷入分区 ===\n", "=== Start Flashing Partition ===\n"));
-                      partitionAppendLog(t("分区: ", "Partition: ") + partition.name + "\n");
-                      partitionAppendLog(t("镜像: ", "Image: ") + imagePath + "\n\n");
-                      
-                      partitionAppendLog(t("- 开始刷入 ", "- Start flashing ") + partition.name + t(" 分区\n", " partition\n"));
+                      // v3.30.13：日志按原版风格 —— 您当前选择了xx分区 / 刷入文件路径 / 开始刷写
+                      partitionAppendLog("- " + t("您当前选择了", "You selected ") + partition.name + t("分区\n", " partition\n"));
+                      partitionAppendLog("- " + t("刷入文件路径：", "Flash file path: ") + imagePath + "\n\n");
+
+                      partitionAppendLog("- " + t("开始刷写", "Start flashing ") + partition.name + t("分区\n", " partition\n"));
                       
                       // 执行 dd 命令
                       com.topjohnwu.superuser.Shell.Result result = com.topjohnwu.superuser.Shell.cmd(
@@ -4376,11 +4585,15 @@ public class MainActivity extends BaseActivity {
       }
 
       private void pickMoreRootfs() {
-          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-          intent.addCategory(Intent.CATEGORY_OPENABLE);
-          intent.setType("*/*");
-          intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/gzip", "application/x-gzip", "application/x-xz", "application/octet-stream"});
-          startActivityForResult(intent, PICK_ROOTFS);
+          // v3.30.15：内置文件浏览器替换系统 SAF
+          FileBrowserDialog.show(this, t("选择 Rootfs 镜像", "Select rootfs"),
+                  new String[]{".gz", ".xz", ".tgz", ".tar", ".img"}, "/storage/emulated/0",
+                  path -> {
+                      Intent intent = new Intent(this, LinuxTerminalActivity.class);
+                      intent.putExtra("local_install", true);
+                      intent.setData(Uri.fromFile(new File(path)));
+                      startActivity(intent);
+                  });
       }
 
       private LinearLayout buildSettingsPage() {
@@ -4479,27 +4692,28 @@ public class MainActivity extends BaseActivity {
           screenParams.setMargins(0, 0, 0, dp(18));
           page.addView(screenCard, screenParams);
           
-          // 关于入口 - 液态玻璃效果卡片
-          LiquidGlassPanel aboutCard = new LiquidGlassPanel(this);
-          aboutCard.setGravity(Gravity.CENTER_VERTICAL);
-          aboutCard.setPadding(dp(14), dp(6), dp(10), dp(6));
-          Button aboutButton = new Button(this);
-          aboutButton.setText(t("关于 Dsu 管理器", "About Dsu Manager"));
-          aboutButton.setAllCaps(false);
-          aboutButton.setTextColor(0xff1a3356);
-          aboutButton.setTextSize(15);
-          aboutButton.setTypeface(null, 1);
-          aboutButton.setBackgroundColor(Color.TRANSPARENT);
-          aboutButton.setOnClickListener(v -> {
+          // v3.30.23：「关于 Dsu 管理器」入口已并入「特别鸣谢」页（ThanksActivity）
+          // v3.30.21：特别鸣谢入口（对齐原版 DNA thanks 声明：不分先后，如有遗忘望提醒）
+          LiquidGlassPanel thanksCard = new LiquidGlassPanel(this);
+          thanksCard.setGravity(Gravity.CENTER_VERTICAL);
+          thanksCard.setPadding(dp(14), dp(6), dp(10), dp(6));
+          Button thanksButton = new Button(this);
+          thanksButton.setText("❤  " + t("特别鸣谢", "Credits"));
+          thanksButton.setAllCaps(false);
+          thanksButton.setTextColor(0xff1a3356);
+          thanksButton.setTextSize(15);
+          thanksButton.setTypeface(null, 1);
+          thanksButton.setBackgroundColor(Color.TRANSPARENT);
+          thanksButton.setOnClickListener(v -> {
               Haptics.perform(v);
-              Intent intent = new Intent(this, AboutActivity.class);
-              startActivity(intent);
+              Intent thanksIntent = new Intent(this, ThanksActivity.class);
+              startActivity(thanksIntent);
               overridePendingTransition(R.anim.flip_in, R.anim.flip_out);
           });
-          aboutCard.addView(aboutButton, new LinearLayout.LayoutParams(-1, dp(48)));
-          LinearLayout.LayoutParams aboutParams = new LinearLayout.LayoutParams(-1, dp(60));
-          aboutParams.setMargins(0, 0, 0, dp(18));
-          page.addView(aboutCard, aboutParams);
+          thanksCard.addView(thanksButton, new LinearLayout.LayoutParams(-1, dp(48)));
+          LinearLayout.LayoutParams creditParams = new LinearLayout.LayoutParams(-1, dp(60));
+          creditParams.setMargins(0, 0, 0, dp(18));
+          page.addView(thanksCard, creditParams);
           
          TextView updateTitle = text(t("更新", "Updates"), 16, Color.rgb(35, 126, 91));
          updateTitle.setTypeface(null, 1);
@@ -4703,18 +4917,7 @@ public class MainActivity extends BaseActivity {
          buildUi();
      }
 
-      private LinearLayout buildAboutPage() {
-         LinearLayout page = page(t("关于 Dsu 管理器", "About Dsu Manager"));
-         TextView about = text(t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.8", "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.8"), 15, Color.rgb(53, 66, 94));
-          about.setText(about.getText().toString().replace("3.5.8", BuildConfig.VERSION_NAME));
-          about.setGravity(Gravity.TOP);
-         about.setPadding(dp(18), dp(18), dp(18), dp(18));
-          about.setBackgroundResource(R.drawable.liquid_glass_panel);
-         page.addView(about, new LinearLayout.LayoutParams(-1, -2));
-         return page;
-     }
-
-    private void applyKeepScreenOn() {
+     private void applyKeepScreenOn() {
         if (keepScreenOn) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
@@ -4751,18 +4954,7 @@ public class MainActivity extends BaseActivity {
         }
     }
 
-    private void showAboutDialog() {
-           String about = t("Dsu GSI管理器\n\n功能说明\n本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案。\n\n支持安装 DSU 镜像的 img 无损替换。\n支持 system、system_ext、product、vendor、odm、my_preload 等镜像。\n替换修改后的 img 镜像之后直接开机，无需重新过开机引导。直接开机使用修复 bug 后的 Dsu 系统。\n\n使用安卓系统：\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\n安装功能参考 DSU-Sideloader 项目：\nhttps://github.com/VegaBobo/DSU-Sideloader\n\n特别感谢酷安用户及 GitHub 用户 yangFenTuoZi 开发 Dsu 功能修改 img 无损替换功能。\n如有侵权，请联系作者，我们会及时删除相关内容。\n\n作者：小你可兰\n管理器版本：3.5.8",
-                "Dsu GSI Manager\n\nFeatures\nThe GSI installation flow uses the DSU-Sideloader project approach.\n\nSupports lossless replacement of img files for installed DSU images.\nSupports system, system_ext, product, vendor, odm, my_preload and other images.\nThe device can boot directly after replacing a modified img image without repeating the setup wizard.\n\nAndroid system components:\n/system/priv-app/DynamicSystemInstallationService/DynamicSystemInstallationService.apk\n/system/bin/gsi_tool\n/system/bin/gsid\n\nInstallation reference:\nhttps://github.com/VegaBobo/DSU-Sideloader\n\nSpecial thanks to Coolapk user and GitHub user yangFenTuoZi for developing the Dsu img lossless replacement feature.\nIf any content infringes your rights, please contact the author and it will be removed promptly.\n\nAuthor: Xiaonikelan\nManager version: 3.5.8");
-        about = about.replace("3.5.8", BuildConfig.VERSION_NAME);
-        new AlertDialog.Builder(this)
-                .setTitle(t("关于 Dsu 管理器", "About Dsu Manager"))
-                .setMessage(about)
-                .setPositiveButton(t("确定", "OK"), null)
-                .show();
-    }
-
-    private void refreshStatus(){
+     private void refreshStatus(){
          if (!rootAuthorized) {
              gsiStatus.setText(t("需要 ROOT 权限", "ROOT access required"));
              detailText.setText(t("请先授予 ROOT 权限后使用操作中心。", "Grant ROOT access before using the action center."));
@@ -4907,11 +5099,19 @@ public class MainActivity extends BaseActivity {
          if (!checkStorageSpaceWithWarning()) {
              return;
          }
-         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-         i.setType("application/zip");
-         i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/octet-stream"});
-         i.addCategory(Intent.CATEGORY_OPENABLE);
-         startActivityForResult(i, PICK_ZIP);
+         pickGsiZipViaBrowser();
+     }
+
+     /** v3.30.15：内置文件浏览器选择 GSI 安装包（替换系统 SAF） */
+     private void pickGsiZipViaBrowser() {
+         FileBrowserDialog.show(this, t("选择 GSI 安装包", "Select GSI zip"),
+                 new String[]{".zip", ".zip2"}, "/storage/emulated/0", path -> {
+                     pendingInstallZip = Uri.fromFile(new File(path));
+                     installedZipName = new File(path).getName();
+                     getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply();
+                     installZipLabel.setText(installedZipName);
+                     confirmInstallButton.setEnabled(true);
+                 });
      }
      
      private boolean checkStorageSpaceWithWarning() {
@@ -4938,12 +5138,8 @@ public class MainActivity extends BaseActivity {
                      .setPositiveButton(t("仍要继续", "Continue Anyway"), (d, w) -> {
                          shouldContinue[0] = true;
                          d.dismiss();
-                         // 继续选择文件
-                         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                         i.setType("application/zip");
-                         i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/octet-stream"});
-                         i.addCategory(Intent.CATEGORY_OPENABLE);
-                         startActivityForResult(i, PICK_ZIP);
+                         // 继续选择文件（v3.30.15：内置文件浏览器）
+                         pickGsiZipViaBrowser();
                      })
                      .setNegativeButton(t("取消", "Cancel"), null)
                      .create();
@@ -4993,7 +5189,24 @@ public class MainActivity extends BaseActivity {
          installOptionsPanel.setVisibility(View.GONE);
          installWithDsuSideloaderFlow(pendingInstallZip);
      }
-     private void chooseImage(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.setType("image/*"); i.addCategory(Intent.CATEGORY_OPENABLE); startActivityForResult(i,PICK_IMAGE); }
+     private void chooseImage(){
+         // v3.30.15：内置文件浏览器替换系统 SAF（root 复制到 cache 后解码，支持任意路径）
+         FileBrowserDialog.show(this, t("选择 Logo 图片", "Select logo image"),
+                 new String[]{".png", ".jpg", ".jpeg", ".webp", ".bmp"}, "/storage/emulated/0",
+                 path -> {
+                     File target = new File(getCacheDir(), "logo.img");
+                     com.topjohnwu.superuser.Shell.cmd(
+                             "cp -f " + DnaTools.quote(path) + " " + DnaTools.quote(target.getAbsolutePath())
+                     ).exec();
+                     Bitmap bitmap = android.graphics.BitmapFactory.decodeFile(target.getAbsolutePath());
+                     if (bitmap != null) {
+                         logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28)));
+                         logoCard.setClipToOutline(true);
+                     } else {
+                         toast(t("无法读取图片", "Cannot read image"));
+                     }
+                 });
+     }
      @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK)return; if((r==402||r==403||r==404) && otgFlashHelper != null){ otgFlashHelper.onActivityResult(r,c,d); return; } if(d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } else if(r==PICK_FASTBOOT_IMAGE){ String path=getPath(u,"fastboot.img"); if(!path.isEmpty()){ if(fastbootImagePathInput != null) fastbootImagePathInput.setText(path); else if(fastbootFilePathInput != null) fastbootFilePathInput.setText(path); } } else if(r==REQUEST_FLASH_IMAGE_FILE){ preparePartitionImage(u); } else if(r==REQUEST_OTG_SINGLE_IMAGE){ String path=getPath(u,"otg_single.img"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareSingleImage(path); } } else if(r==REQUEST_OTG_FULL_PACKAGE){ String path=getPath(u,"otg_full.zip"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.extractAndScanOta(path); } } else if(r==REQUEST_OTG_ADB_PUSH){ String path=getPath(u,"otg_push_file"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareAdbPush(path); } } }
 
      private String displayName(Uri uri){
@@ -5002,7 +5215,23 @@ public class MainActivity extends BaseActivity {
          } catch (Exception ignored) { }
          return uri.getLastPathSegment() == null ? t("未命名 ZIP", "Unnamed ZIP") : uri.getLastPathSegment();
      }
-    private String getPath(Uri u,String name){ try { InputStream in=getContentResolver().openInputStream(u); File f=new File(getCacheDir(),name); FileOutputStream out=new FileOutputStream(f); byte[] b=new byte[8192]; int n; while((n=in.read(b))>0)out.write(b,0,n); in.close();out.close();return f.getAbsolutePath(); }catch(Exception e){return "";} }
+    private String getPath(Uri u,String name){ try { InputStream in=getContentResolver().openInputStream(u); File f=new File(getCacheDir(),name); FileOutputStream out=new FileOutputStream(f); byte[] b=new byte[8192]; int n; while((n=in.read(b))>0)out.write(b,0,n); in.close();out.close();return f.getAbsolutePath(); }catch(Exception e){return ""; } }
+
+    /** v3.30.13：解析 SAF Uri 的本地真实路径（/storage/emulated/0/...），root 可直接读取；
+     *  非 primary 存储或文件不存在时返回 null（调用方回退缓存复制） */
+    private String resolveRealPath(Uri uri) {
+        try {
+            if (!"content".equals(uri.getScheme())) return null;
+            if (!"com.android.externalstorage.documents".equals(uri.getAuthority())) return null;
+            String docId = android.provider.DocumentsContract.getDocumentId(uri);
+            String[] split = docId.split(":");
+            if (split.length >= 2 && "primary".equals(split[0])) {
+                String p = Environment.getExternalStorageDirectory() + "/" + split[1];
+                return new File(p).isFile() ? p : null;
+            }
+        } catch (Exception ignored) { }
+        return null;
+    }
     private void installWithDsuSideloaderFlow(Uri source){
          stagesClear();
          installStage.setText(t("正在安装 GSI", "Installing GSI"));
@@ -5032,7 +5261,19 @@ public class MainActivity extends BaseActivity {
         try (Cursor cursor = getContentResolver().query(source, new String[]{OpenableColumns.SIZE}, null, null, null)) {
             if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) total = cursor.getLong(0);
         } catch (Exception ignored) { }
-        try (InputStream input = getContentResolver().openInputStream(source);
+        // v3.30.15：file:// 来源（内置文件浏览器）——app 无直读权限时经 su cat 流式读取（零额外占用）；
+        // 可直读时仍走 Java 直读（同一路径 faster）
+        boolean fileScheme = "file".equals(source.getScheme());
+        String filePath = fileScheme ? source.getPath() : null;
+        if (fileScheme && filePath != null) {
+            File f = new File(filePath);
+            if (f.isFile()) total = f.length();
+            if (!f.canRead()) filePath = null; // 无权限 → 走 su cat
+        }
+        final String suPath = fileScheme && filePath == null ? source.getPath() : null;
+        try (InputStream input = suPath != null ? RootShell.INSTANCE.openStream(suPath)
+                : (filePath != null ? new java.io.FileInputStream(filePath)
+                : getContentResolver().openInputStream(source));
              FileOutputStream output = new FileOutputStream(target)) {
             if (input == null) return "";
             byte[] buffer = new byte[1024 * 1024];
@@ -5506,11 +5747,14 @@ public class MainActivity extends BaseActivity {
           replacementBackingImage = backingImage;
           replacementSlot = backingSlot;
          replacementImagePath = imagePath;
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.setType("*/*");
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        startActivityForResult(intent, PICK_REPLACEMENT);
-    }
+         // v3.30.15：内置文件浏览器替换系统 SAF
+         FileBrowserDialog.show(this, t("选择替换镜像", "Select replacement image"),
+                 new String[]{".img", ".raw"}, "/storage/emulated/0",
+                 path -> {
+                     if (replacementPartition != null)
+                         replaceImage(Uri.fromFile(new File(path)), replacementPartition);
+                 });
+      }
        private void replaceImage(Uri source, String partition){
           String selectedName = displayName(source).toLowerCase(java.util.Locale.US);
           if (!selectedName.endsWith(".img") && !selectedName.endsWith(".raw")) {

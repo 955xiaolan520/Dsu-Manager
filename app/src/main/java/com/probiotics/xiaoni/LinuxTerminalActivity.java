@@ -117,7 +117,23 @@ public class LinuxTerminalActivity extends BaseActivity {
          } catch (Exception ignored) { }
      }
 
-     private void pickRootfs() { Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("*/*"); intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/gzip", "application/x-gzip", "application/x-xz", "application/octet-stream"}); startActivityForResult(intent, PICK_ROOTFS); }
+     private void pickRootfs() {
+         // v3.30.15：内置文件浏览器替换系统 SAF
+         FileBrowserDialog.show(this, "选择 Rootfs 镜像",
+                 new String[]{".gz", ".xz", ".tgz", ".tar", ".img"}, "/storage/emulated/0",
+                 path -> importRootfsPath(path));
+     }
+
+     /** v3.30.15：真实路径导入 —— app 无直读权限时 root 复制到 cache 再导入 */
+     private void importRootfsPath(String path) {
+         java.io.File f = new java.io.File(path);
+         if (f.canRead()) { importRootfs(android.net.Uri.fromFile(f)); return; }
+         java.io.File cache = new java.io.File(getCacheDir(), "local-rootfs-pick");
+         com.topjohnwu.superuser.Shell.cmd(
+                 "cp -f '" + path + "' '" + cache.getAbsolutePath() + "'").exec();
+         if (cache.isFile() && cache.length() > 0) importRootfs(android.net.Uri.fromFile(cache));
+         else if (status != null) status.setText("无法读取文件: " + path);
+     }
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) { super.onActivityResult(requestCode, resultCode, data); if (requestCode == PICK_ROOTFS && resultCode == RESULT_OK && data != null && data.getData() != null) importRootfs(data.getData()); }
       private void importRootfs(Uri uri) { status.setText("正在导入本地 rootfs..."); worker.execute(() -> { File temporaryArchive = new File(LinuxImages.root(this), "local-rootfs.part"); try { String name = String.valueOf(uri).toLowerCase(Locale.US); String suffix = name.contains("xz") ? ".tar.xz" : ".tar.gz"; File archive = new File(LinuxImages.root(this), "local-rootfs" + suffix); LinuxImages.root(this).mkdirs(); try (InputStream in = getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(temporaryArchive)) { if (in == null) throw new IOException("无法读取文件"); byte[] buffer = new byte[65536]; int n; while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n); } if (!temporaryArchive.renameTo(archive)) throw new IOException("无法保存本地压缩包"); File destination = LinuxImages.environment(this, LinuxImages.LOCAL); extractToTemporary(archive, destination); snapshotPackages(destination); runOnUiThread(() -> { if (status != null) { status.setText("本地 rootfs 已安装"); refreshList(); } }); } catch (Exception e) { deleteTree(temporaryArchive); runOnUiThread(() -> { if (status != null) status.setText("本地安装失败: " + e.getMessage()); }); } }); }
 

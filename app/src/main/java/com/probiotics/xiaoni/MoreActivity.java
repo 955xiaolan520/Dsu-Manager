@@ -44,7 +44,32 @@ public final class MoreActivity extends BaseActivity {
          private String chrootCommand(String root, String inner) { String env = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root TERM=xterm-256color"; return "ROOT=" + quote(root) + "; SHELL=/bin/sh; [ -e \"$ROOT$SHELL\" ] || SHELL=/usr/bin/sh; /system/bin/toybox chroot \"$ROOT\" /usr/bin/env " + env + " \"$SHELL\" -c " + quote(inner); }
           private String runRootCommand(String command) { try { java.lang.Process process = new ProcessBuilder("/system/bin/su", "-c", command).redirectErrorStream(true).start(); StringBuilder output = new StringBuilder(); Thread reader = new Thread(() -> { try (java.io.InputStream input = process.getInputStream()) { byte[] buffer = new byte[4096]; int count; while ((count = input.read(buffer)) != -1) { if (output.length() < 131072) output.append(new String(buffer, 0, Math.min(count, 131072 - output.length()), java.nio.charset.StandardCharsets.UTF_8)); } } catch (Exception ignored) { } }); reader.start(); if (!process.waitFor(10, java.util.concurrent.TimeUnit.MINUTES)) process.destroyForcibly(); reader.join(1000); return output.toString(); } catch (Exception e) { return ""; } }
          private String quote(String value) { return "'" + value.replace("'", "'\\''") + "'"; }
-    private void pickRootfs() { Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("*/*"); intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/gzip", "application/x-gzip", "application/x-xz", "application/octet-stream"}); startActivityForResult(intent, PICK_ROOTFS); }
+    private void pickRootfs() {
+        // v3.30.15：内置文件浏览器替换系统 SAF
+        FileBrowserDialog.show(this, "选择 Rootfs 镜像",
+                new String[]{".gz", ".xz", ".tgz", ".tar", ".img"}, "/storage/emulated/0",
+                path -> {
+                    // app 无直读权限时 root 复制到 cache 再导入
+                    java.io.File f = new java.io.File(path);
+                    android.net.Uri uri;
+                    if (f.canRead()) {
+                        uri = android.net.Uri.fromFile(f);
+                    } else {
+                        java.io.File cache = new java.io.File(getCacheDir(), "local-rootfs-pick");
+                        runRootCommand("cp -f " + quote(path) + " " + quote(cache.getAbsolutePath()));
+                        if (!(cache.isFile() && cache.length() > 0)) {
+                            Toast.makeText(this, "无法读取文件: " + path, Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        uri = android.net.Uri.fromFile(cache);
+                    }
+                    Intent intent = new Intent(this, LinuxTerminalActivity.class);
+                    intent.putExtra("local_install", true);
+                    intent.setData(uri);
+                    refreshWhenResumed = true;
+                    startActivity(intent);
+                });
+    }
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) { super.onActivityResult(requestCode, resultCode, data); if (requestCode == PICK_ROOTFS && resultCode == RESULT_OK && data != null && data.getData() != null) { Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(data.getData()); refreshWhenResumed = true; startActivity(intent); } }
      private void openLinuxTerminalCatalog() { refreshWhenResumed = true; startActivity(new Intent(this, LinuxTerminalActivity.class)); }
        private void openInstalled(String id) { LinuxImages.Image image = findImage(id); Intent intent = new Intent(this, LinuxTerminalActivity.terminalActivity(id)); intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT); if (!LinuxTerminalActivity.hasActiveTerminal(id)) { intent.putExtra("open_image", id); intent.putExtra("open_terminal", true); if (image != null && !LinuxImages.environment(this, image).isDirectory() && LinuxImages.archive(this, image).isFile()) intent.putExtra("restore_image", true); } refreshWhenResumed = true; startActivity(intent); }

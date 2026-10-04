@@ -767,10 +767,78 @@ public final class PayloadDumperActivity extends BaseActivity {
     }
     
     private void pickFile() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        startActivityForResult(intent, PICK_FILE);
+        // v3.30.15：内置文件浏览器替换系统 SAF（真实路径直接用，无需 getRealPath 中转）
+        FileBrowserDialog.show(this, "选择 payload.bin / OTA zip",
+                new String[]{".bin", ".zip", ".zip2"}, "/storage/emulated/0",
+                path -> handleLocalFilePath(path));
+    }
+
+    /** v3.30.15：内置文件浏览器选中 —— 真实绝对路径（root 可读；PayloadExtractor 直接打开） */
+    private void handleLocalFilePath(String path) {
+        String fileName = path.substring(path.lastIndexOf('/') + 1);
+        selectedFileName = fileName;
+        localFileNameDisplay.setText("已选择: " + fileName + "\n\n文件路径: " + path);
+        localFileNameDisplay.setTextColor(0xff17334f);
+        localLogDisplay.setText("");
+        logLocal("已选择文件: " + fileName);
+        status.setText("正在处理文件...");
+        executor.execute(() -> {
+            try {
+                logLocal("正在处理文件...");
+                closeOpenedFd();
+                currentInput = path;
+                logLocal("文件路径: " + path);
+                mainHandler.post(() -> {
+                    status.setText("正在解析...");
+                    localPartitionsList.removeAllViews();
+                });
+                Thread.sleep(500);
+                logLocal("正在打开 Payload...");
+                if (extractor != null) {
+                    extractor.close();
+                }
+                extractor = new PayloadExtractor();
+                boolean success = extractor.open(path);
+                String openedPath = path;
+                if (!success) {
+                    // v3.30.15 兜底：app 无直读权限（未授所有文件访问）→ root 复制到 cache 再打开
+                    logLocal("直读失败，复制到缓存重试...");
+                    File cacheFile = new File(getCacheDir(), "payload_browser_input");
+                    com.topjohnwu.superuser.Shell.cmd(
+                            "cp -f '" + path + "' '" + cacheFile.getAbsolutePath() + "'").exec();
+                    if (cacheFile.isFile() && cacheFile.length() > 0) {
+                        openedPath = cacheFile.getAbsolutePath();
+                        currentInput = openedPath;
+                        logLocal("文件路径: " + openedPath);
+                        extractor = new PayloadExtractor();
+                        success = extractor.open(openedPath);
+                    }
+                }
+                if (!success) {
+                    logLocal("错误: 无法打开文件");
+                    mainHandler.post(() -> {
+                        status.setText("打开失败");
+                        toast("无法打开文件");
+                    });
+                    return;
+                }
+                logLocal("成功打开，正在列出分区...");
+                List<PayloadExtractor.PartitionInfo> partitions = extractor.listPartitions(true);
+                logLocal("找到 " + partitions.size() + " 个分区");
+                mainHandler.post(() -> {
+                    displayPartitionsLocal(partitions);
+                    status.setText("已解析 " + partitions.size() + " 个分区");
+                });
+            } catch (Exception e) {
+                logLocal("异常: " + e.getClass().getSimpleName());
+                logLocal("消息: " + e.getMessage());
+                android.util.Log.e("PayloadDumper", "处理文件失败", e);
+                mainHandler.post(() -> {
+                    status.setText("处理失败");
+                    toast("处理文件失败: " + e.getMessage());
+                });
+            }
+        });
     }
     
     @Override

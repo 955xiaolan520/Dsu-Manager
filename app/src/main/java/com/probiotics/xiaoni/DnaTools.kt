@@ -80,7 +80,8 @@ object DnaTools {
     @JvmStatic
     fun currentProject(ctx: Context): String? {
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_CURRENT, null)?.takeIf { it.startsWith("PDMA_") }
+        // v3.30.18：工程前缀统一为 PDNA_（兼容识别迁移前的 PDMA_ 旧值）
+        return prefs.getString(KEY_CURRENT, null)?.takeIf { it.startsWith("PDNA_") || it.startsWith("PDMA_") }
     }
 
     @JvmStatic
@@ -90,7 +91,7 @@ object DnaTools {
         // 同步 DNA.ini（原版 TMPDIR/DNA.ini 机制，dna 二进制可能读取）
         runCatching {
             RootShell.exec(
-                if (name.startsWith("PDMA_"))
+                if (name.startsWith("PDNA_") || name.startsWith("PDMA_"))
                     "mkdir -p " + quote("$TMP_ROOT/$name") + "; echo " + quote(name) + " > $DNA_INI"
                 else "rm -f $DNA_INI", timeoutMs = 10000)
         }
@@ -113,13 +114,13 @@ object DnaTools {
         RootShell.exec("[ -d '$path' ] && echo __YES__ || echo __NO__", timeoutMs = 10000)
             .stdout.contains("__YES__")
 
-    /** 列出全部工程（PDMA_ 开头目录），返回工程名列表 */
+    /** 列出全部工程（PDNA_ 开头目录；v3.30.18 兼容迁移前的 PDMA_ 旧目录），返回工程名列表 */
     @JvmStatic
     fun listProjects(): List<String> {
         val r = RootShell.exec("ls -1 '$WORK_ROOT' 2>/dev/null", timeoutMs = 15000)
         return r.stdout.lineSequence()
             .map { it.trim() }
-            .filter { it.startsWith("PDMA_") }
+            .filter { it.startsWith("PDNA_") || it.startsWith("PDMA_") }
             .sorted()
             .toList()
     }
@@ -136,11 +137,11 @@ object DnaTools {
             .trim('_', ' ')
             .take(40)
         if (clean.isEmpty()) return "" to "工程名不能为空（仅支持中英文、数字、点、横杠）"
-        var final = "PDMA_$clean"
+        var final = "PDNA_$clean"
         val stamp = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.US)
             .format(java.util.Date())
         if (dirExists("$WORK_ROOT/$final") || dirExists("$TMP_ROOT/$final")) {
-            final = "PDMA_${clean}_$stamp"
+            final = "PDNA_${clean}_$stamp"
         }
         val pro = "$WORK_ROOT/$final"
         val dro = "$TMP_ROOT/$final"
@@ -162,7 +163,7 @@ object DnaTools {
     /** 删除工程（root 删除 /sdcard 与 /data 双目录 + 中转目录，原版 project.sh SC 逻辑） */
     @JvmStatic
     fun deleteProject(name: String): Boolean {
-        if (!name.startsWith("PDMA_")) return false
+        if (!name.startsWith("PDNA_") && !name.startsWith("PDMA_")) return false
         val script = buildString {
             append("rm -rf ").append(quote("$WORK_ROOT/$name")).append(" ")
                 .append(quote("$TMP_ROOT/$name")).append(" /data/local/tmp/dna-tools/").append(name).append("\n")
@@ -198,12 +199,44 @@ object DnaTools {
             "zst" -> files.filter { it.nameEnds(".zst") || it.nameEnds(".zstd") }
             "zip" -> files.filter { it.nameEnds(".zip") || it.nameEnds(".zip2") }
             "bin" -> files.filter { it.nameEnds("payload.bin") }
+            // v3.30.13：分解 bin 同时列出 OTA zip（payload_extract 原生支持 zip 内 payload.bin）
+            "bin_zip" -> files.filter { it.nameEnds("payload.bin") || it.nameEnds(".zip") }
             else -> files
         }
     }
 
     private fun String.nameEnds(suffix: String): Boolean =
         length >= suffix.length && substring(length - suffix.length).equals(suffix, ignoreCase = true)
+
+    // ============ v3.30.15：内置文件浏览器（root 列目录，替换系统 SAF 选择器） ============
+
+    /** 文件浏览器条目（Java 侧 getter：getName / isDir / getSize） */
+    class BrowseEntry(val name: String, val isDir: Boolean, val size: Long)
+
+    /** root 列目录：目录+文件+大小（隐藏文件不显示；目录在前、名称不区分大小写排序）。
+     *  stat 优先（带大小），失败回退 ls -1p。
+     *  v3.30.16 修复：stat 的 %n 输出的是完整路径（glob 展开后），
+     *  必须取 basename，否则浏览器点目录会拼出 /a//a/b 双重路径导致读取失败 */
+    @JvmStatic
+    fun browseDir(path: String): List<BrowseEntry> {
+        val r = RootShell.exec("stat -c '%F|%s|%n' '$path'/* 2>/dev/null", timeoutMs = 20000)
+        if (r.stdout.isNotBlank()) {
+            val entries = r.stdout.lines().mapNotNull { line ->
+                val parts = line.split("|", limit = 3)
+                if (parts.size < 3) return@mapNotNull null
+                BrowseEntry(parts[2].trim().substringAfterLast('/'),
+                        parts[0].trim() == "directory", parts[1].trim().toLongOrNull() ?: 0L)
+            }
+            if (entries.isNotEmpty()) {
+                return entries.sortedWith(
+                    compareByDescending<BrowseEntry> { it.isDir }.thenBy { it.name.lowercase() })
+            }
+        }
+        val r2 = RootShell.exec("ls -1p '$path' 2>/dev/null", timeoutMs = 15000)
+        return r2.stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            .map { n -> BrowseEntry(n.trimEnd('/'), n.endsWith("/"), 0L) }
+            .sortedWith(compareByDescending<BrowseEntry> { it.isDir }.thenBy { it.name.lowercase() })
+    }
 
     /** 工程内文件清单（/sdcard/PDNA/工程名）：type 过滤扩展名，"dir" 列子目录，"split_sparse" 列分段镜像前缀 */
     @JvmStatic
@@ -217,6 +250,29 @@ object DnaTools {
     fun listDroDirs(project: String?): List<String> {
         if (project == null) return emptyList()
         return listDirEntries("$TMP_ROOT/$project", "dir")
+    }
+
+    // v3.30.11：原版 more.xml 其他功能脚本（assets 内置原版 sh 原样释放，root source 执行，与原版行为 100% 一致）
+    private val SCRIPTS = arrayOf(
+        "del_vbmeta.sh", "patch_selinux.sh", "my_partition_merge.sh", "partition_merge.sh",
+        "merge_superchunk.sh"
+    )
+
+    /** 释放原版 sh 到 filesDir/dna-scripts/ 并返回目录（执行时 export 参数后 source） */
+    @JvmStatic
+    fun scriptsDir(ctx: Context): File {
+        val dir = File(ctx.filesDir, "dna-scripts")
+        if (!dir.isDirectory) dir.mkdirs()
+        for (name in SCRIPTS) {
+            val out = File(dir, name)
+            if (out.isFile) continue
+            runCatching {
+                ctx.assets.open("dna-scripts/$name").use { input ->
+                    out.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+        }
+        return dir
     }
 
     /**
@@ -256,6 +312,7 @@ object DnaTools {
     fun ensure(ctx: Context, onLog: ((String) -> Unit)? = null): File? {
         // v3.28.8：零 patch 方案 —— 伪装包目录（getcwd 校验）必须先就位
         if (!ensureFakeHome()) return null
+        migrateLegacyPrefix(ctx)
         val relay = relayDir(ctx)
         if (selfTest(relay)) {
             activeDir = relay
@@ -270,6 +327,31 @@ object DnaTools {
             return synced
         }
         return null
+    }
+
+    // v3.30.18：工程前缀 PDMA_ → PDNA_ 统一迁移（旧版 App 创建的 PDMA_ 工程改名为 PDNA_）
+    @Volatile
+    private var legacyPrefixMigrated = false
+
+    /** 一次性迁移：两处根目录 PDMA_* 目录 → PDNA_*（目标不存在才改，幂等）+ DNA.ini + prefs 当前工程同步 */
+    private fun migrateLegacyPrefix(ctx: Context) {
+        if (legacyPrefixMigrated) return
+        val script = buildString {
+            append("for __d in '").append(WORK_ROOT).append("' '").append(TMP_ROOT).append("'; do cd \"\$__d\" 2>/dev/null")
+            append(" && for __f in PDMA_*; do [ -e \"\$__f\" ] && [ ! -e \"PDNA_\${__f#PDMA_}\" ]")
+            append(" && mv -f \"\$__f\" \"PDNA_\${__f#PDMA_}\"; done; done\n")
+            append("sed -i 's/^PDMA_/PDNA_/' ").append(DNA_INI).append(" 2>/dev/null\n")
+            append("echo __DNA_OK__")
+        }
+        val r = runCatching { RootShell.exec(script, timeoutMs = 60000) }.getOrNull()
+        if (r != null && r.success) legacyPrefixMigrated = true
+        // prefs 里的当前工程名同步替换（本地操作，始终执行）
+        runCatching {
+            val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val cur = prefs.getString(KEY_CURRENT, null)
+            if (cur != null && cur.startsWith("PDMA_"))
+                prefs.edit().putString(KEY_CURRENT, "PDNA_" + cur.removePrefix("PDMA_")).apply()
+        }
     }
 
     // 从 nativeLibraryDir 释放全部工具（版本变化时自动重释放）
@@ -379,6 +461,9 @@ object DnaTools {
         val pro = project?.let { "$WORK_ROOT/$it" } ?: WORK_ROOT
         val dro = project?.let { "$TMP_ROOT/$it" } ?: TMP_ROOT
         val script = buildString {
+            // v3.30.29：stderr 并入 stdout（lpmake 的 liblp 日志「lpmake I ... builder.cpp」与
+            // 「Invalid sparse file format」都走 stderr，此前被直接丢弃 → 合成 super 日志缺关键输出）
+            append("exec 2>&1\n")
             append("export LD_LIBRARY_PATH='").append(dir.absolutePath).append("'\n")
             append("export PATH='").append(dir.absolutePath).append("':\$PATH\n")
             // v3.28.3：对齐原版 executor.sh 完整环境（DNA_DIR / DNA_TMP / DNA_PRO / DNA_DRO / TMPDIR）
@@ -398,9 +483,10 @@ object DnaTools {
             }
             append(command.trim()).append("\n")
             append("__rc=\$?\n")
-            // dna 二进制内部固定使用 DNA_ 前缀，命令结束后两处目录统一重命名为 PDMA_ 工程前缀
+            // dna 二进制内部固定使用 DNA_ 前缀，命令结束后两处目录统一重命名为 PDNA_ 工程前缀
+            // （v3.30.18：PDMA_ → PDNA_，工程前缀与根目录 /sdcard/PDNA 命名一致）
             append("for __d in '").append(WORK_ROOT).append("' '").append(TMP_ROOT).append("'; do cd \"\$__d\" 2>/dev/null")
-            append(" && for __f in DNA_*; do [ -e \"\$__f\" ] && mv -f \"\$__f\" \"PDMA_\${__f#DNA_}\"; done; done; cd /\n")
+            append(" && for __f in DNA_*; do [ -e \"\$__f\" ] && mv -f \"\$__f\" \"PDNA_\${__f#DNA_}\"; done; done; cd /\n")
             // v3.28.10 修复：必须用 ${__rc}——$__rc__ 会被 shell 解析为变量 __rc__（不存在），
             // 导致标记行输出 __DNA_EXIT_（无数字）→ 正则不匹配 → 所有命令恒报"退出码 -1"（实际成功）
             append("echo __DNA_EXIT_\${__rc}__")

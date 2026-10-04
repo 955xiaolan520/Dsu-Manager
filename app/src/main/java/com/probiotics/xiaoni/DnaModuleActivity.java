@@ -244,9 +244,10 @@ public final class DnaModuleActivity extends BaseActivity {
         consoleCard.setPadding(dp(12), dp(10), dp(12), dp(10));
         consoleCard.setVisibility(View.GONE);
         GradientDrawable consoleBg = new GradientDrawable();
-        consoleBg.setColor(0xF20b1622);
+        // v3.30.28：控制台换浅色磨砂底（对齐解压ROM页面，弃用黑色终端风）
+        consoleBg.setColor(0xEdf4f8fc);
         consoleBg.setCornerRadius(dp(18));
-        consoleBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+        consoleBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
         consoleCard.setBackground(consoleBg);
         LinearLayout consoleHead = new LinearLayout(this);
         consoleHead.setOrientation(LinearLayout.HORIZONTAL);
@@ -254,7 +255,7 @@ public final class DnaModuleActivity extends BaseActivity {
         consoleTitle = new TextView(this);
         consoleTitle.setTextSize(13.5f);
         consoleTitle.setTypeface(null, 1);
-        consoleTitle.setTextColor(0xff9fd8b4);
+        consoleTitle.setTextColor(0xff17334f);
         consoleTitle.setSingleLine(true);
         consoleTitle.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         consoleHead.addView(consoleTitle, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -263,15 +264,15 @@ public final class DnaModuleActivity extends BaseActivity {
         copyConsole.setAllCaps(false);
         copyConsole.setTextSize(11.5f);
         copyConsole.setTypeface(null, 1);
-        copyConsole.setTextColor(0xff9fd8b4);
+        copyConsole.setTextColor(0xff1f7d72);
         copyConsole.setMinWidth(0);
         copyConsole.setMinHeight(0);
         copyConsole.setGravity(Gravity.CENTER);
         copyConsole.setPadding(dp(10), 0, dp(10), 0);
         GradientDrawable copyBg = new GradientDrawable();
-        copyBg.setColor(0x33000000);
+        copyBg.setColor(0x55FFFFFF);
         copyBg.setCornerRadius(dp(15));
-        copyBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+        copyBg.setStroke(Math.max(1, dp(1)), 0x55FFFFFF);
         copyConsole.setBackground(copyBg);
         copyConsole.setStateListAnimator(null);
         copyConsole.setOnClickListener(v -> {
@@ -298,7 +299,7 @@ public final class DnaModuleActivity extends BaseActivity {
         consoleText = new TextView(this);
         consoleText.setTypeface(Typeface.MONOSPACE);
         consoleText.setTextSize(11.5f);
-        consoleText.setTextColor(0xFF9fd8b4);
+        consoleText.setTextColor(0xff2c3e57);
         consoleText.setPadding(dp(6), dp(6), dp(6), dp(6));
         // v3.28.12：长行自动换行（此前超宽行被横向截断"显示不完全"）
         consoleText.setHorizontallyScrolling(false);
@@ -310,7 +311,7 @@ public final class DnaModuleActivity extends BaseActivity {
         consoleStop.setAllCaps(false);
         consoleStop.setTextSize(13f);
         consoleStop.setTypeface(null, 1);
-        consoleStop.setTextColor(0xffe8b4b4);
+        consoleStop.setTextColor(0xffa33b3b);
         consoleStop.setGravity(Gravity.CENTER);
         consoleStop.setPadding(0, 0, 0, 0);
         GradientDrawable stopBg = new GradientDrawable();
@@ -333,13 +334,11 @@ public final class DnaModuleActivity extends BaseActivity {
         setContentView(root);
     }
 
-    /** 选择 .zip2 插件包（SAF；后缀在导入时严格校验） */
+    /** 选择 .zip2 插件包（v3.30.15：内置文件浏览器替换系统 SAF；后缀在导入时严格校验） */
     private void pickModule() {
         Haptics.perform(runButtonStub());
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        startActivityForResult(intent, PICK_MODULE);
+        FileBrowserDialog.show(this, t("导入插件（.zip2）", "Import module (.zip2)"),
+                new String[]{".zip2"}, DnaTools.WORK_ROOT, path -> importModule(path));
     }
 
     private View runButtonStub() {
@@ -665,18 +664,10 @@ public final class DnaModuleActivity extends BaseActivity {
 
     // ============ 导入 ============
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_MODULE || resultCode != RESULT_OK || data == null) return;
-        Uri uri = data.getData();
-        if (uri == null) return;
-        importModule(uri);
-    }
-
-    /** 导入插件（对齐原版 dna.xml：dna unzip $file $module目录；仅识别 .zip2） */
-    private void importModule(Uri uri) {
-        String name = displayName(uri);
+    /** 导入插件（对齐原版 dna.xml：dna unzip $file $module目录；仅识别 .zip2；
+     *  v3.30.15：真实绝对路径 root 直接解压，无需复制缓存） */
+    private void importModule(String path) {
+        String name = new File(path).getName();
         if (name == null || !name.toLowerCase(Locale.US).endsWith(".zip2")) {
             toast(t("仅支持 .zip2 结尾的插件包", "Only .zip2 plugin packs are supported")
                     + (name == null ? "" : ": " + name));
@@ -684,34 +675,14 @@ public final class DnaModuleActivity extends BaseActivity {
         }
         toast(t("正在导入插件 ...", "Importing module..."));
         new Thread(() -> {
-            File tmp = new File(getCacheDir(), "dna-module-import.zip2");
-            try (InputStream in = getContentResolver().openInputStream(uri);
-                 FileOutputStream out = new FileOutputStream(tmp)) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            } catch (Exception e) {
-                mainHandler.post(() -> toast(t("读取失败", "Read failed") + ": " + e.getMessage()));
-                return;
-            }
             DnaTools.Result r = DnaTools.run(this,
-                    "dna unzip " + DnaTools.quote(tmp.getAbsolutePath()) + " "
+                    "dna unzip " + DnaTools.quote(path) + " "
                             + DnaTools.quote(moduleRoot().getAbsolutePath()));
-            tmp.delete();
             mainHandler.post(() -> {
                 toast(r.getSuccess() ? t("插件已导入", "Module imported")
                         : t("导入失败", "Import failed") + ": " + r.getMessage());
                 refreshModules();
             });
         }, "dna-module-import").start();
-    }
-
-    private String displayName(Uri uri) {
-        try (android.database.Cursor cursor = getContentResolver().query(uri,
-                new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
-        } catch (Exception ignored) {
-        }
-        return uri.getLastPathSegment();
     }
 }
