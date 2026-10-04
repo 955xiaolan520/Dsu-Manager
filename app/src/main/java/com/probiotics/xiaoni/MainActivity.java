@@ -87,6 +87,11 @@ public class MainActivity extends BaseActivity {
     private ScrollView embeddedReleaseNotesScroll;
     private Button embeddedDownloadButton;
     private int currentTab;
+    // v3.10.0：DNA 标签页内嵌「设置」子模式（设置入口在 DNA 页标题栏，返回时切回 DNA 主页）
+    private boolean dnaSettingsMode;
+    // v3.28.2：DNA 主页工具链状态 / 当前工程视图
+    private TextView dnaStatusView;
+    private TextView dnaProjectView;
     private LinearLayout imageManagementPanel;
     private FrameLayout contentRoot;   // 根布局（引导页淡入转场用）
     // OTG 页面相关
@@ -674,7 +679,8 @@ public class MainActivity extends BaseActivity {
           navigation.addView(items, new FrameLayout.LayoutParams(-1, -1));
           bottomNavigationItems = items;
           addNavigationItem(items, t("首页", "Home"), 0, v -> selectTab(0));
-         addNavigationItem(items, t("设置", "Settings"), 1, v -> selectTab(1));
+         // v3.10.0：底部导航「设置」换成「DNA」工具箱，设置入口移至 DNA 页标题栏（与 ROM 页下载管理同款胶囊按钮）
+         addNavigationItem(items, t("DNA", "DNA"), 1, v -> selectTab(1));
            addNavigationItem(items, t("ROM", "ROM"), 2, v -> selectTab(2));
            addNavigationItem(items, t("OTG", "OTG"), 3, v -> selectTab(3));
            addNavigationItem(items, t("终端", "Terminal"), 4, v -> selectTab(4));
@@ -921,8 +927,15 @@ public class MainActivity extends BaseActivity {
              if (tab == currentTab) {
                  if (tab == 0) scrollToTop();
                  if (tab == 4) refreshMorePage();
+                // v3.10.0：DNA 页内嵌设置模式时，再点 DNA 标签返回 DNA 主页
+                 if (tab == 1 && dnaSettingsMode) {
+                     dnaSettingsMode = false;
+                     swapTabOne();
+                     return;
+                 }
                 return;
             }
+            dnaSettingsMode = false;
             View next;
             if (tab == 3) {
                 // OTG 页：内容可滚动 + FAB 悬浮在视口右下角（不随内容滚动）
@@ -931,7 +944,7 @@ public class MainActivity extends BaseActivity {
                 pageScroll.setFillViewport(false);  // 改为 false，允许内层 ScrollView 滚动
                 pageScroll.addView(buildOtgPage());
                 otgRoot.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
-                
+
                 partitionFab = buildPartitionFab();
                 FrameLayout.LayoutParams fabLp = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
                 fabLp.bottomMargin = dp(84);
@@ -939,10 +952,10 @@ public class MainActivity extends BaseActivity {
                 otgRoot.addView(partitionFab, fabLp);
                 // buildOtgPage 内部首次 selectOtgTab 时 FAB 尚未加入父容器，需在加入后按当前页补一次显示状态。
                 partitionFab.setVisibility(otgCurrentTab == 0 ? View.VISIBLE : View.GONE);
-                
+
                 next = otgRoot;
             } else {
-                next = tab == 0 ? homeScroll : tab == 1 ? buildSettingsPage() : tab == 2 ? buildRomPage() : buildMorePage();
+                next = tab == 0 ? homeScroll : tab == 1 ? buildDnaPage() : tab == 2 ? buildRomPage() : buildMorePage();
                 if (tab != 0) {
                     ScrollView pageScroll = new ScrollView(this);
                     pageScroll.setFillViewport(true);
@@ -1033,6 +1046,931 @@ public class MainActivity extends BaseActivity {
           pageScroll.addView(buildMorePage());
           pageHost.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
       }
+
+      // v3.10.0：DNA 标签页内部切换（DNA 主页 ⇄ 内嵌设置页），复用 tab 1 的落下动画
+      private void swapTabOne() {
+          if (pageHost == null) return;
+          View next = dnaSettingsMode ? buildSettingsPage() : buildDnaPage();
+          ScrollView pageScroll = new ScrollView(this);
+          pageScroll.setFillViewport(true);
+          pageScroll.addView(next);
+          pageHost.removeAllViews();
+          pageHost.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
+          next.setAlpha(0f);
+          next.setTranslationY(-dp(300));
+          next.animate()
+              .alpha(1f)
+              .translationY(0f)
+              .setDuration(380)
+              .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f))
+              .start();
+      }
+
+      /** v3.28.1 DNA 工具箱主页（对齐原版 DNA 工具布局）：
+       *  状态卡（工具链检测）+ 工程管理（切换 / 新建 / 删除 / 解压ROM）
+       *  + 分解与提取（bin / br / dat / img / super）+ 合成与打包 + 格式转换 */
+      private LinearLayout buildDnaPage() {
+          LinearLayout page = new LinearLayout(this);
+          page.setOrientation(LinearLayout.VERTICAL);
+          page.setPadding(dp(18), dp(22), dp(18), dp(30));
+          page.setBackgroundResource(R.drawable.liquid_backdrop);
+          // 标题行：DNA 工具箱（左）+ 设置入口（右）——与 ROM 页「下载管理」同款蓝绿渐变胶囊
+          LinearLayout titleRow = new LinearLayout(this);
+          titleRow.setOrientation(LinearLayout.HORIZONTAL);
+          titleRow.setGravity(Gravity.CENTER_VERTICAL);
+          TextView title = text(t("DNA 工具箱", "DNA Toolbox"), 26, Color.WHITE);
+          title.setTypeface(null, 1);
+          titleRow.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+          Button settingsEntry = new Button(this, null, 0);
+          settingsEntry.setText(t("⚙ 设置", "⚙ Settings"));
+          settingsEntry.setAllCaps(false);
+          settingsEntry.setTextSize(13.5f);
+          settingsEntry.setTypeface(null, 1);
+          settingsEntry.setTextColor(Color.WHITE);
+          settingsEntry.setGravity(Gravity.CENTER);
+          settingsEntry.setPadding(dp(18), 0, dp(18), 0);
+          settingsEntry.setMinWidth(0);
+          settingsEntry.setMinHeight(0);
+          settingsEntry.setIncludeFontPadding(false);
+          settingsEntry.setStateListAnimator(null);
+          GradientDrawable settingsBg = new GradientDrawable();
+          settingsBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+          settingsBg.setColors(new int[]{0xFF35A8C4, 0xFF0E7D95, 0xFF0A5F75});
+          settingsBg.setCornerRadius(dp(22));
+          settingsBg.setStroke(Math.max(1, dp(2)), 0xE6FFFFFF);
+          settingsEntry.setBackground(settingsBg);
+          settingsEntry.setElevation(dp(6));
+          settingsEntry.setOnClickListener(v -> {
+              Haptics.perform(v);
+              dnaSettingsMode = true;
+              swapTabOne();
+          });
+          titleRow.addView(settingsEntry, new LinearLayout.LayoutParams(-2, dp(44)));
+          page.addView(titleRow, new LinearLayout.LayoutParams(-1, dp(48)));
+
+          // 工具链状态卡（对齐原版「ROM工具未就绪 + 检测」）
+          LinearLayout statusCard = new LinearLayout(this);
+          statusCard.setOrientation(LinearLayout.HORIZONTAL);
+          statusCard.setGravity(Gravity.CENTER_VERTICAL);
+          statusCard.setPadding(dp(14), dp(10), dp(12), dp(10));
+          GradientDrawable statusBg = new GradientDrawable();
+          statusBg.setColor(0xB3FFFFFF);
+          statusBg.setCornerRadius(dp(18));
+          statusBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          statusCard.setBackground(statusBg);
+          statusCard.setElevation(dp(4));
+          LinearLayout statusText = new LinearLayout(this);
+          statusText.setOrientation(LinearLayout.VERTICAL);
+          TextView statusLabel = text(t("工具链状态", "Toolchain"), 12, 0xff5a6b82);
+          statusText.addView(statusLabel, new LinearLayout.LayoutParams(-1, -2));
+          dnaStatusView = text(t("检测中 …", "Checking..."), 14, 0xff5a6b82);
+          dnaStatusView.setTypeface(null, 1);
+          statusText.addView(dnaStatusView, new LinearLayout.LayoutParams(-1, -2));
+          statusCard.addView(statusText, new LinearLayout.LayoutParams(0, -2, 1f));
+          Button checkBtn = new Button(this, null, 0);
+          checkBtn.setText(t("检测", "Check"));
+          checkBtn.setAllCaps(false);
+          checkBtn.setTextSize(13);
+          checkBtn.setTypeface(null, 1);
+          checkBtn.setTextColor(0xff172b4d);
+          // v3.28.7：无样式 Button 文字默认偏左上 —— 显式居中 + 零内边距（修复文字不居中/溢出）
+          checkBtn.setGravity(Gravity.CENTER);
+          checkBtn.setPadding(0, 0, 0, 0);
+          GradientDrawable checkBg = new GradientDrawable();
+          checkBg.setColor(0x6635A8C4);
+          checkBg.setCornerRadius(dp(16));
+          checkBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          checkBtn.setBackground(checkBg);
+          checkBtn.setStateListAnimator(null);
+          checkBtn.setMinWidth(0);
+          checkBtn.setMinHeight(0);
+          checkBtn.setOnClickListener(v -> {
+              Haptics.perform(v);
+              refreshDnaToolchain();
+          });
+          statusCard.addView(checkBtn, new LinearLayout.LayoutParams(dp(76), dp(40)));
+          LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
+          statusLp.topMargin = dp(4);
+          statusLp.bottomMargin = dp(10);
+          page.addView(statusCard, statusLp);
+
+          // 工程管理卡（对齐原版首页：选择工程 / 新建 / 删除 / 解压ROM）
+          LinearLayout projectCard = new LinearLayout(this);
+          projectCard.setOrientation(LinearLayout.VERTICAL);
+          projectCard.setPadding(dp(14), dp(12), dp(14), dp(12));
+          GradientDrawable projectBg = new GradientDrawable();
+          projectBg.setColor(0xB3FFFFFF);
+          projectBg.setCornerRadius(dp(18));
+          projectBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          projectCard.setBackground(projectBg);
+          projectCard.setElevation(dp(4));
+          LinearLayout currentRow = new LinearLayout(this);
+          currentRow.setOrientation(LinearLayout.HORIZONTAL);
+          currentRow.setGravity(Gravity.CENTER_VERTICAL);
+          TextView projectLabel = text(t("当前工程", "Project"), 12, 0xff5a6b82);
+          currentRow.addView(projectLabel, new LinearLayout.LayoutParams(-2, -2));
+          // v3.28.5：名字紧跟标签（权重1 左对齐），修复"名字偏右不居中"
+          dnaProjectView = text("", 15, 0xff17334f);
+          dnaProjectView.setTypeface(null, 1);
+          dnaProjectView.setSingleLine(true);
+          dnaProjectView.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+          LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(0, -2, 1f);
+          nameLp.leftMargin = dp(8);
+          currentRow.addView(dnaProjectView, nameLp);
+          Button switchBtn = new Button(this, null, 0);
+          switchBtn.setText(t("切换工程", "Switch"));
+          switchBtn.setAllCaps(false);
+          switchBtn.setTextSize(12.5f);
+          switchBtn.setTypeface(null, 1);
+          switchBtn.setTextColor(0xff172b4d);
+          // v3.28.7：显式居中 + 零内边距
+          switchBtn.setGravity(Gravity.CENTER);
+          switchBtn.setPadding(0, 0, 0, 0);
+          GradientDrawable switchBg = new GradientDrawable();
+          switchBg.setColor(0x6635A8C4);
+          switchBg.setCornerRadius(dp(16));
+          switchBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          switchBtn.setBackground(switchBg);
+          switchBtn.setStateListAnimator(null);
+          switchBtn.setMinWidth(0);
+          switchBtn.setMinHeight(0);
+          switchBtn.setOnClickListener(v -> {
+              Haptics.perform(v);
+              showDnaProjectManager();
+          });
+          currentRow.addView(switchBtn, new LinearLayout.LayoutParams(-2, dp(40)));
+          projectCard.addView(currentRow, new LinearLayout.LayoutParams(-1, dp(44)));
+          // 操作按钮排：v3.28.4 整条内嵌液态玻璃槽（图标+文字竖排按钮完全嵌入，分隔线切分）
+          LinearLayout opsStrip = new LinearLayout(this);
+          opsStrip.setOrientation(LinearLayout.HORIZONTAL);
+          opsStrip.setPadding(dp(3), dp(3), dp(3), dp(3));
+          GradientDrawable stripBg = new GradientDrawable();
+          stripBg.setColor(0x40FFFFFF);
+          stripBg.setCornerRadius(dp(16));
+          stripBg.setStroke(Math.max(1, dp(1)), 0x59FFFFFF);
+          opsStrip.setBackground(stripBg);
+          String[] opIcons = {"＋", "🗑", "📦", "🧩"};
+          String[] ops = {t("新建", "New"), t("删除", "Del"), t("解压ROM", "ROM"), t("插件", "Plug")};
+          for (int i = 0; i < ops.length; i++) {
+              final int which = i;
+              LinearLayout opBtn = new LinearLayout(this);
+              opBtn.setOrientation(LinearLayout.VERTICAL);
+              opBtn.setGravity(Gravity.CENTER);
+              TextView opIcon = new TextView(this);
+              opIcon.setText(opIcons[i]);
+              opIcon.setTextSize(15);
+              opIcon.setGravity(Gravity.CENTER);
+              opBtn.addView(opIcon, new LinearLayout.LayoutParams(-1, -2));
+              TextView opLabel = new TextView(this);
+              opLabel.setText(ops[i]);
+              opLabel.setTextSize(10.5f);
+              opLabel.setTypeface(null, 1);
+              opLabel.setTextColor(0xff17334f);
+              opLabel.setGravity(Gravity.CENTER);
+              opBtn.addView(opLabel, new LinearLayout.LayoutParams(-1, -2));
+              GradientDrawable opBg = new GradientDrawable();
+              opBg.setColor(0x00000000);
+              opBg.setCornerRadius(dp(14));
+              opBtn.setBackground(opBg);
+              opBtn.setOnClickListener(v -> {
+                  Haptics.perform(v);
+                  if (which == 0) showDnaCreateProject();
+                  else if (which == 1) showDnaDeleteProject();
+                  else if (which == 2) showDnaUnzipRom();
+                  else {
+                      // v3.28.11：插件管理弹窗 → 独立二级页面
+                      startActivity(new Intent(MainActivity.this, DnaModuleActivity.class));
+                      overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
+                  }
+              });
+              opsStrip.addView(opBtn, new LinearLayout.LayoutParams(0, dp(54), 1f));
+              if (i < ops.length - 1) {
+                  View opDivider = new View(this);
+                  opDivider.setBackgroundColor(0x33173E5C);
+                  LinearLayout.LayoutParams odLp = new LinearLayout.LayoutParams(Math.max(1, dp(1)), dp(28));
+                  odLp.gravity = Gravity.CENTER_VERTICAL;
+                  opsStrip.addView(opDivider, odLp);
+              }
+          }
+          LinearLayout.LayoutParams opsLp = new LinearLayout.LayoutParams(-1, -2);
+          opsLp.topMargin = dp(8);
+          projectCard.addView(opsStrip, opsLp);
+          LinearLayout.LayoutParams projLp = new LinearLayout.LayoutParams(-1, -2);
+          projLp.bottomMargin = dp(12);
+          page.addView(projectCard, projLp);
+          refreshDnaProjectViews();
+
+          // ===== 分解与提取 =====
+          dnaSectionTitle(page, t("分解与提取", "Decompose & Extract"), 0xFF35A8C4);
+          dnaMenuItem(page, "🧬", t("分解 bin", "Extract bin"), t("从 payload.bin 提取指定分区", "payload.bin → partitions"), DnaActivity.MODE_BIN, null, 0);
+          dnaMenuItem(page, "🧩", t("分解 br", "Extract br"), t("解包 BR 文件", "Unpack brotli"), DnaActivity.MODE_EXTRACT, "br", 0);
+          dnaMenuItem(page, "🧾", t("分解 dat", "Extract dat"), t("解包 DAT 文件", "Unpack dat"), DnaActivity.MODE_EXTRACT, "dat", 0);
+          dnaMenuItem(page, "🧱", t("分解 img", "Extract img"), t("解包 IMG 文件（自动识别 erofs / ext4 / f2fs）", "Unpack image (erofs / ext4 / f2fs)"), DnaActivity.MODE_EXTRACT, "img", 0);
+          dnaMenuItem(page, "🗂", t("分解 super", "Extract super"), t("解包 super.img 并提取指定分区", "super.img → partitions"), DnaActivity.MODE_SUPER_UNPACK, null, 1);
+
+          // ===== 合成与打包 =====
+          dnaSectionTitle(page, t("合成与打包", "Repack & Build"), 0xFF11998E);
+          dnaMenuItem(page, "📦", t("合成 img-dat-br", "Build img-dat-br"), t("将工程目录重新打包成镜像", "Project dirs → image"), DnaActivity.MODE_REPACK, null, 2);
+          dnaMenuItem(page, "🧱", t("合成 super.img", "Build super.img"), t("把 IMG 打包成 super.img（A / AB / VAB）", "IMGs → super.img"), DnaActivity.MODE_SUPER_PACK, null, 3);
+
+          // ===== 格式转换 =====
+          dnaSectionTitle(page, t("格式转换", "Convert"), 0xFFE07B39);
+          dnaMenuItem(page, "🔁", t("img-simg 互转", "img ↔ sparse"), t("ext / erofs 转 sparse，sparse 转 raw", "raw ↔ sparse auto"), DnaActivity.MODE_SPARSE, null, 4);
+          dnaMenuItem(page, "🧾", t("img-dat-br 转换", "img → dat / br"), t("镜像转卡刷 dat / br 格式", "img → dat / br"), DnaActivity.MODE_CONVERT, null, 4);
+          dnaMenuItem(page, "⚡", t("zst-img 互转", "zst ↔ img"), t("zstd 多线程高速压缩 / 解压", "zstd compress / decompress"), DnaActivity.MODE_ZST, null, 4);
+          dnaMenuItem(page, "🧩", t("合并 Sparse 分段", "Merge sparse chunks"), t("将分段 IMG 合并为完整 IMG", "Split images → one"), DnaActivity.MODE_CHUNK, null, 4);
+
+          // ===== 声明（v3.28.7：白玻璃卡 + 深红字，修复红底红字看不清）=====
+          LinearLayout noticeCard = new LinearLayout(this);
+          noticeCard.setOrientation(LinearLayout.VERTICAL);
+          noticeCard.setPadding(dp(14), dp(12), dp(14), dp(12));
+          GradientDrawable noticeBg = new GradientDrawable();
+          noticeBg.setColor(0xE6FFFFFF);
+          noticeBg.setCornerRadius(dp(18));
+          noticeBg.setStroke(Math.max(1, dp(1)), 0x66FF8A8A);
+          noticeCard.setBackground(noticeBg);
+          noticeCard.setElevation(dp(4));
+          TextView noticeTitle = text("⚠ " + t("声明", "Notice"), 14, 0xffC03A2B);
+          noticeTitle.setTypeface(null, 1);
+          noticeTitle.setPadding(0, 0, 0, dp(6));
+          noticeCard.addView(noticeTitle, new LinearLayout.LayoutParams(-1, -2));
+          String[] notices = {
+                  t("本工具不会主动破坏手机系统，因使用者不当操作，造成的一切后果自行承担", "This tool will not actively break your system. Users are responsible for improper operations"),
+                  t("一句话：爱用就用 不用就卸载", "Use it or uninstall it"),
+                  t("如果发现在你手机上使用有问题，请联系我修复，QQ：1415370573", "Issues? Contact QQ: 1415370573")};
+          for (String n : notices) {
+              TextView line = text(n, 11, 0xff8a4a42);
+              line.setLineSpacing(dp(2), 1f);
+              line.setPadding(0, 0, 0, dp(4));
+              noticeCard.addView(line, new LinearLayout.LayoutParams(-1, -2));
+          }
+          LinearLayout.LayoutParams noticeLp = new LinearLayout.LayoutParams(-1, -2);
+          noticeLp.topMargin = dp(14);
+          page.addView(noticeCard, noticeLp);
+
+          // 底部说明
+          TextView note = text(t("DNA 工具链来自原版 DNA 工具箱 · 工程 /sdcard/PDNA/ · 分解输出 /data/PDNA/（产物前缀 PDMA_）", "DNA toolchain from the original DNA Toolbox · /sdcard/PDNA/ + /data/PDNA/ (PDMA_ prefix)"), 12, 0xffdfe9f5);
+          note.setPadding(dp(4), dp(12), dp(4), 0);
+          page.addView(note, new LinearLayout.LayoutParams(-1, -2));
+          // 异步检测工具链
+          refreshDnaToolchain();
+          return page;
+      }
+
+      /** DNA 分区小标题：彩色圆点 + 加粗白字（对齐原版分组标题） */
+      private void dnaSectionTitle(LinearLayout page, String title, int color) {
+          LinearLayout row = new LinearLayout(this);
+          row.setOrientation(LinearLayout.HORIZONTAL);
+          row.setGravity(Gravity.CENTER_VERTICAL);
+          android.graphics.drawable.GradientDrawable dot = new android.graphics.drawable.GradientDrawable();
+          dot.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+          dot.setColor(color);
+          row.addView(new View(this) {{ setBackground(dot); }}, new LinearLayout.LayoutParams(dp(8), dp(8)));
+          TextView text = text(title, 16, Color.WHITE);
+          text.setTypeface(null, 1);
+          LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(-2, -2);
+          textLp.leftMargin = dp(8);
+          row.addView(text, textLp);
+          // 分隔线
+          View line = new View(this);
+          line.setBackgroundColor(0x66FFFFFF);
+          LinearLayout.LayoutParams lineLp = new LinearLayout.LayoutParams(0, Math.max(1, dp(1)), 1f);
+          lineLp.leftMargin = dp(10);
+          lineLp.gravity = Gravity.CENTER_VERTICAL;
+          row.addView(line, lineLp);
+          LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, dp(26));
+          rowLp.bottomMargin = dp(8);
+          rowLp.topMargin = dp(6);
+          page.addView(row, rowLp);
+      }
+
+      /** DNA 功能卡片（白玻璃行卡 + 彩色徽章，对齐原版白卡布局） */
+      private void dnaMenuItem(LinearLayout page, String icon, String title, String subtitle, String mode, String filter, int anim) {
+          LinearLayout card = new LinearLayout(this);
+          card.setOrientation(LinearLayout.HORIZONTAL);
+          card.setGravity(Gravity.CENTER_VERTICAL);
+          card.setPadding(dp(14), dp(11), dp(14), dp(11));
+          GradientDrawable cardBg = new GradientDrawable();
+          cardBg.setColor(0xB3FFFFFF);
+          cardBg.setCornerRadius(dp(18));
+          cardBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          android.graphics.drawable.RippleDrawable ripple =
+                  new android.graphics.drawable.RippleDrawable(
+                          new android.content.res.ColorStateList(
+                                  new int[][]{{android.R.attr.state_pressed}}, new int[]{0x3335A8C4}),
+                          cardBg, null);
+          card.setBackground(ripple);
+          card.setElevation(dp(4));
+          card.setOnClickListener(v -> {
+              Haptics.perform(v);
+              openDnaMode(mode, filter, anim);
+          });
+          // 彩色圆角徽章
+          FrameLayout badge = new FrameLayout(this);
+          GradientDrawable badgeBg = new GradientDrawable();
+          badgeBg.setShape(GradientDrawable.OVAL);
+          badgeBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+          badgeBg.setColors(new int[]{0xFF35A8C4, 0xFF0E7D95});
+          badgeBg.setStroke(Math.max(1, dp(1)), 0xB3FFFFFF);
+          badge.setBackground(badgeBg);
+          TextView iconView = new TextView(this);
+          iconView.setText(icon);
+          iconView.setTextSize(17);
+          iconView.setGravity(Gravity.CENTER);
+          badge.addView(iconView, new FrameLayout.LayoutParams(-1, -1));
+          card.addView(badge, new LinearLayout.LayoutParams(dp(42), dp(42)));
+          // 标题 + 副标题
+          LinearLayout textBox = new LinearLayout(this);
+          textBox.setOrientation(LinearLayout.VERTICAL);
+          textBox.setPadding(dp(12), 0, 0, 0);
+          TextView titleView = new TextView(this);
+          titleView.setText(title);
+          titleView.setTextSize(14.5f);
+          titleView.setTypeface(null, 1);
+          titleView.setTextColor(0xff17334f);
+          textBox.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
+          TextView subView = new TextView(this);
+          subView.setText(subtitle);
+          subView.setTextSize(11.5f);
+          subView.setTextColor(0xff5a6b82);
+          LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
+          subLp.topMargin = dp(2);
+          textBox.addView(subView, subLp);
+          card.addView(textBox, new LinearLayout.LayoutParams(0, -2, 1f));
+          // 箭头
+          TextView arrow = new TextView(this);
+          arrow.setText("›");
+          arrow.setTextSize(22);
+          arrow.setTextColor(0xff5a6b82);
+          card.addView(arrow, new LinearLayout.LayoutParams(-2, -2));
+          LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+          cardLp.bottomMargin = dp(8);
+          page.addView(card, cardLp);
+      }
+
+      /** 打开 DNA 各功能页（不同功能差异化转场动画） */
+      private void openDnaMode(String dnaMode, String filter, int index) {
+          // v3.28.7：分解 super 门槛 —— 当前工程必须存在 super.img 才能进入（root 异步检测）
+          if (DnaActivity.MODE_SUPER_UNPACK.equals(dnaMode)) {
+              String cur = DnaTools.currentProject(this);
+              if (cur == null) {
+                  toast(t("请先选择工程（需包含 super.img）", "Select a project with super.img first"));
+                  showDnaProjectManager();
+                  return;
+              }
+              toast(t("正在检测 super.img ...", "Checking super.img..."));
+              new Thread(() -> {
+                  String path = DnaTools.WORK_ROOT + "/" + cur + "/super.img";
+                  boolean has = RootShell.exec(
+                          "[ -f " + DnaTools.quote(path) + " ] && echo __YES__ || echo __NO__",
+                          10000, null).getStdout().contains("__YES__");
+                  runOnUiThread(() -> {
+                      if (isFinishing() || isDestroyed()) return;
+                      if (has) {
+                          startDnaMode(dnaMode, filter, index);
+                      } else {
+                          Toast.makeText(this, t("当前工程未检测到 super.img\n请先解压 ROM 或导入 super.img", "No super.img in current project"), Toast.LENGTH_LONG).show();
+                      }
+                  });
+              }, "dna-super-check").start();
+              return;
+          }
+          startDnaMode(dnaMode, filter, index);
+      }
+
+      /** 启动 DNA 功能页（openDnaMode 检测通过后调用） */
+      private void startDnaMode(String dnaMode, String filter, int index) {
+          Intent intent = new Intent(this, DnaActivity.class);
+          intent.putExtra(DnaActivity.EXTRA_MODE, dnaMode);
+          if (filter != null) intent.putExtra(DnaActivity.EXTRA_FILTER, filter);
+          startActivity(intent);
+          switch (index) {
+              case 1: overridePendingTransition(R.anim.flip_in, R.anim.flip_out); break;      // 分解 SUPER：3D 翻转
+              case 2: overridePendingTransition(R.anim.explode_in, R.anim.explode_out); break; // 合成镜像：爆炸缩放
+              case 3: overridePendingTransition(R.anim.slide_up_in, R.anim.slide_up_out); break; // 合成 SUPER：底部滑入
+              default: overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out); break;    // 分解镜像 / 转换：缩放淡入
+          }
+      }
+
+      /** 异步检测 DNA 工具链（root + 17 个二进制自检） */
+      private void refreshDnaToolchain() {
+          if (dnaStatusView == null) return;
+          dnaStatusView.setText(t("检测中 …", "Checking..."));
+          dnaStatusView.setTextColor(0xff5a6b82);
+          new Thread(() -> {
+              boolean ok = DnaTools.ensure(this) != null;
+              runOnUiThread(() -> {
+                  if (dnaStatusView == null) return;
+                  if (ok) {
+                      dnaStatusView.setText(t("✓ 就绪（ROOT 可用）", "✓ Ready (ROOT OK)"));
+                      dnaStatusView.setTextColor(0xff1d7a4f);
+                  } else {
+                      dnaStatusView.setText(t("未就绪（需要 ROOT 授权）", "Not ready (ROOT required)"));
+                      dnaStatusView.setTextColor(0xffa33b3b);
+                  }
+              });
+          }, "dna-toolchain-check").start();
+      }
+
+      /** 刷新 DNA 页当前工程显示 */
+      private void refreshDnaProjectViews() {
+          if (dnaProjectView == null) return;
+          String current = DnaTools.currentProject(this);
+          if (current != null) {
+              dnaProjectView.setText(current);
+              dnaProjectView.setTextColor(0xff17334f);
+          } else {
+              dnaProjectView.setText(t("未选择", "None"));
+              dnaProjectView.setTextColor(0xffa33b3b);
+          }
+      }
+
+      /** 工程切换对话框（玻璃风列表） */
+      private void showDnaProjectManager() {
+          java.util.List<String> projects = DnaTools.listProjects();
+          Dialog dialog = new Dialog(this);
+          dialog.setCancelable(true);
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(18), dp(16), dp(18), dp(16));
+          GradientDrawable bg = new GradientDrawable();
+          bg.setColor(0xF2e9f0f7);
+          bg.setCornerRadius(dp(24));
+          bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          panel.setBackground(bg);
+          TextView title = new TextView(this);
+          title.setText(t("选择工程", "Select project"));
+          title.setTextSize(16);
+          title.setTypeface(null, 1);
+          title.setTextColor(0xff17334f);
+          title.setPadding(0, 0, 0, dp(10));
+          panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          ScrollView listScroll = new ScrollView(this);
+          LinearLayout list = new LinearLayout(this);
+          list.setOrientation(LinearLayout.VERTICAL);
+          listScroll.addView(list, new ScrollView.LayoutParams(-1, -2));
+          if (projects.isEmpty()) {
+              TextView empty = new TextView(this);
+              empty.setText(t("暂无工程，请先新建", "No projects yet"));
+              empty.setTextSize(13);
+              empty.setTextColor(0xff5a6b82);
+              empty.setPadding(0, dp(8), 0, dp(8));
+              list.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+          }
+          String current = DnaTools.currentProject(this);
+          for (String name : projects) {
+              TextView row = new TextView(this);
+              row.setText((name.equals(current) ? "● " : "○ ") + name);
+              row.setTextSize(14);
+              row.setTextColor(0xff17334f);
+              // v3.28.7：长工程名单行省略（修复弹窗文字溢出）
+              row.setSingleLine(true);
+              row.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+              row.setGravity(Gravity.CENTER_VERTICAL);
+              row.setPadding(dp(10), dp(12), dp(10), dp(12));
+              GradientDrawable rowBg = new GradientDrawable();
+              rowBg.setColor(name.equals(current) ? 0x3335A8C4 : 0x22FFFFFF);
+              rowBg.setCornerRadius(dp(14));
+              row.setBackground(rowBg);
+              LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+              rowLp.bottomMargin = dp(6);
+              list.addView(row, rowLp);
+              row.setOnClickListener(v -> {
+                  Haptics.perform(v);
+                  DnaTools.setCurrentProject(this, name);
+                  refreshDnaProjectViews();
+                  dialog.dismiss();
+                  Toast.makeText(this, t("已切换工程", "Switched") + ": " + name, Toast.LENGTH_SHORT).show();
+              });
+          }
+          panel.addView(listScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+          Button close = new Button(this, null, 0);
+          close.setText(t("关闭", "Close"));
+          close.setAllCaps(false);
+          close.setTextColor(0xff172b4d);
+          // v3.28.7：显式居中 + 零内边距
+          close.setGravity(Gravity.CENTER);
+          close.setPadding(0, 0, 0, 0);
+          GradientDrawable closeBg = new GradientDrawable();
+          closeBg.setColor(0x59FFFFFF);
+          closeBg.setCornerRadius(dp(16));
+          closeBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
+          close.setBackground(closeBg);
+          close.setStateListAnimator(null);
+          close.setOnClickListener(v -> dialog.dismiss());
+          panel.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+          dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, dp(420)));
+          showWide(dialog, 420);
+      }
+
+      /** 新建工程对话框（v3.28.7：修复输入法自动输入 bug + 玻璃圆角输入框美化） */
+      private void showDnaCreateProject() {
+          Dialog dialog = new Dialog(this);
+          dialog.setCancelable(true);
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(20), dp(18), dp(20), dp(18));
+          GradientDrawable bg = new GradientDrawable();
+          bg.setColor(0xF6eef3f9);
+          bg.setCornerRadius(dp(26));
+          bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          panel.setBackground(bg);
+          // v3.28.7：标题行 —— 彩点 + 大标题 + 副说明，更醒目
+          LinearLayout titleRow = new LinearLayout(this);
+          titleRow.setOrientation(LinearLayout.HORIZONTAL);
+          titleRow.setGravity(Gravity.CENTER_VERTICAL);
+          View dot = new View(this);
+          GradientDrawable dotBg = new GradientDrawable();
+          dotBg.setShape(GradientDrawable.OVAL);
+          dotBg.setColor(0xFF35A8C4);
+          dot.setBackground(dotBg);
+          titleRow.addView(dot, new LinearLayout.LayoutParams(dp(10), dp(10)));
+          TextView title = new TextView(this);
+          title.setText(t("新建工程", "New project"));
+          title.setTextSize(18);
+          title.setTypeface(null, 1);
+          title.setTextColor(0xff12294a);
+          LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-2, -2);
+          titleLp.leftMargin = dp(8);
+          titleRow.addView(title, titleLp);
+          panel.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
+          TextView hint = new TextView(this);
+          hint.setText(t("工程名将添加 PDMA_ 前缀，创建于 /sdcard/PDNA/ 与 /data/PDNA/\n支持中英文、数字（特殊字符自动替换为 _）",
+                  "Name gets PDMA_ prefix at /sdcard/PDNA/ and /data/PDNA/\nLetters, digits, CJK supported"));
+          hint.setTextSize(11.5f);
+          hint.setTextColor(0xff5a6b82);
+          hint.setLineSpacing(dp(2), 1f);
+          hint.setPadding(0, dp(6), 0, dp(10));
+          panel.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+          // v3.28.7：玻璃圆角输入框（带描边，视觉更明显）
+          EditText input = new EditText(this);
+          input.setTextSize(15);
+          input.setTextColor(0xff17334f);
+          input.setHint(t("例如：我的工程 / MyROM", "e.g. MyROM"));
+          input.setHintTextColor(0xff8fa1b8);
+          input.setSingleLine(true);
+          input.setGravity(Gravity.CENTER_VERTICAL);
+          input.setPadding(dp(14), 0, dp(14), 0);
+          GradientDrawable inputBg = new GradientDrawable();
+          inputBg.setColor(0xFFFFFFFF);
+          inputBg.setCornerRadius(dp(16));
+          inputBg.setStroke(Math.max(1, dp(1)), 0x8035A8C4);
+          input.setBackground(inputBg);
+          // v3.28.7：移除字符级 InputFilter —— 与百度/三星等输入法组合时段落重组引发
+          // “自动输入/文字重复”bug（juzjuzjuz…）；改为创建时统一清洗（createProject 内正则替换）
+          panel.addView(input, new LinearLayout.LayoutParams(-1, dp(52)));
+          Button create = new Button(this, null, 0);
+          create.setText("✓  " + t("创建并使用", "Create & use"));
+          create.setAllCaps(false);
+          create.setTextSize(15);
+          create.setTypeface(null, 1);
+          create.setTextColor(Color.WHITE);
+          create.setGravity(Gravity.CENTER);
+          create.setPadding(0, 0, 0, 0);
+          create.setBackgroundResource(R.drawable.button_green);
+          create.setStateListAnimator(null);
+          create.setOnClickListener(v -> {
+              Haptics.perform(v);
+              String name = input.getText().toString().trim();
+              if (name.isEmpty()) {
+                  Toast.makeText(this, t("请输入工程名", "Enter a name"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              kotlin.Pair<String, String> result = DnaTools.createProject(name);
+              String created = result.getFirst();
+              String error = result.getSecond();
+              if (error == null && !created.isEmpty()) {
+                  DnaTools.setCurrentProject(this, created);
+                  refreshDnaProjectViews();
+                  dialog.dismiss();
+                  Toast.makeText(this, t("已创建工程", "Created") + ": " + created
+                          + "\n/sdcard/PDNA/" + created + "  ·  /data/PDNA/" + created, Toast.LENGTH_LONG).show();
+              } else {
+                  Toast.makeText(this, t("创建失败", "Failed") + ": " + error, Toast.LENGTH_SHORT).show();
+              }
+          });
+          LinearLayout.LayoutParams createLp = new LinearLayout.LayoutParams(-1, dp(46));
+          createLp.topMargin = dp(10);
+          panel.addView(create, createLp);
+          dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT));
+          showWide(dialog, 380);
+      }
+
+      /** 删除工程对话框（多选） */
+      private void showDnaDeleteProject() {
+          java.util.List<String> projects = DnaTools.listProjects();
+          if (projects.isEmpty()) {
+              Toast.makeText(this, t("暂无工程", "No projects"), Toast.LENGTH_SHORT).show();
+              return;
+          }
+          Dialog dialog = new Dialog(this);
+          dialog.setCancelable(true);
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(18), dp(16), dp(18), dp(16));
+          GradientDrawable bg = new GradientDrawable();
+          bg.setColor(0xF2e9f0f7);
+          bg.setCornerRadius(dp(24));
+          bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          panel.setBackground(bg);
+          TextView title = new TextView(this);
+          title.setText(t("删除工程（可多选）", "Delete projects (multi)"));
+          title.setTextSize(16);
+          title.setTypeface(null, 1);
+          title.setTextColor(0xffa33b3b);
+          title.setPadding(0, 0, 0, dp(10));
+          panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          ScrollView listScroll = new ScrollView(this);
+          LinearLayout list = new LinearLayout(this);
+          list.setOrientation(LinearLayout.VERTICAL);
+          listScroll.addView(list, new ScrollView.LayoutParams(-1, -2));
+          java.util.List<android.widget.CheckBox> boxes = new java.util.ArrayList<>();
+          for (String name : projects) {
+              android.widget.CheckBox box = new CheckBox(this);
+              box.setText(name);
+              box.setTextSize(13.5f);
+              box.setTextColor(0xff17334f);
+              // v3.28.7：长工程名单行省略（修复文字溢出）
+              box.setSingleLine(true);
+              box.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+              box.setGravity(Gravity.CENTER_VERTICAL);
+              boxes.add(box);
+              list.addView(box, new LinearLayout.LayoutParams(-1, dp(40)));
+          }
+          panel.addView(listScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+          Button delete = new Button(this, null, 0);
+          delete.setText(t("删除所选", "Delete selected"));
+          delete.setAllCaps(false);
+          delete.setTextColor(Color.WHITE);
+          // v3.28.7：显式居中 + 零内边距
+          delete.setGravity(Gravity.CENTER);
+          delete.setPadding(0, 0, 0, 0);
+          delete.setBackgroundResource(R.drawable.button_red);
+          delete.setStateListAnimator(null);
+          delete.setOnClickListener(v -> {
+              Haptics.perform(v);
+              String current = DnaTools.currentProject(this);
+              int deleted = 0;
+              for (android.widget.CheckBox box : boxes) {
+                  if (box.isChecked()) {
+                      String name = box.getText().toString();
+                      if (DnaTools.deleteProject(name)) {
+                          deleted++;
+                          if (name.equals(current)) DnaTools.clearCurrentProject(this);
+                      }
+                  }
+              }
+              refreshDnaProjectViews();
+              dialog.dismiss();
+              Toast.makeText(this, t("已删除", "Deleted") + " " + deleted + t(" 个工程", " project(s)"), Toast.LENGTH_SHORT).show();
+          });
+          panel.addView(delete, new LinearLayout.LayoutParams(-1, dp(44)));
+          dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, dp(440)));
+          showWide(dialog, 440);
+      }
+
+      /** 解压 ROM 对话框：工程根目录 zip 列表 + 手动路径（dna unzip → /sdcard/PDNA） */
+      private void showDnaUnzipRom() {
+          Dialog dialog = new Dialog(this);
+          dialog.setCancelable(true);
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(18), dp(16), dp(18), dp(16));
+          GradientDrawable bg = new GradientDrawable();
+          bg.setColor(0xF2e9f0f7);
+          bg.setCornerRadius(dp(24));
+          bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          panel.setBackground(bg);
+          TextView title = new TextView(this);
+          title.setText(t("解压 ROM（zip → /sdcard/PDNA）", "Unzip ROM (zip → /sdcard/PDNA)"));
+          title.setTextSize(16);
+          title.setTypeface(null, 1);
+          title.setTextColor(0xff17334f);
+          title.setPadding(0, 0, 0, dp(10));
+          panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          ScrollView listScroll = new ScrollView(this);
+          LinearLayout list = new LinearLayout(this);
+          list.setOrientation(LinearLayout.VERTICAL);
+          listScroll.addView(list, new ScrollView.LayoutParams(-1, -2));
+          java.util.List<String> zips = DnaTools.listProjectFiles(null, "zip");
+          final String[] chosen = {null};
+          if (zips.isEmpty()) {
+              TextView empty = new TextView(this);
+              empty.setText(t("/sdcard/PDNA 下没有 zip，请在下方输入完整路径", "No zip in /sdcard/PDNA, enter full path below"));
+              empty.setTextSize(12.5f);
+              empty.setTextColor(0xff5a6b82);
+              empty.setPadding(0, dp(6), 0, dp(6));
+              list.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+          }
+          for (String name : zips) {
+              TextView row = new TextView(this);
+              row.setText("📦 " + name);
+              row.setTextSize(13.5f);
+              row.setTextColor(0xff17334f);
+              // v3.28.7：长文件名单行省略（修复弹窗文字溢出）
+              row.setSingleLine(true);
+              row.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+              row.setGravity(Gravity.CENTER_VERTICAL);
+              row.setPadding(dp(10), dp(11), dp(10), dp(11));
+              GradientDrawable rowBg = new GradientDrawable();
+              rowBg.setColor(0x22FFFFFF);
+              rowBg.setCornerRadius(dp(14));
+              row.setBackground(rowBg);
+              LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+              rowLp.bottomMargin = dp(6);
+              list.addView(row, rowLp);
+              row.setOnClickListener(v -> {
+                  Haptics.perform(v);
+                  chosen[0] = DnaTools.WORK_ROOT + "/" + name;
+                  for (int i = 0; i < list.getChildCount(); i++) {
+                      View child = list.getChildAt(i);
+                      if (child instanceof TextView && child.getTag() == null) {
+                          GradientDrawable rb = new GradientDrawable();
+                          rb.setColor(0x22FFFFFF);
+                          rb.setCornerRadius(dp(14));
+                          child.setBackground(rb);
+                      }
+                  }
+                  GradientDrawable sel = new GradientDrawable();
+                  sel.setColor(0x3335A8C4);
+                  sel.setCornerRadius(dp(14));
+                  row.setBackground(sel);
+              });
+          }
+          panel.addView(listScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+          EditText manual = new EditText(this);
+          manual.setTextSize(13f);
+          manual.setTextColor(0xff17334f);
+          manual.setHint(t("或输入 zip 绝对路径", "Or absolute zip path"));
+          manual.setHintTextColor(0xff8fa1b8);
+          // v3.28.6：垂直居中（修复文字与框不居中）
+          manual.setGravity(Gravity.CENTER_VERTICAL);
+          panel.addView(manual, new LinearLayout.LayoutParams(-1, dp(44)));
+          LinearLayout btnRow = new LinearLayout(this);
+          btnRow.setOrientation(LinearLayout.HORIZONTAL);
+          btnRow.setPadding(0, dp(8), 0, 0);
+          Button cancel = new Button(this, null, 0);
+          cancel.setText(t("取消", "Cancel"));
+          cancel.setAllCaps(false);
+          cancel.setTextColor(0xff172b4d);
+          // v3.28.7：显式居中 + 零内边距
+          cancel.setGravity(Gravity.CENTER);
+          cancel.setPadding(0, 0, 0, 0);
+          GradientDrawable cancelBg = new GradientDrawable();
+          cancelBg.setColor(0x59FFFFFF);
+          cancelBg.setCornerRadius(dp(16));
+          cancelBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
+          cancel.setBackground(cancelBg);
+          cancel.setStateListAnimator(null);
+          cancel.setOnClickListener(v -> dialog.dismiss());
+          btnRow.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
+          Button start = new Button(this, null, 0);
+          start.setText(t("开始解压", "Unzip"));
+          start.setAllCaps(false);
+          start.setTextColor(Color.WHITE);
+          // v3.28.7：显式居中 + 零内边距
+          start.setGravity(Gravity.CENTER);
+          start.setPadding(0, 0, 0, 0);
+          start.setBackgroundResource(R.drawable.button_green);
+          start.setStateListAnimator(null);
+          LinearLayout.LayoutParams startLp = new LinearLayout.LayoutParams(0, dp(44), 1f);
+          startLp.leftMargin = dp(8);
+          btnRow.addView(start, startLp);
+          panel.addView(btnRow, new LinearLayout.LayoutParams(-1, -2));
+          start.setOnClickListener(v -> {
+              Haptics.perform(v);
+              String zip = !manual.getText().toString().trim().isEmpty()
+                      ? manual.getText().toString().trim() : chosen[0];
+              if (zip == null || zip.isEmpty()) {
+                  Toast.makeText(this, t("请选择或输入 zip 路径", "Pick or enter a zip path"), Toast.LENGTH_SHORT).show();
+                  return;
+              }
+              dialog.dismiss();
+              // v3.28.3：已选工程 → 解压到工程目录（payload.bin 等直接可分解），否则解到 /sdcard/PDNA 根
+              String current = DnaTools.currentProject(this);
+              String target = current != null ? DnaTools.WORK_ROOT + "/" + current : DnaTools.WORK_ROOT;
+              runDnaConsole(t("解压 ROM", "Unzip ROM"),
+                      "dna unzip --delete false " + DnaTools.quote(zip) + " " + DnaTools.quote(target));
+          });
+          dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, dp(460)));
+          showWide(dialog, 460);
+      }
+
+      /** v3.28.4：DNA 弹窗统一加宽到 94% 屏宽（修复"弹窗太窄"） */
+      private void showWide(Dialog dialog, int heightDp) {
+          dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000));
+          dialog.show();
+          dialog.getWindow().setLayout(
+                  (int) (getResources().getDisplayMetrics().widthPixels * 0.94f), dp(heightDp));
+      }
+
+      /** DNA 命令控制台对话框：流式输出 + 取消（解压 ROM 等页面级任务） */
+      private void runDnaConsole(String titleText, String command) {
+          Dialog dialog = new Dialog(this);
+          dialog.setCancelable(false);
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(16), dp(14), dp(16), dp(14));
+          GradientDrawable bg = new GradientDrawable();
+          bg.setColor(0xF20b1622);
+          bg.setCornerRadius(dp(22));
+          bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          panel.setBackground(bg);
+          // 标题行 + 复制日志按钮（v3.28.4）
+          TextView console = new TextView(this);
+          console.setTypeface(android.graphics.Typeface.MONOSPACE);
+          console.setTextSize(11.5f);
+          console.setTextColor(0xFF9fd8b4);
+          console.setPadding(dp(8), dp(8), dp(8), dp(8));
+          LinearLayout consoleHead = new LinearLayout(this);
+          consoleHead.setOrientation(LinearLayout.HORIZONTAL);
+          consoleHead.setGravity(Gravity.CENTER_VERTICAL);
+          TextView title = new TextView(this);
+          title.setText(titleText);
+          title.setTextSize(15);
+          title.setTypeface(null, 1);
+          title.setTextColor(0xff9fd8b4);
+          consoleHead.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+          Button copyConsole = new Button(this, null, 0);
+          copyConsole.setText("⧉ " + t("复制日志", "Copy"));
+          copyConsole.setAllCaps(false);
+          copyConsole.setTextSize(11.5f);
+          copyConsole.setTypeface(null, 1);
+          copyConsole.setTextColor(0xff9fd8b4);
+          copyConsole.setMinWidth(0);
+          copyConsole.setMinHeight(0);
+          // v3.28.7：显式居中
+          copyConsole.setGravity(Gravity.CENTER);
+          copyConsole.setPadding(dp(10), 0, dp(10), 0);
+          GradientDrawable copyBg = new GradientDrawable();
+          copyBg.setColor(0x33000000);
+          copyBg.setCornerRadius(dp(15));
+          copyBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          copyConsole.setBackground(copyBg);
+          copyConsole.setStateListAnimator(null);
+          copyConsole.setOnClickListener(v -> {
+              Haptics.perform(v);
+              CharSequence text = console.getText();
+              if (text.length() == 0) {
+                  toast(t("暂无日志", "Nothing to copy"));
+                  return;
+              }
+              android.content.ClipboardManager cm =
+                      (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+              cm.setPrimaryClip(android.content.ClipData.newPlainText("DNA log", text));
+              toast(t("已复制全部日志", "Log copied"));
+          });
+          consoleHead.addView(copyConsole, new LinearLayout.LayoutParams(-2, dp(30)));
+          // v3.28.6：标题行与下方日志框保持距离感（6→10dp）
+          consoleHead.setPadding(0, 0, 0, dp(10));
+          panel.addView(consoleHead, new LinearLayout.LayoutParams(-1, -2));
+          ScrollView scroll = new ScrollView(this);
+          scroll.setOnTouchListener((sv, event) -> {
+              int action = event.getActionMasked();
+              sv.getParent().requestDisallowInterceptTouchEvent(
+                      action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
+              return false;
+          });
+          scroll.addView(console, new ScrollView.LayoutParams(-1, -2));
+          panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+          Button stop = new Button(this, null, 0);
+          stop.setText(t("后台运行 / 关闭", "Background / Close"));
+          stop.setAllCaps(false);
+          stop.setTextColor(0xff9fd8b4);
+          // v3.28.7：显式居中 + 零内边距
+          stop.setGravity(Gravity.CENTER);
+          stop.setPadding(0, 0, 0, 0);
+          GradientDrawable stopBg = new GradientDrawable();
+          stopBg.setColor(0x33000000);
+          stopBg.setCornerRadius(dp(16));
+          stopBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          stop.setBackground(stopBg);
+          stop.setStateListAnimator(null);
+          stop.setOnClickListener(v -> {
+              Haptics.perform(v);
+              dialog.dismiss();
+          });
+          panel.addView(stop, new LinearLayout.LayoutParams(-1, dp(44)));
+          dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, dp(500)));
+          showWide(dialog, 500);
+          final java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean(false);
+          new Thread(() -> {
+              DnaTools.Result result = DnaTools.run(this, command,
+                      line -> {
+                          runOnUiThread(() -> {
+                              console.append(line + "\n");
+                              scroll.post(() -> scroll.fullScroll(ScrollView.FOCUS_DOWN));
+                          });
+                          return kotlin.Unit.INSTANCE;
+                      },
+                      cancel::get);
+              runOnUiThread(() -> {
+                  console.append((result.getSuccess() ? "\n✓ " : "\n✗ ") + result.getMessage() + "\n");
+                  Toast.makeText(this, result.getSuccess() ? t("解压完成", "Done") : t("执行失败", "Failed"), Toast.LENGTH_SHORT).show();
+              });
+          }, "dna-console").start();
+      }
+
 
       private void animateNavigation(int selectedTab) {
          if (bottomNavigation == null) return;
@@ -3447,7 +4385,7 @@ public class MainActivity extends BaseActivity {
 
       private LinearLayout buildSettingsPage() {
          LinearLayout page = page(t("设置", "Settings"));
-         
+
          // 在标题栏添加透明开关
          TextView heading = (TextView) page.getChildAt(0);
          LinearLayout titleBar = new LinearLayout(this);
@@ -3455,6 +4393,23 @@ public class MainActivity extends BaseActivity {
          titleBar.setGravity(Gravity.CENTER_VERTICAL);
          titleBar.setPadding(dp(14), 0, dp(14), 0);
          page.removeViewAt(0);
+         // v3.10.0：设置页现从 DNA 页进入，标题栏最左加返回按钮
+         Button backToDna = new Button(this);
+         backToDna.setText("<");
+         backToDna.setTextSize(20);
+         backToDna.setMinWidth(0);
+         backToDna.setMinHeight(0);
+         backToDna.setAllCaps(false);
+         backToDna.setTypeface(null, 1);
+         backToDna.setTextColor(0xff17334f);
+         backToDna.setBackgroundResource(R.drawable.liquid_glass_panel);
+         backToDna.setStateListAnimator(null);
+         backToDna.setOnClickListener(v -> {
+             Haptics.perform(v);
+             dnaSettingsMode = false;
+             swapTabOne();
+         });
+         titleBar.addView(backToDna, new LinearLayout.LayoutParams(dp(42), dp(48)));
          titleBar.addView(heading, new LinearLayout.LayoutParams(0, dp(58), 1));
          
          // 透明开关（右侧）

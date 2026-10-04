@@ -18,6 +18,7 @@ object RootShell {
         return result.success && result.stdout.trim().endsWith("0")
     }
 
+    @JvmStatic
     fun exec(script: String, timeoutMs: Long = 30000, log: ((String) -> Unit)? = null): ShellResult {
         val sink = log ?: lastLog
         try {
