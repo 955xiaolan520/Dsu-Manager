@@ -71,6 +71,21 @@ public final class PayloadDumperActivity extends BaseActivity {
     private Uri selectedFileUri;
     private String selectedFileName = "";
     private int currentTab = 0;
+
+    // v3.40.13：全选提取（在线/本地共用 root payload_dumper 逐分区链路）
+    private final java.util.List<PayloadExtractor.PartitionInfo> onlinePartitions = new java.util.ArrayList<>();
+    private final java.util.List<PayloadExtractor.PartitionInfo> localPartitions = new java.util.ArrayList<>();
+    private final java.util.concurrent.atomic.AtomicBoolean extractAllRunning = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private volatile boolean extractAllCancel = false;
+    private Button localExtractAllButton;
+    private Button onlineExtractAllButton;
+
+    /** v3.40.13：GitHub 加速镜像（在线全选下载整包用，镜像优先 + 直连垫底，同 UpdateCenter） */
+    private static final String[] GH_MIRRORS = {
+            "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", ""};
+    /** 慢速看门狗：持续低于 128KB/s 达 6 秒且后面还有源 → 弃源切换 */
+    private static final long SLOW_SPEED = 128 * 1024;
+    private static final long SLOW_WINDOW_MS = 6000;
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -504,7 +519,22 @@ public final class PayloadDumperActivity extends BaseActivity {
             startOnlineExtract();
         });
         panel.addView(onlineExtractButton, new LinearLayout.LayoutParams(-1, dp(54)));
-        
+
+        // v3.40.13：在线全选提取（整包仅下载一次，再逐分区提取 —— 单分区流式提取每分区都要重新下载）
+        onlineExtractAllButton = new Button(this);
+        onlineExtractAllButton.setText("⚡ 全选提取（下载整包一次提取全部）");
+        onlineExtractAllButton.setTextSize(15);
+        onlineExtractAllButton.setTextColor(Color.WHITE);
+        onlineExtractAllButton.setBackgroundResource(R.drawable.button_green);
+        onlineExtractAllButton.setAllCaps(false);
+        onlineExtractAllButton.setOnClickListener(v -> {
+            Haptics.perform(v);
+            extractAllOnline();
+        });
+        LinearLayout.LayoutParams onlineAllLp = new LinearLayout.LayoutParams(-1, dp(54));
+        onlineAllLp.topMargin = dp(10);
+        panel.addView(onlineExtractAllButton, onlineAllLp);
+
         return panel;
     }
     
@@ -624,7 +654,22 @@ public final class PayloadDumperActivity extends BaseActivity {
             pickFile();
         });
         panel.addView(localPickButton, new LinearLayout.LayoutParams(-1, dp(54)));
-        
+
+        // v3.40.13：本地全选提取（root payload_dumper 逐分区，无权限问题）
+        localExtractAllButton = new Button(this);
+        localExtractAllButton.setText("⚡ 全选提取（已列出分区全部提取）");
+        localExtractAllButton.setTextSize(15);
+        localExtractAllButton.setTextColor(Color.WHITE);
+        localExtractAllButton.setBackgroundResource(R.drawable.button_green);
+        localExtractAllButton.setAllCaps(false);
+        localExtractAllButton.setOnClickListener(v -> {
+            Haptics.perform(v);
+            extractAllLocal();
+        });
+        LinearLayout.LayoutParams localAllLp = new LinearLayout.LayoutParams(-1, dp(54));
+        localAllLp.topMargin = dp(10);
+        panel.addView(localExtractAllButton, localAllLp);
+
         return panel;
     }
     
@@ -797,6 +842,13 @@ public final class PayloadDumperActivity extends BaseActivity {
                 if (extractor != null) {
                     extractor.close();
                 }
+                // v3.40.13：root 放行原文件（chmod 666 + chown app uid）→ JNI 直接读原路径，
+                // 替代旧兜底「cp 11.9GB 到缓存再打开」（要等 30s+ 且双倍占空间）。
+                // /sdcard 上 root 属主文件经 FUSE 直读必 EACCES，放行后毫秒级打开。
+                com.topjohnwu.superuser.Shell.cmd(
+                        "chmod 666 " + DnaTools.quote(path)
+                                + "; chown " + android.os.Process.myUid() + " " + DnaTools.quote(path)
+                                + "; true").exec();
                 extractor = new PayloadExtractor();
                 boolean success = extractor.open(path);
                 String openedPath = path;
@@ -1074,6 +1126,8 @@ public final class PayloadDumperActivity extends BaseActivity {
     
     private void displayPartitionsOnline(List<PayloadExtractor.PartitionInfo> partitions) {
         onlinePartitionsList.removeAllViews();
+        onlinePartitions.clear();
+        onlinePartitions.addAll(partitions);
         
         for (int i = 0; i < partitions.size(); i++) {
             PayloadExtractor.PartitionInfo info = partitions.get(i);
@@ -1103,6 +1157,8 @@ public final class PayloadDumperActivity extends BaseActivity {
     
     private void displayPartitionsLocal(List<PayloadExtractor.PartitionInfo> partitions) {
         localPartitionsList.removeAllViews();
+        localPartitions.clear();
+        localPartitions.addAll(partitions);
         
         for (int i = 0; i < partitions.size(); i++) {
             PayloadExtractor.PartitionInfo info = partitions.get(i);
@@ -1521,6 +1577,325 @@ public final class PayloadDumperActivity extends BaseActivity {
         return uri.toString();
     }
     
+    // ================= v3.40.13：全选提取（在线/本地共用） =================
+
+    /** nativeLibraryDir 下的 Rust 版 payload_dumper（root 链路，bin/zip 直读，无 FUSE 权限问题） */
+    private String dumperPath() {
+        return new File(getApplicationInfo().nativeLibraryDir, "libpayload_dumper.so").getAbsolutePath();
+    }
+
+    private void extractAllLocal() {
+        if (extractAllRunning.get()) { toast("全选提取进行中"); return; }
+        if (localPartitions.isEmpty() || currentInput == null) {
+            toast("请先选择文件并解析出分区列表");
+            return;
+        }
+        runExtractAll(currentInput, true, new java.util.ArrayList<>(localPartitions));
+    }
+
+    private void extractAllOnline() {
+        if (extractAllRunning.get()) { toast("全选提取进行中"); return; }
+        String url = onlineUrlInput.getText().toString().trim();
+        if (url.isEmpty() || !(url.startsWith("http://") || url.startsWith("https://"))) {
+            toast("请输入 OTA ZIP 的 URL");
+            return;
+        }
+        selectedFileName = getFileNameFromUrl(url);
+        final String fUrl = url;
+        if (!extractAllRunning.compareAndSet(false, true)) return;
+        extractAllCancel = false;
+        setExtractAllUi(true, false);
+        logOnline("⚡ 全选提取: 整包只下载一次，再逐分区提取");
+        logOnline("URL: " + fUrl);
+        executor.execute(() -> {
+            File zip = null;
+            try {
+                status.setText("正在下载整包...");
+                zip = downloadOnlineZip(fUrl);
+                if (zip == null || extractAllCancel) {
+                    throw new IllegalStateException("整包下载失败");
+                }
+                // 下载完成 → 本地解析（缓存文件 app 自有，JNI 直读）
+                status.setText("正在解析...");
+                logOnline("下载完成，正在解析分区...");
+                if (extractor != null) { try { extractor.close(); } catch (Exception ignored) {} }
+                extractor = new PayloadExtractor();
+                if (!extractor.open(zip.getAbsolutePath())) {
+                    throw new IllegalStateException("无法打开下载的 OTA 包（可能非 OTA ZIP）");
+                }
+                List<PayloadExtractor.PartitionInfo> parts = extractor.listPartitions(true);
+                if (parts.isEmpty()) throw new IllegalStateException("未找到分区");
+                logOnline("找到 " + parts.size() + " 个分区，开始逐分区提取");
+                mainHandler.post(() -> displayPartitionsOnline(parts));
+                Thread.sleep(300);   // 等列表渲染，分区行视图就位
+                runExtractAllCore(zip.getAbsolutePath(), false, parts);
+            } catch (Exception e) {
+                final String msg = e.getMessage() == null ? "unknown" : e.getMessage();
+                logOnline("✗ 全选提取失败: " + msg);
+                mainHandler.post(() -> { status.setText("全选提取失败"); toast("全选提取失败: " + msg); });
+            } finally {
+                if (zip != null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    zip.delete();   // 多 GB 缓存包，用完即清
+                    logOnline("已清理缓存的整包文件");
+                }
+                extractAllRunning.set(false);
+                mainHandler.post(() -> setExtractAllUi(false, false));
+            }
+        });
+    }
+
+    /** 共用入口（本地）：校验 + 包一层运行状态 */
+    private void runExtractAll(String input, boolean isLocal, List<PayloadExtractor.PartitionInfo> parts) {
+        if (!extractAllRunning.compareAndSet(false, true)) return;
+        extractAllCancel = false;
+        setExtractAllUi(true, true);
+        logLocal("⚡ 全选提取: " + parts.size() + " 个分区（root 链路，逐分区顺序）");
+        executor.execute(() -> {
+            try {
+                runExtractAllCore(input, isLocal, parts);
+            } finally {
+                extractAllRunning.set(false);
+                mainHandler.post(() -> setExtractAllUi(false, true));
+            }
+        });
+    }
+
+    /** 运行期间按钮 ↔ 取消语义切换 */
+    private void setExtractAllUi(boolean running, boolean local) {
+        Button btn = local ? localExtractAllButton : onlineExtractAllButton;
+        Button other = local ? onlineExtractAllButton : localExtractAllButton;
+        if (btn != null) {
+            btn.setText(running ? "■ 取消全选提取" : (local
+                    ? "⚡ 全选提取（已列出分区全部提取）"
+                    : "⚡ 全选提取（下载整包一次提取全部）"));
+        }
+        if (other != null) other.setEnabled(!running);
+    }
+
+    /**
+     * 逐分区顺序提取核心：每分区一次 payload_dumper（root 直读输入直写输出），
+     * stat 轮询输出文件字节数驱动分区行进度条，✓/✗ 逐行打日志，结尾汇总。
+     */
+    private void runExtractAllCore(String input, boolean isLocal, List<PayloadExtractor.PartitionInfo> parts) {
+        String outputDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                .getAbsolutePath() + "/DsuManager/" + selectedFileName;
+        File dir = new File(outputDir);
+        if (!dir.exists() && !dir.mkdirs()) {
+            log(isLocal, "✗ 无法创建输出目录: " + outputDir);
+            mainHandler.post(() -> { status.setText("全选提取失败"); toast("无法创建输出目录"); });
+            return;
+        }
+        log(isLocal, "输出目录: " + outputDir);
+        LinearLayout targetList = isLocal ? localPartitionsList : onlinePartitionsList;
+        int ok = 0;
+        long startMs = System.currentTimeMillis();
+        for (int i = 0; i < parts.size(); i++) {
+            if (extractAllCancel) { log(isLocal, "■ 已取消全选提取"); break; }
+            PayloadExtractor.PartitionInfo info = parts.get(i);
+            final String name = info.getName();
+            final long expected = info.getSize();
+            final PartitionItemView itemView = (PartitionItemView) targetList.getChildAt(i);
+            final File outFile = new File(outputDir, name + ".img");
+            // 清残留（防旧文件让进度虚高）
+            com.topjohnwu.superuser.Shell.cmd("rm -f " + DnaTools.quote(outFile.getAbsolutePath())).exec();
+            final int no = i + 1;
+            final int totalParts = parts.size();
+            log(isLocal, "⏳ [" + no + "/" + totalParts + "] " + name
+                    + (expected > 0 ? " (" + fmtMB(expected) + ")" : ""));
+            mainHandler.post(() -> {
+                status.setText("正在提取 " + name + " [" + no + "/" + totalParts + "]");
+                if (itemView != null) { itemView.setOutputPath(outFile.getAbsolutePath()); itemView.setProgress(0, 0, 1); }
+            });
+            final String cmd = DnaTools.quote(dumperPath()) + " " + DnaTools.quote(input)
+                    + " -o " + DnaTools.quote(outputDir) + " -i " + DnaTools.quote(name) + " -n";
+            final java.lang.Process[] proc = new java.lang.Process[1];
+            final java.util.concurrent.atomic.AtomicInteger exitCode =
+                    new java.util.concurrent.atomic.AtomicInteger(-999);
+            final StringBuilder cmdOut = new StringBuilder();
+            Thread runner = new Thread(() -> {
+                try {
+                    java.lang.Process p = new ProcessBuilder("su").start();
+                    proc[0] = p;
+                    p.getOutputStream().write((cmd + "\nexit $?\n").getBytes("UTF-8"));
+                    p.getOutputStream().close();
+                    java.io.BufferedReader reader = new java.io.BufferedReader(
+                            new java.io.InputStreamReader(p.getInputStream()));
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        synchronized (cmdOut) { cmdOut.append(line).append('\n'); }
+                    }
+                    exitCode.set(p.waitFor());
+                } catch (Exception e) {
+                    exitCode.set(-1);
+                }
+            }, "pd-all-extract");
+            runner.setDaemon(true);
+            runner.start();
+            // 进度轮询：stat %b(已分配块)×512 = 真实落盘字节（并行 pwrite 下 %s 会虚高）
+            long lastBytes = 0, lastPollMs = System.currentTimeMillis(), stuckMs = System.currentTimeMillis();
+            while (runner.isAlive()) {
+                try { Thread.sleep(600); } catch (InterruptedException e) { break; }
+                if (extractAllCancel && proc[0] != null) proc[0].destroyForcibly();
+                long bytes = statBytes(outFile.getAbsolutePath());
+                long now = System.currentTimeMillis();
+                float speedMBs = (bytes - lastBytes) / 1048576f / Math.max(0.001f, (now - lastPollMs) / 1000f);
+                int pct = expected > 0 ? (int) Math.min(100, bytes * 100 / expected) : 0;
+                final int p2 = pct;
+                final float sp = speedMBs;
+                mainHandler.post(() -> { if (itemView != null) itemView.setProgress(p2, sp, 1); });
+                if (bytes > lastBytes) { lastBytes = bytes; stuckMs = now; }
+                else if (now - stuckMs > 300000 && proc[0] != null) {   // 5 分钟无进展 → 杀进程
+                    proc[0].destroyForcibly();
+                    log(isLocal, "⏱ " + name + " 提取超时（5 分钟无进展）");
+                }
+                lastPollMs = now;
+            }
+            try { runner.join(3000); } catch (InterruptedException ignored) { }
+            long size = statBytes(outFile.getAbsolutePath());
+            if (exitCode.get() == 0 && size > 0) {
+                ok++;
+                log(isLocal, "✓ " + name + ".img (" + fmtMB(size) + ") 提取完成");
+                mainHandler.post(() -> { if (itemView != null) itemView.setComplete(); });
+            } else if (extractAllCancel) {
+                log(isLocal, "■ " + name + " 已取消");
+                mainHandler.post(() -> { if (itemView != null) itemView.setError("已取消"); });
+                break;
+            } else {
+                String err = cmdOut.toString().trim();
+                String brief = err.isEmpty() ? ("退出码 " + exitCode.get()) : err.split("\n")[err.split("\n").length - 1];
+                log(isLocal, "✗ " + name + " 提取失败: " + brief);
+                if (brief.contains("delta") || brief.toLowerCase().contains("incremental")) {
+                    log(isLocal, "  提示: 这是增量 OTA 包，请使用 DNA 工具箱 → 分解增量包");
+                }
+                mainHandler.post(() -> { if (itemView != null) itemView.setError("提取失败"); });
+            }
+        }
+        final int okF = ok;
+        final long secs = (System.currentTimeMillis() - startMs) / 1000;
+        if (!extractAllCancel) {
+            log(isLocal, (okF == parts.size() ? "✓ 全选提取完成: " : "⚠ 全选提取部分失败: ")
+                    + okF + "/" + parts.size() + " · 耗时 " + secs + "s");
+            log(isLocal, "文件位于: " + outputDir);
+            mainHandler.post(() -> {
+                status.setText(okF == parts.size() ? "全选提取完成 · " + okF : "部分完成 · " + okF + "/" + parts.size());
+                toast(okF == parts.size() ? "全选提取完成" : "完成 " + okF + "/" + parts.size());
+            });
+        }
+    }
+
+    /** root stat 输出文件已写入字节（%b×512，异常回退 %s；文件不存在 = 0） */
+    private long statBytes(String path) {
+        try {
+            com.topjohnwu.superuser.Shell.Result r = com.topjohnwu.superuser.Shell.cmd(
+                    "stat -c '%b %s' " + DnaTools.quote(path) + " 2>/dev/null || echo '0 0'").exec();
+            if (r.getOut().isEmpty()) return 0;
+            String[] pv = r.getOut().get(0).trim().split("\\s+");
+            long blk = Long.parseLong(pv[0]);
+            return blk > 0 ? blk * 512 : (pv.length > 1 ? Long.parseLong(pv[1]) : 0);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private String fmtMB(long bytes) {
+        if (bytes >= 1L << 30) return String.format(java.util.Locale.US, "%.1fG", bytes / 1073741824f);
+        if (bytes >= 1L << 20) return String.format(java.util.Locale.US, "%.1fM", bytes / 1048576f);
+        return (bytes / 1024) + "K";
+    }
+
+    private void log(boolean isLocal, String msg) {
+        if (isLocal) logLocal(msg); else logOnline(msg);
+    }
+
+    /**
+     * 在线全选的整包下载：GitHub 系链接镜像优先 + 直连垫底 + 慢速看门狗（同 UpdateCenter v3.40.11）。
+     * 修复在线单分区提取的固有缺陷 —— 每个分区都要重新流式下载，N 个分区 = N 次下载。
+     */
+    private File downloadOnlineZip(String url) {
+        boolean gh = isGithubHost(url);
+        File out = new File(getCacheDir(), "payload_online_full.zip");
+        //noinspection ResultOfMethodCallIgnored
+        out.delete();
+        for (int si = 0; si < (gh ? GH_MIRRORS.length : 1); si++) {
+            if (extractAllCancel) return null;
+            String src = (gh ? GH_MIRRORS[si] : "") + url;
+            boolean lastSource = gh && si == GH_MIRRORS.length - 1;
+            java.net.HttpURLConnection conn = null;
+            try {
+                logOnline((gh ? "下载源 " + (si + 1) + "/" + GH_MIRRORS.length + ": " : "下载源: ")
+                        + (src.equals(url) ? "直连" : GH_MIRRORS[si]));
+                conn = (java.net.HttpURLConnection) new java.net.URL(src).openConnection();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(30000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("User-Agent", "Dsu-Manager-Android/" + BuildConfig.VERSION_NAME);
+                int code = conn.getResponseCode();
+                if (code < 200 || code >= 300) throw new java.io.IOException("HTTP " + code);
+                long total = conn.getContentLengthLong();
+                boolean slow = false;
+                try (java.io.InputStream in = conn.getInputStream();
+                     java.io.FileOutputStream fo = new java.io.FileOutputStream(out)) {
+                    byte[] buf = new byte[16384];
+                    int read;
+                    long done = 0, winBytes = 0, winStart = System.currentTimeMillis();
+                    long lastLog = 0, slowSince = System.currentTimeMillis();
+                    while ((read = in.read(buf)) != -1) {
+                        if (extractAllCancel) throw new java.io.IOException("cancelled");
+                        fo.write(buf, 0, read);
+                        done += read;
+                        winBytes += read;
+                        long now = System.currentTimeMillis();
+                        if (now - lastLog >= 1000) {
+                            long dt = Math.max(1, now - winStart);
+                            long speed = winBytes * 1000 / dt;   // 窗口内真实速度
+                            winBytes = 0;
+                            winStart = now;
+                            lastLog = now;
+                            // 慢速看门狗：达标重置；持续过慢且后面还有源 → 弃源切换
+                            if (speed >= SLOW_SPEED) slowSince = now;
+                            else if (!lastSource && now - slowSince >= SLOW_WINDOW_MS) { slow = true; break; }
+                            int pct = total > 0 ? (int) (done * 100 / total) : -1;
+                            logOnline("↓ " + (pct >= 0 ? pct + "% · " : "") + fmtMB(done)
+                                    + (total > 0 ? " / " + fmtMB(total) : "")
+                                    + " · " + fmtMB(speed) + "/s");
+                        }
+                    }
+                }
+                if (slow) {
+                    //noinspection ResultOfMethodCallIgnored
+                    out.delete();
+                    logOnline("源过慢，自动切换下一个下载源...");
+                    continue;
+                }
+                // ZIP 头校验（镜像可能返回 HTML 错误页）
+                try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(out, "r")) {
+                    byte[] head = new byte[2];
+                    raf.readFully(head);
+                    if (head[0] != 'P' || head[1] != 'K') throw new java.io.IOException("下载内容不是 ZIP（镜像返回无效内容）");
+                }
+                return out;
+            } catch (Exception e) {
+                //noinspection ResultOfMethodCallIgnored
+                out.delete();
+                logOnline("下载失败: " + e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+        return null;
+    }
+
+    private boolean isGithubHost(String url) {
+        String[] hosts = {
+                "https://github.com/", "https://raw.githubusercontent.com/",
+                "https://objects.githubusercontent.com/", "https://release-assets.githubusercontent.com/",
+                "https://gist.githubusercontent.com/", "https://codeload.github.com/",
+                "https://media.githubusercontent.com/", "https://cloud.githubusercontent.com/"};
+        for (String h : hosts) if (url != null && url.startsWith(h)) return true;
+        return false;
+    }
+
     private void closeOpenedFd() {
         if (openedFd != null) {
             try {
