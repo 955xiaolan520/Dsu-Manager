@@ -287,15 +287,8 @@ public final class DnaModuleActivity extends BaseActivity {
         consoleHead.addView(copyConsole, new LinearLayout.LayoutParams(-2, dp(30)));
         consoleHead.setPadding(0, 0, 0, dp(8));
         consoleCard.addView(consoleHead, new LinearLayout.LayoutParams(-1, -2));
-        consoleScroll = new ScrollView(this);
-        // v3.28.12 修复：内嵌 ScrollView 在外层 ScrollView 中被拦截触摸 → 日志无法上下滑动。
-        // 触摸时通知外层不要拦截（与 MainActivity.runDnaConsole 相同方案）
-        consoleScroll.setOnTouchListener((sv, event) -> {
-            int action = event.getActionMasked();
-            sv.getParent().requestDisallowInterceptTouchEvent(
-                    action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
-            return false;
-        });
+        // v3.41.11：BoundedScrollView（OTG 触摸模型，整条祖先链独占）替换裸 ScrollView
+        consoleScroll = new DnaActivity.BoundedScrollView(this, 0);
         consoleText = new TextView(this);
         consoleText.setTypeface(Typeface.MONOSPACE);
         consoleText.setTextSize(11.5f);

@@ -3415,21 +3415,13 @@ public class MainActivity extends BaseActivity {
           logHeader.addView(copyLogButton, new LinearLayout.LayoutParams(-2, dp(34)));
           card.addView(logHeader);
           
-          flashLogScroll = new ScrollView(this);
+          // v3.41.11：BoundedScrollView（OTG 触摸模型，整条祖先链独占）替换裸 ScrollView
+          flashLogScroll = new DnaActivity.BoundedScrollView(this, 0);
           flashLogScroll.setVerticalScrollBarEnabled(true);
           flashLogScroll.setScrollbarFadingEnabled(false);
           flashLogScroll.setFillViewport(false);
           flashLogScroll.setNestedScrollingEnabled(false);  // 禁用嵌套滚动
-          // 阻止父容器拦截触摸事件，允许滚动
-          flashLogScroll.setOnTouchListener((view, event) -> {
-              ViewParent parent = view.getParent();
-              if (parent != null) {
-                  int action = event.getActionMasked();
-                  parent.requestDisallowInterceptTouchEvent(action != android.view.MotionEvent.ACTION_UP && action != android.view.MotionEvent.ACTION_CANCEL);
-              }
-              return false;
-          });
-          
+
           flashLogText = new TextView(this);
           flashLogText.setText("");
           flashLogText.setTextSize(12);  // 缩小到12sp
@@ -4731,18 +4723,11 @@ public class MainActivity extends BaseActivity {
           embeddedReleaseNotes = text("", 13, Color.rgb(80, 88, 105));
           embeddedReleaseNotes.setGravity(Gravity.TOP | Gravity.START);
           embeddedReleaseNotes.setPadding(dp(14), dp(10), dp(14), dp(10));
-          embeddedReleaseNotesScroll = new ScrollView(this);
+          // v3.41.11：BoundedScrollView（OTG 触摸模型，整条祖先链独占）替换裸 ScrollView
+          embeddedReleaseNotesScroll = new DnaActivity.BoundedScrollView(this, 0);
           embeddedReleaseNotesScroll.setFillViewport(false);
           embeddedReleaseNotesScroll.setVerticalScrollBarEnabled(true);
           embeddedReleaseNotesScroll.setBackgroundResource(R.drawable.liquid_glass_panel);
-          embeddedReleaseNotesScroll.setOnTouchListener((view, event) -> {
-              ViewParent parent = view.getParent();
-              if (parent != null) {
-                  int action = event.getActionMasked();
-                  parent.requestDisallowInterceptTouchEvent(action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
-              }
-              return false;
-          });
           embeddedReleaseNotesScroll.addView(embeddedReleaseNotes, new ScrollView.LayoutParams(-1, -2));
           embeddedReleaseNotesScroll.setVisibility(View.GONE);
           LinearLayout.LayoutParams notesParams = new LinearLayout.LayoutParams(-1, dp(180));

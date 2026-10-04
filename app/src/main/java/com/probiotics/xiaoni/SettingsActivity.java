@@ -222,17 +222,10 @@ public final class SettingsActivity extends BaseActivity {
            releaseNotes = label("", 13, Color.rgb(80, 88, 105));
            releaseNotes.setGravity(Gravity.TOP | Gravity.START);
            releaseNotes.setPadding(dp(14), dp(10), dp(14), dp(10));
-           ScrollView notesScroll = new ScrollView(this);
+           // v3.41.11：BoundedScrollView（OTG 触摸模型，整条祖先链独占）替换裸 ScrollView
+           ScrollView notesScroll = new DnaActivity.BoundedScrollView(this, 0);
            notesScroll.setFillViewport(false);
            notesScroll.setVerticalScrollBarEnabled(true);
-           notesScroll.setOnTouchListener((view, event) -> {
-               if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE) {
-                   view.getParent().requestDisallowInterceptTouchEvent(true);
-               } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-                   view.getParent().requestDisallowInterceptTouchEvent(false);
-               }
-               return false;
-           });
           notesScroll.setBackgroundResource(R.drawable.rounded_panel);
           notesScroll.addView(releaseNotes);
           notesScroll.setVisibility(android.view.View.GONE);

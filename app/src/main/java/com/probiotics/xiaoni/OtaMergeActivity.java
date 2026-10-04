@@ -553,21 +553,13 @@ public class OtaMergeActivity extends BaseActivity {
         logTitle.setTypeface(null, Typeface.BOLD);
         logPanel.addView(logTitle);
 
-        // 使用 ScrollView + TextView 方案（完全照搬 PayloadDumperActivity）
-        logScroll = new ScrollView(this);
+        // 使用 ScrollView + TextView 方案
+        // v3.41.11：BoundedScrollView（OTG 触摸模型，整条祖先链独占）替换裸 ScrollView
+        logScroll = new DnaActivity.BoundedScrollView(this, 0);
         logScroll.setVerticalScrollBarEnabled(true);
         logScroll.setScrollbarFadingEnabled(false);
         logScroll.setFillViewport(false);
         logScroll.setBackgroundResource(R.drawable.dark_liquid_glass);
-        // 阻止父容器拦截触摸事件，允许滚动
-        logScroll.setOnTouchListener((view, event) -> {
-            ViewParent parent = view.getParent();
-            if (parent != null) {
-                int action = event.getActionMasked();
-                parent.requestDisallowInterceptTouchEvent(action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
-            }
-            return false;
-        });
         
         logText = new TextView(this);
         logText.setText("等待开始...");

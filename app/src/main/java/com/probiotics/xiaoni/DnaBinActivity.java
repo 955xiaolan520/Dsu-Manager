@@ -398,7 +398,8 @@ public final class DnaBinActivity extends BaseActivity {
         head.addView(clear, clLp);
         card.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
-        consoleScroll = new ScrollView(this);
+        // v3.41.11：BoundedScrollView（OTG 触摸模型，整条祖先链独占）替换裸 ScrollView
+        consoleScroll = new DnaActivity.BoundedScrollView(this, 0);
         consoleText = new TextView(this);
         consoleText.setTypeface(android.graphics.Typeface.MONOSPACE);
         consoleText.setTextSize(11f);
@@ -408,20 +409,6 @@ public final class DnaBinActivity extends BaseActivity {
         consoleText.setHorizontallyScrolling(false);
         consoleText.setPadding(dp(2), dp(4), dp(2), dp(6));
         consoleScroll.addView(consoleText, new ScrollView.LayoutParams(-1, -2));
-        consoleScroll.setOnTouchListener((v, e) -> {
-            // 手指在内层日志框上时，禁止外层页面 ScrollView 拦截；抬起后恢复
-            switch (e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                case MotionEvent.ACTION_MOVE:
-                    v.getParent().requestDisallowInterceptTouchEvent(true);
-                    break;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    v.getParent().requestDisallowInterceptTouchEvent(false);
-                    break;
-            }
-            return false;
-        });
         card.addView(consoleScroll, new LinearLayout.LayoutParams(-1, dp(300)));
         return card;
     }

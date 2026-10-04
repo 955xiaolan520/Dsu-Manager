@@ -579,19 +579,11 @@ public final class PayloadDumperActivity extends BaseActivity {
         logPanel.addView(headerRow, new LinearLayout.LayoutParams(-1, -2));
         
         // 使用 ScrollView + TextView 方案
-        onlineLogScroll = new ScrollView(this);
+        // v3.41.11：BoundedScrollView（OTG 触摸模型，整条祖先链独占）替换裸 ScrollView
+        onlineLogScroll = new DnaActivity.BoundedScrollView(this, 0);
         onlineLogScroll.setVerticalScrollBarEnabled(true);
         onlineLogScroll.setScrollbarFadingEnabled(false);
         onlineLogScroll.setFillViewport(false);
-        // 关键：阻止父容器拦截触摸事件，允许滚动
-        onlineLogScroll.setOnTouchListener((view, event) -> {
-            ViewParent parent = view.getParent();
-            if (parent != null) {
-                int action = event.getActionMasked();
-                parent.requestDisallowInterceptTouchEvent(action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
-            }
-            return false;
-        });
         
         onlineLogDisplay = new TextView(this);
         onlineLogDisplay.setText("");
@@ -629,7 +621,9 @@ public final class PayloadDumperActivity extends BaseActivity {
         panel.addView(hint);
         
         // 显示选择的文件名和路径（可滚动）
-        ScrollView fileInfoScroll = new ScrollView(this);
+        // v3.41.11：BoundedScrollView（OTG 触摸模型）——dispatchTouchEvent 保证
+        // setTextIsSelectable(true) 的 TextView 消费触摸时拦截权仍生效
+        ScrollView fileInfoScroll = new DnaActivity.BoundedScrollView(this, 0);
         fileInfoScroll.setBackgroundResource(R.drawable.dark_liquid_glass);
         
         localFileNameDisplay = new TextView(this);
@@ -714,19 +708,11 @@ public final class PayloadDumperActivity extends BaseActivity {
         logPanel.addView(headerRow, new LinearLayout.LayoutParams(-1, -2));
         
         // 使用 ScrollView + TextView 方案
-        localLogScroll = new ScrollView(this);
+        // v3.41.11：BoundedScrollView（OTG 触摸模型，整条祖先链独占）替换裸 ScrollView
+        localLogScroll = new DnaActivity.BoundedScrollView(this, 0);
         localLogScroll.setVerticalScrollBarEnabled(true);
         localLogScroll.setScrollbarFadingEnabled(false);
         localLogScroll.setFillViewport(false);
-        // 关键：阻止父容器拦截触摸事件，允许滚动
-        localLogScroll.setOnTouchListener((view, event) -> {
-            ViewParent parent = view.getParent();
-            if (parent != null) {
-                int action = event.getActionMasked();
-                parent.requestDisallowInterceptTouchEvent(action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
-            }
-            return false;
-        });
         
         localLogDisplay = new TextView(this);
         localLogDisplay.setText("");

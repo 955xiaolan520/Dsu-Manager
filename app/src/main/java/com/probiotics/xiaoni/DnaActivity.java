@@ -118,7 +118,14 @@ public final class DnaActivity extends BaseActivity {
         }
     }
 
-    /** 限高 ScrollView（文件 / 分区列表内嵌滚动，不撑爆页面） */
+    /**
+     * 限高 ScrollView（文件 / 分区列表 / 日志等内嵌滚动，不撑爆页面）。
+     * v3.41.11 通用化：maxHeightPx <= 0 表示不限高（纯 OTG 触摸模型，日志 /
+     * 文件信息等固定高度内嵌滚动区用），> 0 保持限高语义。
+     * 全 DNA 页面统一用它替换裸 ScrollView —— OTG 触摸模型（按下期间对整条
+     * 祖先链独占手势，抬手恢复），旧实现只给一级父发禁拦截请求（卡片
+     * LinearLayout，非滚动容器），外层页面 ScrollView 根本收不到 → 滚动被抢。
+     */
     public static class BoundedScrollView extends ScrollView {
         private final int maxHeight;
         public BoundedScrollView(android.content.Context c, int maxHeightPx) {
@@ -157,7 +164,7 @@ public final class DnaActivity extends BaseActivity {
         @Override
         protected void onMeasure(int wms, int hms) {
             super.onMeasure(wms, hms);
-            if (getMeasuredHeight() > maxHeight) {
+            if (maxHeight > 0 && getMeasuredHeight() > maxHeight) {
                 setMeasuredDimension(getMeasuredWidth(), maxHeight);
             }
         }
