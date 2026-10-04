@@ -115,7 +115,14 @@ public final class DownloadService extends Service {
         Task(String id, String address, File output, String page, String pkg, int threads, long chunkMB) {
             this.id = id;
             this.address = address;
-            this.liveAddress = address;   // v3.9.16：默认直连，镜像回退时改写
+            // v3.40.11：GitHub 系链接镜像优先（国内直连能连上但常被限速到 KB/s 级且不报错，
+            // 多线程 aria2 也救不回；旧「直连失败才切镜像」会一直卡在慢源上）
+            if (isGithubHost(address)) {
+                this.liveAddress = GITHUB_MIRRORS[0] + address;
+                this.mirrorIndex = 1;
+            } else {
+                this.liveAddress = address;
+            }
             this.output = output;
             this.page = page;
             this.pkg = pkg;
@@ -410,18 +417,22 @@ public final class DownloadService extends Service {
             engine.run();
             task.downloader = null;
             if (task.cancelled) break;
-            // v3.9.16：GitHub 直连失败 → 自动切换加速镜像重试（不挂 VPN 也能下载）。
+            // v3.9.16→v3.40.11：GitHub 源失败自动切换（镜像优先链：镜像1→镜像2→镜像3→直连垫底）。
             // 注意 onError 会置 paused=true，必须在「暂停等待」分支之前处理，否则卡死。
             if (failed[0] && !completed[0]
-                    && isGithubHost(task.address) && task.mirrorIndex < GITHUB_MIRRORS.length) {
-                String mirror = GITHUB_MIRRORS[task.mirrorIndex++];
-                // 镜像与直连的分片/ETag 不保证一致 → 清断点从头下载（直连失败通常没下到内容）
+                    && isGithubHost(task.address) && task.mirrorIndex <= GITHUB_MIRRORS.length) {
+                boolean toDirect = task.mirrorIndex == GITHUB_MIRRORS.length;   // 镜像用尽 → 直连兜底
+                String mirror = toDirect ? "" : GITHUB_MIRRORS[task.mirrorIndex];
+                task.mirrorIndex++;
+                // 镜像与直连的分片/ETag 不保证一致 → 清断点从头下载（失败通常没下到内容）
                 Aria2Downloader.deleteCancelledDownload(task.output);
                 task.done = -1; task.total = -1; task.speed = -1; task.eta = -1; task.lastPercent = -1;
                 task.liveAddress = mirror + task.address;
                 task.paused = false;
-                broadcastTask(task, "GitHub 直连失败，自动切换加速镜像重试（"
-                        + task.mirrorIndex + "/" + GITHUB_MIRRORS.length + "）...", -1, -1);
+                broadcastTask(task, toDirect
+                        ? "加速镜像均失败，改用 GitHub 直连重试..."
+                        : "下载失败，自动切换加速镜像重试（"
+                            + task.mirrorIndex + "/" + GITHUB_MIRRORS.length + "）...", -1, -1);
                 notifyTaskNow(task);
                 continue;
             }

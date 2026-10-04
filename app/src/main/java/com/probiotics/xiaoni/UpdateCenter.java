@@ -52,20 +52,27 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class UpdateCenter {
 
-    /** GitHub API 直连 + 加速镜像（前缀式，逐个回退） */
+    /**
+     * GitHub API 检查地址（前缀式，逐个回退）。
+     * v3.40.11 改为镜像优先、直连垫底：国内直连 GitHub 现在能连上但常被限速且不报错，
+     * 旧的「直连优先」会一路卡在慢源上（以前快是因为直连被秒重置、立刻落到镜像）。
+     */
     private static final String[] API_URLS = {
-            "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
             "https://gh-proxy.com/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
             "https://ghfast.top/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
             "https://ghproxy.net/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
+            "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
     };
-    /** APK 下载地址前缀：空串 = 直连，其余为加速镜像 */
+    /** APK 下载地址前缀：v3.40.11 镜像优先，空串 = 直连垫底 */
     private static final String[] DL_PREFIXES = {
-            "",
             "https://gh-proxy.com/",
             "https://ghfast.top/",
             "https://ghproxy.net/",
+            "",
     };
+    /** v3.40.11 慢速看门狗：任一下载源持续低于此速度达 SLOW_WINDOW_MS 且后面还有源可换 → 弃源切换 */
+    private static final long SLOW_SPEED = 128 * 1024;   // 128 KB/s
+    private static final long SLOW_WINDOW_MS = 6000;     // 持续 6 秒
 
     private static final String REPO_PAGE =
             "https://github.com/955xiaolan520/Dsu-Manager/releases";
@@ -395,11 +402,15 @@ public final class UpdateCenter {
         new Thread(() -> {
             Exception last = null;
             boolean done = false;
-            for (String prefix : DL_PREFIXES) {
+            // v3.40.11：镜像优先逐个回退 + 慢速看门狗。
+            // 旧逻辑只有「连接失败」才切源——现在直连 GitHub 能连上但被限速到 KB/s 级，
+            // 永远不失败 → 永远不切换 → 14 KB/s 龟速爬完；看门狗补上「连得上但太慢」的切换触发。
+            for (int pi = 0; pi < DL_PREFIXES.length; pi++) {
                 if (cancelled.get() || done) break;
+                final boolean lastSource = pi == DL_PREFIXES.length - 1;
                 HttpURLConnection connection = null;
                 try {
-                    connection = (HttpURLConnection) new URL(prefix + info.apkUrl).openConnection();
+                    connection = (HttpURLConnection) new URL(DL_PREFIXES[pi] + info.apkUrl).openConnection();
                     connection.setConnectTimeout(10000);
                     connection.setReadTimeout(30000);
                     connection.setInstanceFollowRedirects(true);
@@ -407,11 +418,13 @@ public final class UpdateCenter {
                     int code = connection.getResponseCode();
                     if (code < 200 || code >= 300) throw new java.io.IOException("HTTP " + code);
                     long contentLength = connection.getContentLengthLong();
+                    boolean slowSource = false;
                     try (InputStream input = connection.getInputStream();
                          FileOutputStream output = new FileOutputStream(apk)) {
                         byte[] buffer = new byte[16384];
                         int read;
                         long total = 0, windowBytes = 0, windowStart = System.currentTimeMillis(), lastUi = 0;
+                        long slowSince = System.currentTimeMillis();
                         while ((read = input.read(buffer)) != -1) {
                             if (cancelled.get()) throw new java.io.IOException("cancelled");
                             output.write(buffer, 0, read);
@@ -423,6 +436,12 @@ public final class UpdateCenter {
                                 long speed = windowBytes * 1000 / Math.max(1, now - windowStart);
                                 windowBytes = 0;
                                 windowStart = now;
+                                // 慢速看门狗：速度达标就重置计时；持续过慢且后面还有源 → 弃源切换
+                                if (speed >= SLOW_SPEED) slowSince = now;
+                                else if (!lastSource && now - slowSince >= SLOW_WINDOW_MS) {
+                                    slowSource = true;
+                                    break;
+                                }
                                 final long t = total, cl = contentLength, sp = speed;
                                 ui.post(() -> {
                                     int p = cl > 0 ? (int) Math.min(100, t * 100 / cl) : 0;
@@ -437,6 +456,13 @@ public final class UpdateCenter {
                                 });
                             }
                         }
+                    }
+                    if (slowSource) {
+                        //noinspection ResultOfMethodCallIgnored
+                        apk.delete();
+                        ui.post(() -> speedView.setText(english
+                                ? "slow source, switching..." : "源过慢，自动切换下一个..."));
+                        throw new java.io.IOException("slow source, switching");
                     }
                     // ZIP 头校验：镜像异常时可能返回 HTML 错误页
                     if (!isZipFile(apk)) {
@@ -473,7 +499,7 @@ public final class UpdateCenter {
                     String error = failure == null ? "unknown" : failure.getMessage();
                     if (listener != null) {
                         listener.onFailed((english ? "Download failed: " : "下载失败: ") + error
-                                + (english ? " (all mirrors unreachable)" : "（直连与全部加速镜像均不可达）"));
+                                + (english ? " (all sources unreachable)" : "（全部加速镜像与直连均不可用）"));
                     } else {
                         Toast.makeText(activity,
                                 (english ? "Download failed: " : "下载失败: ") + error, Toast.LENGTH_LONG).show();
