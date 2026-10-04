@@ -843,12 +843,15 @@ public final class PayloadDumperActivity extends BaseActivity {
                 if (extractor != null) {
                     extractor.close();
                 }
-                // v3.40.14 解析三级链（修复 root 属主文件解析慢/失败）：
-                // chmod/chown 在 /sdcard（FUSE）上不生效（上版实测仍走缓存复制 32s）——放弃该路线。
-                // ① Java 直读 manifest（app 属主文件毫秒级；root 属主快速失败）
-                // ② payload_dumper --list（root，bin/zip 直读原路径，root 属主也能读）
-                // ③ JNI 兜底：root cp 到缓存 + chmod 644 再 open（仅前两级都失败时）
+                // v3.40.17 解析四级链（root 属主文件彻底修复）：
+                // ① root 放行底层真实路径（FUSE 视图 chmod/chown 对 root 属主文件无效，
+                //    必须操作 /data/media/0/...；放行后 app/JNI 可直读原路径）
+                // ② Java 直读 manifest（app 属主/已放行文件毫秒级；zip 非 CrAU 头自动跳过）
+                // ③ payload_dumper --list（root，bin/zip 直读原路径，root 属主也能读）
+                // ④ JNI 兜底：resolveJniReadable（放行成功直读原路径；彻底失败才复制缓存，
+                //    副本进程级 memo 共享——后续提取不再二次复制）
                 originalLocalPath = path;
+                DnaTools.rootRelaxForApp(path, msg -> { logLocal(msg); return kotlin.Unit.INSTANCE; });
                 List<PayloadExtractor.PartitionInfo> partitions = PayloadExtractor.fastListPartitions(path);
                 if (partitions == null || partitions.isEmpty()) {
                     logLocal("… 改用 payload_dumper 解析 ...");
@@ -859,17 +862,15 @@ public final class PayloadDumperActivity extends BaseActivity {
                     if (r.getSuccess()) partitions = parseDumperList(r.getOutput());
                 }
                 if (partitions == null || partitions.isEmpty()) {
-                    logLocal("… 改用 JNI 解析（复制到缓存）...");
-                    File cacheFile = new File(getCacheDir(), "payload_browser_input");
-                    com.topjohnwu.superuser.Shell.cmd(
-                            "cp -f '" + path + "' '" + cacheFile.getAbsolutePath()
-                                    + "' && chmod 644 '" + cacheFile.getAbsolutePath() + "'").exec();
+                    logLocal("… 改用 JNI 解析 ...");
+                    String jniInput = DnaTools.resolveJniReadable(PayloadDumperActivity.this, path,
+                            msg -> { logLocal(msg); return kotlin.Unit.INSTANCE; });
                     boolean ok = false;
-                    if (cacheFile.isFile() && cacheFile.length() > 0) {
-                        currentInput = cacheFile.getAbsolutePath();
+                    if (jniInput != null) {
+                        currentInput = jniInput;
                         logLocal("文件路径: " + currentInput);
                         extractor = new PayloadExtractor();
-                        ok = extractor.open(currentInput);
+                        ok = extractor.open(jniInput);
                     }
                     if (!ok) {
                         logLocal("错误: 无法打开文件");
@@ -881,7 +882,7 @@ public final class PayloadDumperActivity extends BaseActivity {
                     }
                     partitions = extractor.listPartitions(true);
                 } else {
-                    // 快速路径成功：提取走 root dumper（原路径直读），无需 JNI 句柄
+                    // 快速路径成功：提取走 JNI（extractPartition 自带 input 参数），无需句柄
                     extractor = new PayloadExtractor();
                 }
                 logLocal("成功，找到 " + partitions.size() + " 个分区");
@@ -941,19 +942,24 @@ public final class PayloadDumperActivity extends BaseActivity {
                         }
                         
                         currentInput = path;
+                        // v3.40.17：SAF 链路同样记录原始路径（提取走 JNI memo，防浏览器/SAF
+                        // 混用时 originalLocalPath 残留上一个文件）
+                        originalLocalPath = path;
                         logLocal("文件路径: " + path);
                         mainHandler.post(() -> {
                             status.setText("正在解析...");
                             localPartitionsList.removeAllViews();
                         });
-                        
+
                         Thread.sleep(500);
-                        
+
                         logLocal("正在打开 Payload...");
                         if (extractor != null) {
                             extractor.close();
                         }
-                        
+
+                        // v3.40.17：root 属主文件先放行底层真实路径（幂等，已可读则零开销）
+                        DnaTools.rootRelaxForApp(path, msg -> { logLocal(msg); return kotlin.Unit.INSTANCE; });
                         extractor = new PayloadExtractor();
                         boolean success = extractor.open(path);
                         
@@ -1242,302 +1248,43 @@ public final class PayloadDumperActivity extends BaseActivity {
                 android.util.Log.d("PayloadDumper", "分区: " + partitionName);
                 android.util.Log.d("PayloadDumper", "输入: " + currentInput);
                 android.util.Log.d("PayloadDumper", "输出目录: " + outputDir);
-                android.util.Log.d("PayloadDumper", "Token: " + token);
-                
-                if (isLocal) {
-                    // v3.40.15：本地 JNI 提取（libpayload_extract_jni.so 多线程，94s/16.5G 实测级）
-                    String rawInput = originalLocalPath != null ? originalLocalPath : currentInput;
-                    String jniInput = DnaTools.ensureJniReadable(PayloadDumperActivity.this, rawInput,
-                            msg -> { logLocal(msg); return kotlin.Unit.INSTANCE; });
-                    if (jniInput == null) {
-                        logLocal("✗ 输入文件无法读取（root 授权异常？）");
-                        mainHandler.post(() -> {
-                            if (itemView != null) itemView.setError("读取失败");
-                            toast("输入文件无法读取");
-                        });
-                        return;
-                    }
-                    boolean ok = extractOnePartition(jniInput, outputDir, partitionName,
-                            finalPartitionSize, itemView, true,
-                            () -> Boolean.TRUE.equals(cancelledTokens.get(token)));
-                    // 兜底缓存副本用完即清
-                    if (!jniInput.equals(rawInput)) {
-                        //noinspection ResultOfMethodCallIgnored
-                        new File(jniInput).delete();
-                    }
-                    if (ok) {
-                        final String fp = finalOutputPath;
-                        mainHandler.post(() ->
-                                toast("提取完成: " + partitionName + "\n保存到: " + fp));
-                    }
-                    return;   // 结果日志/进度/状态已由 extractOnePartition 处理
-                }
 
-                if (extractor == null) {
-                    throw new Exception("Extractor is null");
+                // v3.40.19：统一 root CLI 提取（libpayload_extract.so pie 可执行）——
+                // root 直读输入（本地 bin/zip 原路径、在线 URL 均可）、root 直写输出目录，
+                // 无 FUSE 权限障碍、零复制；进度/结果日志由 extractOnePartition 内部处理
+                String rawInput = isLocal && originalLocalPath != null ? originalLocalPath : currentInput;
+                boolean ok = extractOnePartition(rawInput, outputDir, partitionName,
+                        finalPartitionSize, itemView, isLocal,
+                        () -> Boolean.TRUE.equals(cancelledTokens.get(token)));
+                if (ok) {
+                    final String fp = finalOutputPath;
+                    mainHandler.post(() ->
+                            toast("提取完成: " + partitionName + "\n保存到: " + fp));
                 }
-
-                extractor.extractPartition(currentInput, outputDir, partitionName, 4, false, token);
-                android.util.Log.d("PayloadDumper", "提取调用完成: " + partitionName);
             } catch (Exception e) {
                 android.util.Log.e("PayloadDumper", "========== 提取失败 ==========");
                 android.util.Log.e("PayloadDumper", "分区: " + partitionName, e);
-                android.util.Log.e("PayloadDumper", "错误消息: " + e.getMessage());
-                android.util.Log.e("PayloadDumper", "错误类型: " + e.getClass().getName());
-                
+
                 String errorMsg = e.getMessage();
-                String displayMsg = errorMsg;
-                
-                // 检测增量 OTA 错误
-                if (errorMsg != null && errorMsg.contains("delta/incremental OTA")) {
-                    displayMsg = "这是增量 OTA 包，需要源分区数据才能提取\n当前版本暂不支持增量 OTA";
-                    if (isLocal) {
-                        logLocal("错误: 增量 OTA 包不支持");
-                        logLocal("提示: 请使用完整 OTA 包");
-                    } else {
-                        logOnline("错误: 增量 OTA 包不支持");
-                        logOnline("提示: 请使用完整 OTA 包");
-                    }
+                if (isLocal) {
+                    logLocal("提取失败: " + partitionName + " - " + errorMsg);
                 } else {
-                    if (isLocal) {
-                        logLocal("提取失败: " + partitionName + " - " + errorMsg);
-                    } else {
-                        logOnline("提取失败: " + partitionName + " - " + errorMsg);
-                    }
+                    logOnline("提取失败: " + partitionName + " - " + errorMsg);
                 }
-                
-                final String finalDisplayMsg = displayMsg;
+                final String finalDisplayMsg = errorMsg == null ? "unknown" : errorMsg;
                 mainHandler.post(() -> {
                     if (itemView != null) {
                         itemView.setError("提取失败");
                     }
                     toast("提取失败: " + partitionName + "\n" + finalDisplayMsg);
                 });
-                return;
             }
         });
         
-        // 启动进度监听线程
-        executor.execute(() -> {
-            try {
-                // v3.40.14：本地链路进度由 extractOnePartition 的 stat 轮询驱动，
-                // 此 JNI 进度监听仅保留给在线（URL 流式）提取；设系统属性
-                // pd.legacy.progress=true 可强制走旧监听（诊断用）
-                if (isLocal && !Boolean.getBoolean("pd.legacy.progress")) return;
-                Thread.sleep(1000); // 等待提取线程启动
-                
-                long startTime = System.currentTimeMillis();
-                int lastPercent = -1;
-                int lastPhase = -1;
-                long lastTime = startTime;
-                int stuckCount = 0;
-                int nullCount = 0;
-
-                // 速度平滑：移动平均
-                java.util.LinkedList<Float> speedHistory = new java.util.LinkedList<>();
-                final int SPEED_WINDOW = 5; // 取最近 5 次的平均值
-
-                // v3.9.3：下载阶段用系统网络接收字节计算真实网速（与状态栏同源）
-                long lastRxBytes = -1;
-                
-                android.util.Log.d("PayloadDumper", "开始监听进度: " + partitionName + ", 文件大小: " + (finalPartitionSize / 1024 / 1024) + " MB");
-                
-                while (true) {
-                    Thread.sleep(500);
-                    
-                    // 检查是否被取消
-                    if (cancelledTokens.containsKey(token) && cancelledTokens.get(token)) {
-                        android.util.Log.d("PayloadDumper", "提取已取消: " + partitionName);
-                        if (isLocal) {
-                            logLocal("已取消: " + partitionName);
-                        } else {
-                            logOnline("已取消: " + partitionName);
-                        }
-                        mainHandler.post(() -> {
-                            if (itemView != null) {
-                                itemView.setError("已取消");
-                            }
-                        });
-                        cancelledTokens.remove(token);
-                        break;
-                    }
-                    
-                    android.util.Pair<Integer, Integer> progress = null;
-                    try {
-                        progress = extractor.getExtractProgress(token);
-                    } catch (Exception e) {
-                        android.util.Log.e("PayloadDumper", "获取进度失败: " + partitionName, e);
-                        if (isLocal) {
-                            logLocal("进度获取失败: " + e.getMessage());
-                        } else {
-                            logOnline("进度获取失败: " + e.getMessage());
-                        }
-                        break;
-                    }
-                    
-                    if (progress == null) {
-                        nullCount++;
-                        android.util.Log.d("PayloadDumper", "进度为 null, 计数: " + nullCount);
-                        
-                        if (nullCount >= 3) {
-                            // 检查文件是否存在
-                            File outputFile = new File(finalOutputPath);
-                            boolean exists = outputFile.exists();
-                            long size = exists ? outputFile.length() : 0;
-                            
-                            android.util.Log.d("PayloadDumper", "提取完成检查: " + partitionName);
-                            android.util.Log.d("PayloadDumper", "文件存在: " + exists);
-                            android.util.Log.d("PayloadDumper", "文件大小: " + size);
-                            
-                            if (exists && size > 0) {
-                                // 提取完成
-                                if (isLocal) {
-                                    logLocal("提取完成: " + partitionName + " (" + (size / 1024 / 1024) + " MB)");
-                                } else {
-                                    logOnline("提取完成: " + partitionName + " (" + (size / 1024 / 1024) + " MB)");
-                                }
-                                mainHandler.post(() -> {
-                                    if (itemView != null) {
-                                        itemView.setComplete();
-                                    }
-                                    toast("提取完成: " + partitionName + "\n保存到: " + finalOutputPath);
-                                });
-                            } else {
-                                // 提取失败
-                                if (isLocal) {
-                                    logLocal("提取失败: " + partitionName + " - 文件未生成");
-                                } else {
-                                    logOnline("提取失败: " + partitionName + " - 文件未生成");
-                                }
-                                mainHandler.post(() -> {
-                                    if (itemView != null) {
-                                        itemView.setError("提取失败: 文件未生成");
-                                    }
-                                    toast("提取失败: " + partitionName + "\n文件未生成");
-                                });
-                            }
-                            break;
-                        }
-                        continue;
-                    }
-                    
-                    nullCount = 0;
-                    
-                    int phase = progress.first;
-                    int permille = progress.second;
-                    int percent = permille / 10;
-                    
-                    // 检测 phase 切换，重置进度追踪
-                    if (phase != lastPhase && lastPhase >= 0) {
-                        String phaseText = (phase == 0) ? "下载" : "写入";
-                        android.util.Log.d("PayloadDumper", "阶段切换: " + lastPhase + " -> " + phase + " (" + phaseText + ")");
-                        if (phase == 1) {
-                            if (isLocal) {
-                                logLocal("下载完成，开始写入: " + partitionName);
-                            } else {
-                                logOnline("下载完成，开始写入: " + partitionName);
-                            }
-                        }
-                        // 重置进度追踪
-                        lastPercent = -1;
-                        lastTime = System.currentTimeMillis();
-                        speedHistory.clear();
-                        lastRxBytes = -1; // v3.9.3：阶段切换后重新采样网络字节基准
-                    }
-                    lastPhase = phase;
-                    
-                    android.util.Log.d("PayloadDumper", String.format("%s: %d%% (phase=%d, permille=%d)", partitionName, percent, phase, permille));
-                    
-                    // 检测卡死（针对当前阶段）
-                    if (percent == lastPercent && lastPercent >= 0) {
-                        stuckCount++;
-                        if (stuckCount > 240) { // 120秒无变化
-                            android.util.Log.e("PayloadDumper", "提取超时: " + partitionName + ", 卡在 " + percent + "%");
-                            if (isLocal) {
-                                logLocal("提取超时: " + partitionName + " (卡在 " + percent + "%)");
-                            } else {
-                                logOnline("提取超时: " + partitionName + " (卡在 " + percent + "%)");
-                            }
-                            mainHandler.post(() -> {
-                                if (itemView != null) {
-                                    itemView.setError("提取超时 (卡在 " + percent + "%)");
-                                }
-                            });
-                            break;
-                        }
-                    } else {
-                        stuckCount = 0;
-                    }
-                    
-                    // 计算速度
-                    // v3.9.3 修复：下载阶段(phase 0)的百分比是「压缩数据」的下载进度，
-                    // 旧逻辑却乘以「分区解压后大小」折算速度 → 虚高约 3~20 倍（payload 压缩比），
-                    // 例如真实网速 640KB/s 显示成 12.44MB/s，与状态栏严重不符。
-                    // 现在下载阶段改用系统网络接收字节（TrafficStats，与状态栏同源）计算真实网速；
-                    // 写入阶段(phase 1)是本地解压写盘，仍按镜像大小折算吞吐（原逻辑正确）。
-                    long currentTime = System.currentTimeMillis();
-                    long timeDiff = currentTime - lastTime;
-                    float instantSpeed = 0;
-
-                    if (phase == 0) {
-                        long rx = TrafficStats.getUidRxBytes(Process.myUid());
-                        if (lastRxBytes >= 0 && rx >= lastRxBytes && timeDiff > 0) {
-                            instantSpeed = (rx - lastRxBytes) / 1024f / 1024f / (timeDiff / 1000f);
-                            speedHistory.add(instantSpeed);
-                            if (speedHistory.size() > SPEED_WINDOW) {
-                                speedHistory.removeFirst();
-                            }
-                        }
-                        lastRxBytes = rx;
-                    } else if (timeDiff > 0 && percent > lastPercent && lastPercent >= 0 && finalPartitionSize > 0) {
-                        float progressDiff = (percent - lastPercent) / 100.0f;
-                        float timeSeconds = timeDiff / 1000.0f;
-                        float sizeMB = finalPartitionSize / 1024.0f / 1024.0f;
-                        instantSpeed = (progressDiff * sizeMB) / timeSeconds; // MB/s
-
-                        // 添加到历史记录
-                        speedHistory.add(instantSpeed);
-                        if (speedHistory.size() > SPEED_WINDOW) {
-                            speedHistory.removeFirst();
-                        }
-                    }
-                    
-                    // 计算平均速度
-                    float avgSpeed = 0;
-                    if (!speedHistory.isEmpty()) {
-                        float sum = 0;
-                        for (float s : speedHistory) {
-                            sum += s;
-                        }
-                        avgSpeed = sum / speedHistory.size();
-                    }
-                    
-                    lastPercent = percent;
-                    lastTime = currentTime;
-                    
-                    final float finalSpeed = avgSpeed;
-                    final int finalPhase = phase;
-                    final int finalPercent = percent;
-                    mainHandler.post(() -> {
-                        if (itemView != null) {
-                            itemView.setProgress(finalPercent, finalSpeed, finalPhase);
-                        }
-                    });
-                }
-                
-                android.util.Log.d("PayloadDumper", "进度监听结束: " + partitionName);
-                
-            } catch (Exception e) {
-                android.util.Log.e("PayloadDumper", "进度监听异常: " + partitionName, e);
-                if (isLocal) {
-                    logLocal("进度监听异常: " + e.getMessage());
-                } else {
-                    logOnline("进度监听异常: " + e.getMessage());
-                }
-            }
-        });
+        // v3.40.19：旧 JNI 进度监听线程已移除 —— CLI 提取的进度/取消/结果
+        // 全部由 extractOnePartition 内部的 stat 轮询统一驱动（本地/在线一致）
     }
-    
+
     private String getInputFileName() {
         if (currentInput == null) return "payload";
         
@@ -1729,35 +1476,19 @@ public final class PayloadDumperActivity extends BaseActivity {
         });
     }
 
-    /** 共用入口（本地）：校验 + 包一层运行状态 */
+    /** 共用入口（本地/在线全选）：校验 + 包一层运行状态 */
     private void runExtractAll(String input, boolean isLocal, List<PayloadExtractor.PartitionInfo> parts) {
         if (!extractAllRunning.compareAndSet(false, true)) return;
         extractAllCancel = false;
-        setExtractAllUi(true, true);
-        logLocal("⚡ 全选提取: " + parts.size() + " 个分区（JNI 多线程提取）");
+        setExtractAllUi(true, isLocal);
+        log(isLocal, "⚡ 全选提取: " + parts.size() + " 个分区（root CLI 多线程提取）");
         executor.execute(() -> {
-            String jniInput = null;
             try {
-                // v3.40.15：JNI 可读化（root chmod 底层真实路径秒级；异常文件系统才 cp 缓存）
-                jniInput = DnaTools.ensureJniReadable(this, input,
-                        msg -> { log(isLocal, msg); return kotlin.Unit.INSTANCE; });
-                if (jniInput == null) {
-                    log(isLocal, "✗ 输入文件无法读取（root 授权异常？）");
-                    mainHandler.post(() -> {
-                        status.setText("全选提取失败");
-                        toast("输入文件无法读取");
-                    });
-                    return;
-                }
-                runExtractAllCore(jniInput, isLocal, parts);
+                // v3.40.19：root CLI 直读原路径（bin/zip/URL 均可，无 FUSE 权限障碍、零复制）
+                runExtractAllCore(input, isLocal, parts);
             } finally {
-                // 兜底缓存副本用完即清（jniInput == input 时无缓存）
-                if (jniInput != null && !jniInput.equals(input)) {
-                    //noinspection ResultOfMethodCallIgnored
-                    new File(jniInput).delete();
-                }
                 extractAllRunning.set(false);
-                mainHandler.post(() -> setExtractAllUi(false, true));
+                mainHandler.post(() -> setExtractAllUi(false, isLocal));
             }
         });
     }
@@ -1775,7 +1506,7 @@ public final class PayloadDumperActivity extends BaseActivity {
     }
 
     /**
-     * 逐分区顺序提取核心：每分区一次 payload_dumper（root 直读输入直写输出），
+     * 逐分区顺序提取核心：每分区一次 root CLI（libpayload_extract.so 多线程），
      * stat 轮询输出文件字节数驱动分区行进度条，✓/✗ 逐行打日志，结尾汇总。
      */
     private void runExtractAllCore(String input, boolean isLocal, List<PayloadExtractor.PartitionInfo> parts) {
@@ -1787,6 +1518,7 @@ public final class PayloadDumperActivity extends BaseActivity {
             mainHandler.post(() -> { status.setText("全选提取失败"); toast("无法创建输出目录"); });
             return;
         }
+        // v3.40.19：root CLI 直写输出目录（无 app 写入 FUSE 权限问题），无需放行
         log(isLocal, "输出目录: " + outputDir);
         LinearLayout targetList = isLocal ? localPartitionsList : onlinePartitionsList;
         int ok = 0;
@@ -1829,36 +1561,42 @@ public final class PayloadDumperActivity extends BaseActivity {
     }
 
     /**
-     * v3.40.15：单分区提取统一入口（单分区按钮 / 全选共用）—— JNI libpayload_extract_jni.so
-     * 多线程提取（实测 16.5G/61 分区 94s，比 root payload_dumper 快一个量级；
-     * 输入须先经 DnaTools.ensureJniReadable 放行为 app 可读），stat 轮询落盘字节
-     * 驱动分区行进度条与速度，5 分钟无进展熔断。
+     * v3.40.19：单分区提取统一入口（单分区按钮 / 全选/在线 URL 共用）——
+     * root CLI libpayload_extract.so（pie 可执行）：root 直读输入（bin/zip/URL 均可，
+     * URL 模式内部 Range 流式只拉所需数据段）、root 直写输出目录，
+     * 全程无 FUSE/sdcardfs 权限障碍、零复制（此前 JNI 跑 app 进程才有放行/复制缓存弯路）。
+     * stat 轮询落盘字节驱动分区行进度条与速度，本地 5 分钟 / 在线 20 分钟无进展熔断。
      * @return true=成功；false=失败或已取消（日志与分区行状态已在内部更新）
      */
     private boolean extractOnePartition(String input, String outputDir, String name,
                                         long expected, PartitionItemView itemView, boolean isLocal,
                                         java.util.function.BooleanSupplier cancelled) {
         final File outFile = new File(outputDir, name + ".img");
-        // 清残留（防旧文件让进度虚高 / 误判完成）
-        //noinspection ResultOfMethodCallIgnored
-        outFile.delete();
-        final long token = tokenGenerator.getAndIncrement();
+        // 清残留（防旧文件让进度虚高 / 误判完成）；root rm：旧版本 root 链路写的
+        // root 属主残留文件 app 经 FUSE 可能删不掉
+        com.topjohnwu.superuser.Shell.cmd(
+                "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
+        final boolean isUrl = input.startsWith("http://") || input.startsWith("https://");
+        final long stuckLimit = isUrl ? 20 * 60_000L : 300_000L;   // 在线先下载后落盘，放宽熔断
         final StringBuilder errOut = new StringBuilder();
         final java.util.concurrent.atomic.AtomicBoolean nativeDone =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
         Thread runner = new Thread(() -> {
-            try {
-                PayloadExtractor localExtractor = new PayloadExtractor();
-                localExtractor.extractPartition(input, outputDir, name, 4, false, token);
+            DnaTools.Result r = DnaTools.payloadExtractCli(PayloadDumperActivity.this,
+                    input, outputDir, name, null,
+                    cancelled::getAsBoolean,
+                    isUrl ? 60 * 60_000L : 20 * 60_000L);
+            if (r.getSuccess()) {
                 nativeDone.set(true);
-            } catch (Throwable e) {
-                String msg = e.getMessage();
-                synchronized (errOut) { errOut.append(msg == null ? e.toString() : msg); }
+            } else {
+                // v3.40.21：briefOf 抓 error: 行（真实原因），不再被 clap 尾巴
+                // "For more information, try '--help'." 遮蔽
+                synchronized (errOut) { errOut.append(DnaTools.briefOf(r)); }
             }
-        }, "pd-jni-" + name);
+        }, "pd-cli-" + name);
         runner.setDaemon(true);
         runner.start();
-        // 进度轮询：stat 已落盘字节（JNI 由 app 进程写入，直读可见）
+        // 进度轮询：stat 已落盘字节（root CLI 写入，app stat 可见）
         long lastBytes = 0, lastPollMs = System.currentTimeMillis(), stuckMs = System.currentTimeMillis();
         while (runner.isAlive()) {
             try { Thread.sleep(600); } catch (InterruptedException e) { break; }
@@ -1870,8 +1608,8 @@ public final class PayloadDumperActivity extends BaseActivity {
             final float sp = speedMBs;
             mainHandler.post(() -> { if (itemView != null) itemView.setProgress(p2, sp, 1); });
             if (bytes > lastBytes) { lastBytes = bytes; stuckMs = now; }
-            else if (now - stuckMs > 300000) {   // 5 分钟无进展 → 熔断提示（JNI 线程为守护线程，进程退出即终止）
-                log(isLocal, "⏱ " + name + " 提取超时（5 分钟无进展）");
+            else if (now - stuckMs > stuckLimit) {
+                log(isLocal, "⏱ " + name + " 提取超时（" + (stuckLimit / 60000) + " 分钟无进展）");
                 break;
             }
             lastPollMs = now;
@@ -1892,7 +1630,8 @@ public final class PayloadDumperActivity extends BaseActivity {
         synchronized (errOut) { err = errOut.toString().trim(); }
         String brief = err.isEmpty() ? "文件未生成" : err;
         log(isLocal, "✗ " + name + " 提取失败: " + brief);
-        if (brief.contains("delta") || brief.toLowerCase(java.util.Locale.ROOT).contains("incremental")) {
+        if (brief.contains("delta") || brief.toLowerCase(java.util.Locale.ROOT).contains("incremental")
+                || brief.contains("differential") || brief.contains("source")) {
             log(isLocal, "  提示: 这是增量 OTA 包，请使用 DNA 工具箱 → 分解增量包");
         }
         mainHandler.post(() -> { if (itemView != null) itemView.setError("提取失败"); });

@@ -249,10 +249,8 @@ public final class DnaUnzipActivity extends BaseActivity {
         LinearLayout.LayoutParams zlLp = new LinearLayout.LayoutParams(-1, -2);
         zlLp.topMargin = dp(4);
         zipCard.addView(zs, zlLp);
-        zs.setOnTouchListener((sv, e) -> {
-            sv.getParent().requestDisallowInterceptTouchEvent(true);
-            return false;
-        });
+        // v3.40.22：删除旧的按下即独占 OnTouchListener —— 与 BoundedScrollView 内置的
+        // dispatchTouchEvent 边界交还逻辑叠加会冲突（无条件独占 → 滚到顶/底后外层接不走）
 
         // ---- 手动路径输入框已移除（v3.30.23：已有 📂 浏览按钮，无需再显示路径框） ----
 

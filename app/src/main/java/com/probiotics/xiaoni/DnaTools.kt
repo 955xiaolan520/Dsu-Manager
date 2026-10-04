@@ -427,15 +427,51 @@ object DnaTools {
     }
 
     /**
-     * v3.40.15：确保 app 进程（JNI libpayload_extract_jni.so）可读 payload 输入文件。
+     * v3.40.17：root 放行底层真实路径（不复制文件）。
      *
-     * /sdcard 上 root 属主文件 app 直读必 EACCES 的真正机制：FUSE daemon 以 media_rw
-     * 身份读底层 /data/media/0/...，root 建的 600 文件它读不了 → 对 app 报 EACCES；
-     * 而对 FUSE 视图 chmod/chown 是 daemon 代执行（media_rw 改不了 root 属主文件的权限位，
-     * v3.40.13 实测无效）。
-     * 根治：root 直接 chmod 664 底层真实路径（ext4 原生权限，立即生效）→
-     * FUSE daemon 可读 → app 可读 → JNI 直读原路径（免 11.9GB 复制 30s+）。
-     * 兜底：外置卡/异常文件系统 → root cp 到 app cache + chmod 644（调用方用完可删）。
+     * /sdcard 上 root 属主文件 app 直读必 EACCES 的机制：FUSE 视图上的 chmod/chown 由
+     * daemon 代执行，对 root 属主文件实测无效（v3.40.13/15 实测）；必须操作底层
+     * ext4 真实路径 /data/media/N/...：
+     * ① chmod 664 文件 + 祖先目录链 a+rx（root 建的目录常为 700，daemon 穿不进时文件 chmod 无效）
+     * ② 仍失败 → chown 给 app（ext4 原生必生效；FUSE 视图里文件属主变 app，owner 语义放行）
+     *
+     * @return 可直读的原路径；null = 放行失败（外置卡 / root 异常）
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun rootRelaxForApp(path: String, onLog: ((String) -> Unit)? = null): String? {
+        if (tryReadHead(path)) return path
+        val real = realMediaPath(path) ?: return null
+        onLog?.invoke("… root 放行底层文件与目录权限 …")
+        RootShell.exec(
+            "chmod 664 '$real' 2>/dev/null; " +
+                    "d=$(dirname '$real'); " +
+                    "while [ \"\$d\" != '/' ] && [ \"\$d\" != '/data/media' ]; do " +
+                    "chmod a+rx \"\$d\" 2>/dev/null; d=\$(dirname \"\$d\"); done; true",
+            timeoutMs = 20000,
+        )
+        if (tryReadHead(path)) return path
+        onLog?.invoke("… root 转移属主后重试直读 …")
+        RootShell.exec(
+            "chown ${android.os.Process.myUid()} '$real' 2>/dev/null && chmod 664 '$real'; true",
+            timeoutMs = 20000,
+        )
+        if (tryReadHead(path)) return path
+        return null
+    }
+
+    /**
+     * v3.40.18：确保 app 进程（JNI libpayload_extract_jni.so）可读 payload 输入文件。
+     * 链路：直读 / root 底层放行（rootRelaxForApp）/ 兜底 root cp 到内部 cache。
+     *
+     * v3.40.17 三版实测结论：本类 ROM 的 FUSE/sdcardfs 视图对 other 权限位强制 mask，
+     * 底层 chmod 664 甚至 chown app 都无法让 app 直读 /sdcard 上的 root 属主文件
+     * （root 的 payload_dumper 能读是因为 daemon 对 uid 0 直接放行）。
+     * 唯一 100% 可行的兜底是复制到 app 内部存储（纯 ext4，不经 FUSE，权限真实生效，
+     * v3.40.13 实测链路）。本版把 cp 提速做实：
+     * ① 源改用底层真实路径 /data/media/N/...（root ext4 直读，不经 FUSE daemon 中转）
+     * ② 空间预检（不够提前报错，避免 cp 到一半 ENOSPC）
+     * ③ 复制期间轮询 cache 大小输出实时进度
      *
      * @return 实际可读路径；null = 全部手段失败
      */
@@ -446,24 +482,150 @@ object DnaTools {
         path: String,
         onLog: ((String) -> Unit)? = null,
     ): String? {
-        // ① 已可直读（app 属主 / 底层本就 644）
-        if (tryReadHead(path)) return path
-        // ② root chmod 底层真实路径（/storage/emulated/N 与 /sdcard → /data/media/N）
-        val real = realMediaPath(path)
-        if (real != null) {
-            onLog?.invoke("… root 放行底层文件权限 …")
-            RootShell.exec("chmod 664 '$real' 2>/dev/null; true", timeoutMs = 15000)
-            if (tryReadHead(path)) return path
-        }
-        // ③ 兜底：root cp 到 cache + chmod 644（大文件慢，仅前两级失败才走）
-        onLog?.invoke("… 直读仍失败，复制到缓存（用完自动清理）…")
+        // ①② 直读 / root 放行底层真实路径（chmod 目录链 + chown 兜底）
+        rootRelaxForApp(path, onLog)?.let { return it }
+        // ③ 兜底：root cp 到内部 cache —— 绕开 FUSE/sdcardfs（内部存储纯 ext4，
+        //    root chmod 644 真实生效，app 经 other r 必可读）
         val cache = File(ctx.cacheDir, "payload_jni_input")
-        RootShell.exec(
-            "rm -f '${cache.absolutePath}'; cp '$path' '${cache.absolutePath}' && chmod 644 '${cache.absolutePath}'",
-            timeoutMs = 30 * 60_000L,
-        )
-        if (cache.isFile && tryReadHead(cache.absolutePath)) return cache.absolutePath
+        val src = realMediaPath(path) ?: path   // 底层路径直拷（快）；外置卡无映射退回 FUSE 路径
+        val need = rootFileSize(src)
+        if (need > 0) {
+            val free = runCatching {
+                android.os.StatFs(ctx.cacheDir.absolutePath).availableBytes
+            }.getOrDefault(0L)
+            if (free in 1 until need) {
+                onLog?.invoke("✗ 内部存储空间不足：需 ${fmtGB(need)}，剩余 ${fmtGB(free)}")
+                return null
+            }
+        }
+        onLog?.invoke("… 直读不可用，root 底层直拷到内部缓存" +
+                (if (need > 0) "（${fmtGB(need)}，同一文件只拷一次）" else "（同一文件只拷一次）") + " …")
+        val cpRc = java.util.concurrent.atomic.AtomicInteger(-1)
+        val cpDone = java.util.concurrent.atomic.AtomicBoolean(false)
+        val cpThread = Thread({
+            val r = RootShell.exec(
+                "rm -f '${cache.absolutePath}'; " +
+                        "cp '$src' '${cache.absolutePath}' && chmod 644 '${cache.absolutePath}'",
+                timeoutMs = 40 * 60_000L,
+            )
+            cpRc.set(r.code)
+            cpDone.set(true)
+        }, "jni-cache-cp").apply { isDaemon = true }
+        cpThread.start()
+        // 复制进度：轮询 cache 落盘字节（root cp 写入，app stat 可见）
+        var lastLen = -1L
+        var lastLogMs = 0L
+        while (!cpDone.get()) {
+            try { Thread.sleep(1500) } catch (e: InterruptedException) { break }
+            val len = runCatching { cache.length() }.getOrDefault(0L)
+            val now = System.currentTimeMillis()
+            if (len != lastLen && now - lastLogMs >= 3000) {
+                onLog?.invoke("… 缓存中 ${fmtGB(len)}" +
+                        (if (need > 0) " / ${fmtGB(need)}" else "") + " …")
+                lastLen = len
+                lastLogMs = now
+            }
+        }
+        runCatching { cpThread.join(3000) }
+        if (cpDone.get() && cpRc.get() == 0 && cache.isFile && tryReadHead(cache.absolutePath)) {
+            onLog?.invoke("✓ 缓存就绪，开始 JNI 提取")
+            return cache.absolutePath
+        }
+        onLog?.invoke("✗ 缓存复制失败（空间不足或 root 异常，rc=${cpRc.get()}）")
         return null
+    }
+
+    /** root stat 文件大小（app 对 root 属主 700 目录下的文件 stat 不可靠） */
+    private fun rootFileSize(path: String): Long =
+        runCatching {
+            RootShell.exec("stat -c %s '$path'", timeoutMs = 10000)
+                .stdout.trim().toLongOrNull() ?: 0L
+        }.getOrDefault(0L)
+
+    private fun fmtGB(bytes: Long): String = String.format("%.1fG", bytes / 1073741824.0)
+
+    // JNI 可读输入 memo：原始路径 → 实际可读路径（进程级，多页面共享）。
+    // v3.40.17 核心修复：此前 ROM 界面单分区提取对每个分区各调一次 ensureJniReadable，
+    // 放行失败时每个分区都把整包 root cp 到缓存（16G 包 × 61 分区）。
+    @Volatile
+    private var jniReadableMemo: Pair<String, String>? = null
+
+    /**
+     * v3.40.17：解析 JNI 可读输入（带进程级 memo）—— 同一输入文件只放行/兜底复制一次，
+     * 后续分区与页面直接复用；换文件自动清理旧缓存副本。所有 JNI 提取调用点统一走这里。
+     */
+    @JvmStatic
+    @JvmOverloads
+    @Synchronized
+    fun resolveJniReadable(
+        ctx: Context,
+        path: String,
+        onLog: ((String) -> Unit)? = null,
+    ): String? {
+        val memo = jniReadableMemo
+        if (memo != null && memo.first == path) {
+            // 原路径现已可直读（权限已放行 / 文件被替换为可读）→ 优先直读，弃旧缓存副本
+            if (tryReadHead(path)) {
+                jniReadableMemo = path to path
+                if (memo.second != path) File(memo.second).delete()
+                return path
+            }
+            // 缓存副本仍在 → 直接复用（免再次复制）
+            if (memo.second != path && File(memo.second).isFile) return memo.second
+            if (memo.second == path) return path
+        }
+        val resolved = ensureJniReadable(ctx, path, onLog) ?: return null
+        // 换源：清理上一个文件的缓存副本
+        if (memo != null && memo.first != path && memo.second != memo.first) {
+            File(memo.second).delete()
+        }
+        jniReadableMemo = path to resolved
+        return resolved
+    }
+
+    /**
+     * v3.40.17：确保 app 进程（JNI）可写 /sdcard 下的输出目录。
+     * root 属主目录经 FUSE 对 app 写 = EACCES，且 FUSE 视图 chmod 不生效 →
+     * root 在底层真实路径 mkdir -p + 放行（目录 a+rwx + 祖先链 a+rx，
+     * 仍失败再 chown -R 给 app），真写探测文件验证。
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun ensureAppWritable(dirPath: String, onLog: ((String) -> Unit)? = null): Boolean {
+        if (dirWritable(dirPath)) return true
+        val real = realMediaPath(dirPath)
+        if (real != null) {
+            onLog?.invoke("… root 放行输出目录底层权限 …")
+            RootShell.exec(
+                "mkdir -p '$real'; chmod a+rwx '$real'; " +
+                        "d=$(dirname '$real'); " +
+                        "while [ \"\$d\" != '/' ] && [ \"\$d\" != '/data/media' ]; do " +
+                        "chmod a+rx \"\$d\" 2>/dev/null; d=\$(dirname \"\$d\"); done; true",
+                timeoutMs = 20000,
+            )
+            if (dirWritable(dirPath)) return true
+            RootShell.exec(
+                "chown -R ${android.os.Process.myUid()} '$real' 2>/dev/null; " +
+                        "chmod -R a+rwX '$real' 2>/dev/null; true",
+                timeoutMs = 30000,
+            )
+            if (dirWritable(dirPath)) return true
+        } else {
+            // 外置卡等无底层映射：FUSE 路径 mkdir 尽力而为
+            RootShell.exec("mkdir -p '$dirPath'; chmod a+rwx '$dirPath'; true", timeoutMs = 15000)
+            if (dirWritable(dirPath)) return true
+        }
+        return false
+    }
+
+    /** 真写一个探测文件验证目录可写（FUSE 上 File.canWrite 不可靠） */
+    private fun dirWritable(dir: String): Boolean = try {
+        val probe = File(dir, ".w_probe")
+        java.io.FileOutputStream(probe).use { it.write(1) }
+        probe.delete()
+        true
+    } catch (e: Exception) {
+        false
     }
 
     /** 试读首字节验证 app 进程可读（FUSE 上 File.canRead 不可靠，真读一次为准） */
@@ -588,6 +750,91 @@ object DnaTools {
         } catch (e: Exception) {
             Result(false, "", e.message ?: "执行失败")
         }
+    }
+
+    /**
+     * v3.40.21：root CLI 提取 —— libpayload_extract.so 是 pie 可执行文件（非 JNI 库，
+     * 0 个 Java 符号；JNI 桥接是 libpayload_extract_jni.so 的 Java_native_PayloadExtractNative_*）。
+     * 经 root shell 直接运行：root 直读 payload.bin / OTA zip（含 URL，内部 Range 流式）、
+     * root 直写输出目录，全程无 FUSE/sdcardfs 权限障碍、零复制。
+     *
+     * 旗标来源（不再靠猜）：
+     * ① 运行时 --help 探测（词边界匹配，进程级缓存一次）——绝对权威；
+     * ② 探测失败的兜底默认值取实证：--out/--no-verify 为 OTG 助手生产代码同款调用，
+     *    --images/--threads 为 ELF 字符串表证据（IMAGES/NAMES、THREADS/concurrency/COUNT）。
+     *
+     * @return Result.success=退出码 0；输出/错误在 output（stderr 已并入）
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun payloadExtractCli(
+        ctx: Context,
+        input: String,
+        outputDir: String,
+        partitions: String,
+        onLog: ((String) -> Unit)? = null,
+        isCancelled: () -> Boolean = { false },
+        timeoutMs: Long = 20 * 60_000L,
+    ): Result {
+        val lib = File(ctx.applicationInfo.nativeLibraryDir, "libpayload_extract.so").absolutePath
+        val freshProbe = payloadCliFlags == null
+        val flags = detectPayloadCliFlags(lib)
+        if (freshProbe) {
+            onLog?.invoke("… CLI 旗标: ${flags["images"]} / ${flags["out"]} / " +
+                    "${flags["threads"]} / ${flags["noVerify"]} …")
+        }
+        val cmd = "mkdir -p " + quote(outputDir) + " && " + quote(lib) + " " + quote(input) +
+                " " + flags.getValue("images") + " " + quote(partitions) +
+                " " + flags.getValue("out") + " " + quote(outputDir) +
+                " " + flags.getValue("threads") + " 4 " + flags.getValue("noVerify")
+        return run(ctx, cmd, onLog, isCancelled, timeoutMs)
+    }
+
+    // CLI 旗标探测缓存（进程级）：null = 未探测
+    @Volatile
+    private var payloadCliFlags: Map<String, String>? = null
+
+    /** v3.40.21：读 --help 探测旗标（词边界匹配防子串误配：--out 不得命中 --output） */
+    private fun detectPayloadCliFlags(lib: String): Map<String, String> {
+        payloadCliFlags?.let { return it }
+        val help = runCatching {
+            RootShell.exec("'" + lib + "' --help 2>&1", timeoutMs = 15000).stdout
+        }.getOrDefault("")
+        fun pick(default: String, vararg cands: String): String {
+            for (c in cands) {
+                val re = Regex("(?<![\\w-])" + Regex.escape(c) + "(?![\\w-])")
+                if (re.containsMatchIn(help)) return c
+            }
+            return default
+        }
+        val flags = linkedMapOf(
+            "images" to pick("--images", "--partitions", "-i", "-p"),
+            "out" to pick("--out", "--output", "-o"),
+            "threads" to pick("--threads", "-t", "--concurrency"),
+            "noVerify" to pick("--no-verify", "--no_verify"),
+        )
+        payloadCliFlags = flags
+        return flags
+    }
+
+    /**
+     * v3.40.21：CLI 失败摘要 —— 优先 error: 行（真实原因），跳过 clap 样板
+     * （Usage: / For more information / tip:），取最后一条有意义行。
+     */
+    @JvmStatic
+    fun briefOf(r: Result): String {
+        val out = r.output ?: return r.message
+        var errLine = ""
+        val meaningful = ArrayList<String>()
+        for (raw in out.split("\n")) {
+            val line = raw.trim()
+            if (line.isEmpty()) continue
+            if (errLine.isEmpty() && line.startsWith("error:")) errLine = line
+            if (!line.startsWith("Usage:") && !line.startsWith("For more information")
+                    && !line.startsWith("tip:")) meaningful.add(line)
+        }
+        if (errLine.isNotEmpty()) return errLine.removePrefix("error:").trim()
+        return meaningful.lastOrNull() ?: r.message
     }
 
     // 单引号 shell 转义（su 脚本拼接防注入）

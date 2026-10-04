@@ -125,32 +125,35 @@ public final class DnaActivity extends BaseActivity {
             super(c);
             maxHeight = maxHeightPx;
             setVerticalScrollBarEnabled(false);
-            setOverScrollMode(OVER_SCROLL_NEVER);
-            // v3.40.14 修复「滚动一会行一会不行」：旧逻辑按下即永久禁止父级拦截，
-            // 列表滚到顶/底后继续往边界方向拖 → 内层滚不动又抓着事件不放 → 手感卡死。
-            // 现按边界交还：拖动方向指向边界（外层该接管）时放开拦截权，其余时间独占。
-            setOnTouchListener((v, event) -> {
-                int action = event.getActionMasked();
-                if (action == MotionEvent.ACTION_DOWN) {
-                    v.getParent().requestDisallowInterceptTouchEvent(true);
-                } else if (action == MotionEvent.ACTION_MOVE) {
-                    android.view.View child = getChildAt(0);
-                    boolean atTop = getScrollY() <= 0;
-                    boolean atBottom = child == null
-                            || getScrollY() + getHeight() >= child.getHeight() - dp1();
-                    // dy>0 手指下移=想往上滚（到顶后交外层）；dy<0 手指上移=想往下滚（到底后交外层）
-                    boolean outward = (atTop && event.getY() > lastY)
-                            || (atBottom && event.getY() < lastY);
-                    v.getParent().requestDisallowInterceptTouchEvent(!outward);
-                    lastY = event.getY();
-                } else {
-                    v.getParent().requestDisallowInterceptTouchEvent(false);
-                }
-                return false;
-            });
+            setFillViewport(true);
+            setOverScrollMode(OVER_SCROLL_IF_CONTENT_SCROLLS);
         }
-        private float lastY;
-        private int dp1() { return Math.max(2, (int) (2 * getResources().getDisplayMetrics().density)); }
+
+        /**
+         * v3.41.10：触摸模型完全对齐 OTG 本机分区列表（用户实测零卡顿的参考实现）——
+         * 手指按下期间对整条祖先链 requestDisallowInterceptTouchEvent(true)（列表独占
+         * 手势），抬手/取消恢复 false。无边界交还。
+         *
+         * 旧版"边界交还"卡顿机理：滚到顶/底后继续往边界方向拖时中途把拦截权翻转为
+         * 可拦截 → 外层页面 ScrollView 中途抢走事件流 → 内层列表收 ACTION_CANCEL
+         * 变死 → 反向拖也拖不回（手势已被外层持有）→ 手感"卡一下"。
+         * OTG 模型列表永不放手，自然无此问题。
+         * 用 dispatchTouchEvent 而非 OnTouchListener：事件必经此节点，
+         * 触到可点击行（整行卡片切换选中）还是空白都生效。
+         */
+        @Override
+        public boolean dispatchTouchEvent(MotionEvent ev) {
+            int action = ev.getActionMasked();
+            boolean disallow = action != MotionEvent.ACTION_UP
+                    && action != MotionEvent.ACTION_CANCEL;
+            android.view.ViewParent p = getParent();
+            while (p != null) {
+                p.requestDisallowInterceptTouchEvent(disallow);
+                p = p instanceof android.view.View ? ((android.view.View) p).getParent() : null;
+            }
+            return super.dispatchTouchEvent(ev);
+        }
+
         @Override
         protected void onMeasure(int wms, int hms) {
             super.onMeasure(wms, hms);
@@ -1195,12 +1198,11 @@ public final class DnaActivity extends BaseActivity {
                 binInput = null;
             }
             String input = path;
-            // v3.30.35：解析链（毫秒级优先）—— root 放行 → Java 直读 manifest（字段号已校准：
-            // partitions=13 / new_info=7）→ payload_dumper --list（Rust，root，支持 zip 直读）→ JNI。
-            com.topjohnwu.superuser.Shell.cmd(
-                    "chmod 666 " + DnaTools.quote(path)
-                            + "; chown " + android.os.Process.myUid() + " " + DnaTools.quote(path)
-                            + "; true").exec();
+            // v3.40.17：解析链（毫秒级优先）—— root 放行底层真实路径（FUSE 视图 chmod/chown
+            // 对 root 属主文件无效）→ Java 直读 manifest（字段号已校准：partitions=13 / new_info=7）
+            // → payload_dumper --list（Rust，root，支持 zip 直读）→ JNI。
+            DnaTools.rootRelaxForApp(path,
+                    msg -> { logLine(msg); return kotlin.Unit.INSTANCE; });
             List<PayloadExtractor.PartitionInfo> parts = PayloadExtractor.fastListPartitions(input);
             PayloadExtractor.Metadata meta = null;
             if (parts == null || parts.isEmpty()) {
@@ -1348,62 +1350,50 @@ public final class DnaActivity extends BaseActivity {
         final String outDir = projectPath();
         StringBuilder names = new StringBuilder();
         for (String n : ordered) { if (names.length() > 0) names.append(","); names.append(n); }
-        logLine("$ payload_extract(jni) -i " + binInput + " --extract=" + names + " -o " + outDir + " -s");
+        logLine("$ payload_extract -i " + binInput + " --images=" + names + " --out " + outDir + " --threads 4 --no-verify");
         notify(t("正在提取", "Extracting") + " · " + (project != null ? project : "PDNA"), true, true);
-        // v3.30.32：JNI（app 进程）不能直接写 root 属主的工程目录（FUSE EPERM）→
-        // 先写 app 外部私有 staging（/sdcard/Android/data/<pkg>/files/.dna_stage，必可写，
-        // 且与工程同 FUSE 文件系统），再 root mv 进工程（rename 瞬间，不跨设备复制）
-        File extDir = getExternalFilesDir(null);
-        final File binStage = extDir != null ? new File(extDir, ".dna_stage")
-                : new File(getCacheDir(), "bin_extract");
-        //noinspection ResultOfMethodCallIgnored
-        binStage.mkdirs();
-        com.topjohnwu.superuser.Shell.cmd(
-                "rm -rf " + DnaTools.quote(binStage.getAbsolutePath()) + "/* 2>/dev/null; true").exec();
+        // v3.40.19：root CLI 提取（libpayload_extract.so pie 可执行）—— root 直读输入
+        // （bin/zip 原路径）、root 直写工程目录，无 FUSE 权限障碍、零复制、无 staging 中转
         executor.execute(() -> {
             int ok = 0, fail = 0;
             for (int i = 0; i < ordered.size(); i++) {
                 if (cancelFlag.get()) break;
                 final String name = ordered.get(i);
-                final long token = System.nanoTime();
                 final int idx = i + 1, total = ordered.size();
                 logLine("> " + t("提取", "Extract") + " [" + idx + "/" + total + "] " + name);
-                // 进度轮询（extractPartition 为阻塞调用，进度经主线程定时查询）
+                // 清残留 + stat 轮询已落盘字节驱动 status（root CLI 写工程目录，app stat 可见）
+                final File outFile = new File(outDir, name + ".img");
+                com.topjohnwu.superuser.Shell.cmd(
+                        "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
                 final Runnable[] poll = new Runnable[1];
                 poll[0] = () -> {
                     if (!running.get()) return;
-                    try {
-                        android.util.Pair<Integer, Integer> pr = binExtractor.getExtractProgress(token);
-                        if (pr != null)
-                            status.setText("[" + idx + "/" + total + "] " + name + " · " + (pr.second / 10.0f) + "%");
-                    } catch (Exception ignored) {}
-                    mainHandler.postDelayed(poll[0], 400);
+                    status.setText("⏳ [" + idx + "/" + total + "] " + name + " · "
+                            + String.format(Locale.US, "%.0fM", outFile.length() / 1048576f));
+                    mainHandler.postDelayed(poll[0], 500);
                 };
                 mainHandler.post(poll[0]);
                 try {
-                    binExtractor.extractPartition(binInput, binStage.getAbsolutePath(), name, 4, false, token);
-                    com.topjohnwu.superuser.Shell.Result move = com.topjohnwu.superuser.Shell.cmd(
-                            "mv -f " + DnaTools.quote(new File(binStage, name + ".img").getAbsolutePath())
-                                    + " " + DnaTools.quote(outDir)).exec();
-                    if (!move.isSuccess())
-                        move = com.topjohnwu.superuser.Shell.cmd(
-                                "cp -f " + DnaTools.quote(new File(binStage, name + ".img").getAbsolutePath())
-                                        + " " + DnaTools.quote(outDir)).exec();
-                    if (move.isSuccess()) {
+                    DnaTools.Result r = DnaTools.payloadExtractCli(this, binInput, outDir, name,
+                            null, () -> cancelFlag.get(), 20 * 60_000L);
+                    long sz = r.getSuccess() ? outFile.length() : 0;
+                    if (sz > 0) {
                         ok++;
-                        logLine("✓ " + name + ".img → " + outDir + "/" + name + ".img");
+                        logLine("✓ " + name + ".img (" + String.format(Locale.US, "%.0fM", sz / 1048576f)
+                                + ") → " + outDir + "/" + name + ".img");
                     } else {
                         fail++;
-                        logLine("✗ " + name + ": " + t("保存到工程目录失败", "failed to save into project"));
+                        // v3.40.21：briefOf 抓 error: 行，跳过 clap 样板
+                        String brief = DnaTools.briefOf(r);
+                        logLine("✗ " + name + ": " + brief);
+                        if (brief.contains("ifferential") || brief.contains("source")) {
+                            logLine("  " + t("增量 OTA 包请用「分解增量包」", "Incremental OTA: use Incremental unpack"));
+                        }
                     }
                 } catch (Exception e) {
                     fail++;
                     String msg = e.getMessage();
-                    if (msg != null && msg.contains("delta/incremental OTA")) {
-                        logLine("✗ " + name + ": " + t("增量 OTA 包，需源分区数据，暂不支持", "Incremental OTA needs source partitions, unsupported"));
-                    } else {
-                        logLine("✗ " + name + ": " + (msg != null ? msg : e.getClass().getSimpleName()));
-                    }
+                    logLine("✗ " + name + ": " + (msg != null ? msg : e.getClass().getSimpleName()));
                 } finally {
                     mainHandler.removeCallbacks(poll[0]);
                 }

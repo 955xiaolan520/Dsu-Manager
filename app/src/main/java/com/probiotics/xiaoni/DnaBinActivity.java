@@ -25,11 +25,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * DNA · 分解 bin 独立二级页（v3.30.22）。
- * 流程：选文件 → 🔍开始解析（JNI 直读 payload.bin / OTA zip）
+ * 流程：选文件 → 🔍开始解析（root CLI / Java 直读 payload.bin / OTA zip）
  *      → 弹窗勾选分区（仅名称 + 大小，不显示哈希）→ 底部「确定」即开始提取，
  *        日志实时显示正在提取的 img 与进度（页面不再展开分区列表）。
- * 使用 libpayload_extract_jni.so（PayloadExtractor / PayloadExtractNative 桥接），
- * 与本机分区的 payload 提取同一套 JNI，无需 root shell 逐行解析。
+ * v3.40.19 提取走 libpayload_extract.so（pie 可执行，root shell 直跑）：
+ * root 直读输入（bin/zip 原路径）、root 直写输出工程，无 FUSE 权限障碍、零复制。
  */
 public final class DnaBinActivity extends BaseActivity {
 
@@ -664,15 +664,13 @@ public final class DnaBinActivity extends BaseActivity {
                 if (extractor != null) { try { extractor.close(); } catch (Exception ignored) {} extractor = null; }
                 String input = path;
                 log("… " + t("正在读取 payload", "Reading payload") + " ...");
-                // v3.30.35：解析链（毫秒级优先）：
-                // ① root 放行（chmod+chown，供 Java/JNI 直读）
+                // v3.40.17：解析链（毫秒级优先）：
+                // ① root 放行底层真实路径（FUSE 视图 chmod/chown 对 root 属主文件无效）
                 // ② Java 直读 manifest（字段号已校准：partitions=13 / new_info=7）—— 裸 payload.bin
                 // ③ payload_dumper --list（Rust，root，支持 OTA zip 直读）
                 // ④ JNI 兜底
-                com.topjohnwu.superuser.Shell.cmd(
-                        "chmod 666 " + DnaTools.quote(path)
-                                + "; chown " + android.os.Process.myUid() + " " + DnaTools.quote(path)
-                                + "; true").exec();
+                DnaTools.rootRelaxForApp(path,
+                        msg -> { main.post(() -> log(msg)); return kotlin.Unit.INSTANCE; });
                 List<PayloadExtractor.PartitionInfo> parts = PayloadExtractor.fastListPartitions(input);
                 final boolean incremental = PayloadExtractor.fastIsIncremental(input);
                 PayloadExtractor.Metadata meta = null;
@@ -935,30 +933,16 @@ public final class DnaBinActivity extends BaseActivity {
         io.execute(() -> {
             final long startMs = System.currentTimeMillis();
             final String rawInput = binPath != null ? binPath : openInput;
-            String jniInput = DnaTools.ensureJniReadable(this, rawInput,
-                    msg -> { main.post(() -> log(msg)); return kotlin.Unit.INSTANCE; });
-            if (jniInput == null) {
-                main.post(() -> {
-                    running.set(false);
-                    parseBtn.setEnabled(true);
-                    runBtn.setText("▶  " + t("选择分区并提取", "Select & Extract"));
-                    log("✗ " + t("输入文件无法读取（root 授权异常？）", "Input unreadable (root?)"));
-                    status.setText("✗ " + t("读取失败", "Read failed"));
-                    status.setTextColor(0xffa33b3b);
-                });
-                return;
-            }
-            // 输出工程目录放行：/data/PDNA 为 root 属主，app（JNI）需可写
-            com.topjohnwu.superuser.Shell.cmd(
-                    "mkdir -p " + DnaTools.quote(outDir)
-                            + "; chmod -R a+rwX " + DnaTools.quote(DnaTools.WORK_ROOT)).exec();
+            // v3.40.19：root CLI 提取（libpayload_extract.so pie 可执行）—— root 直读输入
+            // （bin/zip 原路径）、root 直写工程目录，无 FUSE 权限障碍、零复制。
+            // 保留逐分区顺序 UX：⏳ 正在提取 [i/n] → ✓ 提取完成，依次推进。
             int okCount = 0;
             String lastErr = null;
             for (int i = 0; i < ordered.size(); i++) {
                 if (cancelFlag.get()) break;
                 final String n = ordered.get(i);
                 final int no = i + 1;
-                final long token = 900000L + i;   // 仅用于 JNI 进度查询（本页不用），避让全局 token
+                final File outFile = new File(outDir, n + ".img");
                 main.post(() -> {
                     log("⏳ " + t("正在提取", "Extracting") + " [" + no + "/" + ordered.size() + "] " + n + ".img");
                     status.setText("⏳ " + t("正在提取", "Extracting") + " " + n + ".img [" + no + "/" + ordered.size() + "]");
@@ -966,38 +950,39 @@ public final class DnaBinActivity extends BaseActivity {
                 notify(t("正在提取", "Extracting") + " " + n + ".img [" + no + "/" + ordered.size() + "]",
                         true, false, 0, 0);
                 try {
-                    //noinspection ResultOfMethodCallIgnored
-                    new File(outDir, n + ".img").delete();   // 清残留，防误判
-                    new PayloadExtractor().extractPartition(jniInput, outDir, n, 4, false, token);
+                    // 清残留防误判（旧 root 属主残留 app 经 FUSE 可能删不掉，用 root rm）
+                    com.topjohnwu.superuser.Shell.cmd(
+                            "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
+                    DnaTools.Result r = DnaTools.payloadExtractCli(this, rawInput, outDir, n,
+                            null, () -> cancelFlag.get(), 20 * 60_000L);
                     if (cancelFlag.get()) break;
-                    long sz = new File(outDir, n + ".img").length();
+                    long sz = r.getSuccess() ? outFile.length() : 0;
                     if (sz > 0) {
                         final long size = sz;
                         main.post(() -> log("✓ " + n + ".img (" + fmtSizeShort(size) + ") " + t("提取完成", "extracted")));
                         okCount++;
                     } else {
-                        lastErr = "file not generated";
-                        final String msg = lastErr;
-                        main.post(() -> log("✗ " + n + ".img " + t("提取失败", "failed") + ": " + msg));
+                        // v3.40.21：briefOf 抓 error: 行，跳过 clap 样板
+                        String brief = DnaTools.briefOf(r);
+                        lastErr = brief;
+                        final String msg = brief;
+                        main.post(() -> {
+                            log("✗ " + n + ".img " + t("提取失败", "failed") + ": " + msg);
+                            if (msg.contains("ifferential") || msg.toLowerCase(Locale.ROOT).contains("incremental")
+                                    || msg.contains("source")) {
+                                log("  " + t("提示：增量包请用「分解增量包」", "Hint: use Incremental unpack"));
+                            }
+                        });
                     }
                 } catch (Throwable e) {
                     String m = e.getMessage();
                     if (m == null) m = e.toString();
                     lastErr = m;
                     final String msg = m;
-                    main.post(() -> {
-                        log("✗ " + n + ".img " + t("提取失败", "failed") + ": " + msg);
-                        if (msg.contains("delta") || msg.toLowerCase(Locale.ROOT).contains("incremental")) {
-                            log("  " + t("提示：增量包请用「分解增量包」", "Hint: use Incremental unpack"));
-                        }
-                    });
+                    main.post(() -> log("✗ " + n + ".img " + t("提取失败", "failed") + ": " + msg));
                 }
             }
-            // 兜底缓存副本用完即清（jniInput == rawInput 时无缓存）
-            if (!jniInput.equals(rawInput)) {
-                //noinspection ResultOfMethodCallIgnored
-                new File(jniInput).delete();
-            }
+            // 缓存副本由 DnaTools memo 统一管理（换文件自动清理），此处不删
             final boolean cancelled = cancelFlag.get();
             final int ok = okCount;
             final String err = lastErr;
