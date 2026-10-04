@@ -920,11 +920,10 @@ public final class DnaBinActivity extends BaseActivity {
         for (PayloadExtractor.PartitionInfo p : partitions)
             if (checked.contains(p.getName())) ordered.add(p.getName());
         final String outDir = DnaTools.WORK_ROOT + "/" + project;
-        // v3.30.39：回归原版 DNA 逐分区顺序提取（取消进度条，用户指定 UX）：
-        // ⏳ 正在提取 [i/n] xxx.img → ✓ xxx.img (大小) 提取完成，依次推进。
-        // 每分区单独调一次 payload_dumper（-i 单名，root 链路直读原文件直写工程目录），
-        // 顺序天然清晰 —— 并行单次调用时 rayon 乱序 pwrite 所有文件同时创建，
-        // 「正在提取」全挤在一起、完成序混乱、进度靠 stat 估算还虚报，故弃用。
+        // v3.40.15：改回 JNI 提取（libpayload_extract_jni.so 多线程，实测 16.5G/61 分区 94s，
+        // 比 root payload_dumper 逐分区快一个量级）。输入经 root chmod 底层真实路径放行
+        // （/sdcard FUSE 权限根治），输出工程目录 /data/PDNA 递归放行后 app 直写。
+        // 保留 v3.30.39 的逐分区顺序 UX：⏳ 正在提取 [i/n] → ✓ 提取完成，依次推进。
         log("▶ " + t("开始提取", "Extracting") + " " + ordered.size() + t(" 个分区 → ", " partition(s) → ") + project);
         running.set(true);
         cancelFlag.set(false);
@@ -934,43 +933,70 @@ public final class DnaBinActivity extends BaseActivity {
         status.setTextColor(0xff5a6b82);
 
         io.execute(() -> {
-            // v3.30.39：逐分区顺序提取 —— 每分区一次 payload_dumper 调用，
-            // ⏳ 前置 + ✓/✗ 后置，日志严格按分区推进（无进度条、无字节轮询）
             final long startMs = System.currentTimeMillis();
+            final String rawInput = binPath != null ? binPath : openInput;
+            String jniInput = DnaTools.ensureJniReadable(this, rawInput,
+                    msg -> { main.post(() -> log(msg)); return kotlin.Unit.INSTANCE; });
+            if (jniInput == null) {
+                main.post(() -> {
+                    running.set(false);
+                    parseBtn.setEnabled(true);
+                    runBtn.setText("▶  " + t("选择分区并提取", "Select & Extract"));
+                    log("✗ " + t("输入文件无法读取（root 授权异常？）", "Input unreadable (root?)"));
+                    status.setText("✗ " + t("读取失败", "Read failed"));
+                    status.setTextColor(0xffa33b3b);
+                });
+                return;
+            }
+            // 输出工程目录放行：/data/PDNA 为 root 属主，app（JNI）需可写
+            com.topjohnwu.superuser.Shell.cmd(
+                    "mkdir -p " + DnaTools.quote(outDir)
+                            + "; chmod -R a+rwX " + DnaTools.quote(DnaTools.WORK_ROOT)).exec();
             int okCount = 0;
             String lastErr = null;
             for (int i = 0; i < ordered.size(); i++) {
                 if (cancelFlag.get()) break;
                 final String n = ordered.get(i);
                 final int no = i + 1;
+                final long token = 900000L + i;   // 仅用于 JNI 进度查询（本页不用），避让全局 token
                 main.post(() -> {
                     log("⏳ " + t("正在提取", "Extracting") + " [" + no + "/" + ordered.size() + "] " + n + ".img");
                     status.setText("⏳ " + t("正在提取", "Extracting") + " " + n + ".img [" + no + "/" + ordered.size() + "]");
                 });
                 notify(t("正在提取", "Extracting") + " " + n + ".img [" + no + "/" + ordered.size() + "]",
                         true, false, 0, 0);
-                final DnaTools.Result r = DnaTools.run(this,
-                        DnaTools.quote(dumperPath()) + " " + DnaTools.quote(openInput)
-                                + " -o " + DnaTools.quote(outDir)
-                                + " -i " + DnaTools.quote(n) + " -n",
-                        line -> kotlin.Unit.INSTANCE,   // 静默：进度行由本层打印
-                        () -> cancelFlag.get());
-                if (cancelFlag.get()) break;
-                if (r.getSuccess()) {
-                    long size = 0;
-                    try {
-                        com.topjohnwu.superuser.Shell.Result sr = com.topjohnwu.superuser.Shell.cmd(
-                                "stat -c '%s' " + DnaTools.quote(outDir + "/" + n + ".img") + " 2>/dev/null").exec();
-                        if (!sr.getOut().isEmpty()) size = Long.parseLong(sr.getOut().get(0).trim());
-                    } catch (Exception ignored) {}
-                    final long sz = size;
-                    main.post(() -> log("✓ " + n + ".img (" + fmtSizeShort(sz) + ") " + t("提取完成", "extracted")));
-                    okCount++;
-                } else {
-                    lastErr = r.getMessage();
-                    final String msg = lastErr;
-                    main.post(() -> log("✗ " + n + ".img " + t("提取失败", "failed") + ": " + msg));
+                try {
+                    //noinspection ResultOfMethodCallIgnored
+                    new File(outDir, n + ".img").delete();   // 清残留，防误判
+                    new PayloadExtractor().extractPartition(jniInput, outDir, n, 4, false, token);
+                    if (cancelFlag.get()) break;
+                    long sz = new File(outDir, n + ".img").length();
+                    if (sz > 0) {
+                        final long size = sz;
+                        main.post(() -> log("✓ " + n + ".img (" + fmtSizeShort(size) + ") " + t("提取完成", "extracted")));
+                        okCount++;
+                    } else {
+                        lastErr = "file not generated";
+                        final String msg = lastErr;
+                        main.post(() -> log("✗ " + n + ".img " + t("提取失败", "failed") + ": " + msg));
+                    }
+                } catch (Throwable e) {
+                    String m = e.getMessage();
+                    if (m == null) m = e.toString();
+                    lastErr = m;
+                    final String msg = m;
+                    main.post(() -> {
+                        log("✗ " + n + ".img " + t("提取失败", "failed") + ": " + msg);
+                        if (msg.contains("delta") || msg.toLowerCase(Locale.ROOT).contains("incremental")) {
+                            log("  " + t("提示：增量包请用「分解增量包」", "Hint: use Incremental unpack"));
+                        }
+                    });
                 }
+            }
+            // 兜底缓存副本用完即清（jniInput == rawInput 时无缓存）
+            if (!jniInput.equals(rawInput)) {
+                //noinspection ResultOfMethodCallIgnored
+                new File(jniInput).delete();
             }
             final boolean cancelled = cancelFlag.get();
             final int ok = okCount;

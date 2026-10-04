@@ -426,6 +426,60 @@ object DnaTools {
         return if (r2.stdout.contains("__DNA_OK2__")) relay else null
     }
 
+    /**
+     * v3.40.15：确保 app 进程（JNI libpayload_extract_jni.so）可读 payload 输入文件。
+     *
+     * /sdcard 上 root 属主文件 app 直读必 EACCES 的真正机制：FUSE daemon 以 media_rw
+     * 身份读底层 /data/media/0/...，root 建的 600 文件它读不了 → 对 app 报 EACCES；
+     * 而对 FUSE 视图 chmod/chown 是 daemon 代执行（media_rw 改不了 root 属主文件的权限位，
+     * v3.40.13 实测无效）。
+     * 根治：root 直接 chmod 664 底层真实路径（ext4 原生权限，立即生效）→
+     * FUSE daemon 可读 → app 可读 → JNI 直读原路径（免 11.9GB 复制 30s+）。
+     * 兜底：外置卡/异常文件系统 → root cp 到 app cache + chmod 644（调用方用完可删）。
+     *
+     * @return 实际可读路径；null = 全部手段失败
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun ensureJniReadable(
+        ctx: Context,
+        path: String,
+        onLog: ((String) -> Unit)? = null,
+    ): String? {
+        // ① 已可直读（app 属主 / 底层本就 644）
+        if (tryReadHead(path)) return path
+        // ② root chmod 底层真实路径（/storage/emulated/N 与 /sdcard → /data/media/N）
+        val real = realMediaPath(path)
+        if (real != null) {
+            onLog?.invoke("… root 放行底层文件权限 …")
+            RootShell.exec("chmod 664 '$real' 2>/dev/null; true", timeoutMs = 15000)
+            if (tryReadHead(path)) return path
+        }
+        // ③ 兜底：root cp 到 cache + chmod 644（大文件慢，仅前两级失败才走）
+        onLog?.invoke("… 直读仍失败，复制到缓存（用完自动清理）…")
+        val cache = File(ctx.cacheDir, "payload_jni_input")
+        RootShell.exec(
+            "rm -f '${cache.absolutePath}'; cp '$path' '${cache.absolutePath}' && chmod 644 '${cache.absolutePath}'",
+            timeoutMs = 30 * 60_000L,
+        )
+        if (cache.isFile && tryReadHead(cache.absolutePath)) return cache.absolutePath
+        return null
+    }
+
+    /** 试读首字节验证 app 进程可读（FUSE 上 File.canRead 不可靠，真读一次为准） */
+    private fun tryReadHead(path: String): Boolean = try {
+        java.io.FileInputStream(path).use { it.read() >= 0 }
+    } catch (e: Exception) {
+        false
+    }
+
+    /** /sdcard/... 或 /storage/emulated/N/... → /data/media/N/...（外置卡返回 null） */
+    private fun realMediaPath(path: String): String? {
+        if (path.startsWith("/sdcard/")) return "/data/media/0/" + path.substring("/sdcard/".length)
+        val m = Regex("^/storage/emulated/(\\d+)/(.*)$").find(path) ?: return null
+        return "/data/media/${m.groupValues[1]}/${m.groupValues[2]}"
+    }
+
     // 自检：dna gettype 对自身可执行文件返回 elf 类型即认为工具链可用
     // v3.28.8：零 patch —— dna 原版二进制要求 getcwd == /data/data/com.dna.tools/files（伪装目录）
     // v3.28.7：不再用 File.canExecute()（部分 ROM 的 SELinux 下 app 进程 stat /data/local/tmp 不可靠，恒 false → 误报 ROOT 失败）
