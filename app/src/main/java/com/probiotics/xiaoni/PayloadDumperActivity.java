@@ -68,6 +68,7 @@ public final class PayloadDumperActivity extends BaseActivity {
     
     private PayloadExtractor extractor;
     private String currentInput;
+    private volatile String originalLocalPath;   // v3.40.14：用户选择的原始路径（root dumper 直读，不受 FUSE 权限影响）
     private Uri selectedFileUri;
     private String selectedFileName = "";
     private int currentTab = 0;
@@ -842,44 +843,52 @@ public final class PayloadDumperActivity extends BaseActivity {
                 if (extractor != null) {
                     extractor.close();
                 }
-                // v3.40.13：root 放行原文件（chmod 666 + chown app uid）→ JNI 直接读原路径，
-                // 替代旧兜底「cp 11.9GB 到缓存再打开」（要等 30s+ 且双倍占空间）。
-                // /sdcard 上 root 属主文件经 FUSE 直读必 EACCES，放行后毫秒级打开。
-                com.topjohnwu.superuser.Shell.cmd(
-                        "chmod 666 " + DnaTools.quote(path)
-                                + "; chown " + android.os.Process.myUid() + " " + DnaTools.quote(path)
-                                + "; true").exec();
-                extractor = new PayloadExtractor();
-                boolean success = extractor.open(path);
-                String openedPath = path;
-                if (!success) {
-                    // v3.30.15 兜底：app 无直读权限（未授所有文件访问）→ root 复制到 cache 再打开
-                    logLocal("直读失败，复制到缓存重试...");
+                // v3.40.14 解析三级链（修复 root 属主文件解析慢/失败）：
+                // chmod/chown 在 /sdcard（FUSE）上不生效（上版实测仍走缓存复制 32s）——放弃该路线。
+                // ① Java 直读 manifest（app 属主文件毫秒级；root 属主快速失败）
+                // ② payload_dumper --list（root，bin/zip 直读原路径，root 属主也能读）
+                // ③ JNI 兜底：root cp 到缓存 + chmod 644 再 open（仅前两级都失败时）
+                originalLocalPath = path;
+                List<PayloadExtractor.PartitionInfo> partitions = PayloadExtractor.fastListPartitions(path);
+                if (partitions == null || partitions.isEmpty()) {
+                    logLocal("… 改用 payload_dumper 解析 ...");
+                    DnaTools.Result r = DnaTools.run(PayloadDumperActivity.this,
+                            DnaTools.quote(dumperPath()) + " --list " + DnaTools.quote(path),
+                            line -> kotlin.Unit.INSTANCE,
+                            () -> false, 120000);
+                    if (r.getSuccess()) partitions = parseDumperList(r.getOutput());
+                }
+                if (partitions == null || partitions.isEmpty()) {
+                    logLocal("… 改用 JNI 解析（复制到缓存）...");
                     File cacheFile = new File(getCacheDir(), "payload_browser_input");
                     com.topjohnwu.superuser.Shell.cmd(
-                            "cp -f '" + path + "' '" + cacheFile.getAbsolutePath() + "'").exec();
+                            "cp -f '" + path + "' '" + cacheFile.getAbsolutePath()
+                                    + "' && chmod 644 '" + cacheFile.getAbsolutePath() + "'").exec();
+                    boolean ok = false;
                     if (cacheFile.isFile() && cacheFile.length() > 0) {
-                        openedPath = cacheFile.getAbsolutePath();
-                        currentInput = openedPath;
-                        logLocal("文件路径: " + openedPath);
+                        currentInput = cacheFile.getAbsolutePath();
+                        logLocal("文件路径: " + currentInput);
                         extractor = new PayloadExtractor();
-                        success = extractor.open(openedPath);
+                        ok = extractor.open(currentInput);
                     }
+                    if (!ok) {
+                        logLocal("错误: 无法打开文件");
+                        mainHandler.post(() -> {
+                            status.setText("打开失败");
+                            toast("无法打开文件");
+                        });
+                        return;
+                    }
+                    partitions = extractor.listPartitions(true);
+                } else {
+                    // 快速路径成功：提取走 root dumper（原路径直读），无需 JNI 句柄
+                    extractor = new PayloadExtractor();
                 }
-                if (!success) {
-                    logLocal("错误: 无法打开文件");
-                    mainHandler.post(() -> {
-                        status.setText("打开失败");
-                        toast("无法打开文件");
-                    });
-                    return;
-                }
-                logLocal("成功打开，正在列出分区...");
-                List<PayloadExtractor.PartitionInfo> partitions = extractor.listPartitions(true);
-                logLocal("找到 " + partitions.size() + " 个分区");
+                logLocal("成功，找到 " + partitions.size() + " 个分区");
+                final List<PayloadExtractor.PartitionInfo> fParts = partitions;
                 mainHandler.post(() -> {
-                    displayPartitionsLocal(partitions);
-                    status.setText("已解析 " + partitions.size() + " 个分区");
+                    displayPartitionsLocal(fParts);
+                    status.setText("已解析 " + fParts.size() + " 个分区");
                 });
             } catch (Exception e) {
                 logLocal("异常: " + e.getClass().getSimpleName());
@@ -1235,10 +1244,25 @@ public final class PayloadDumperActivity extends BaseActivity {
                 android.util.Log.d("PayloadDumper", "输出目录: " + outputDir);
                 android.util.Log.d("PayloadDumper", "Token: " + token);
                 
+                if (isLocal) {
+                    // v3.40.14：本地改 root payload_dumper —— JNI 对 root 属主文件（含缓存副本）
+                    // 经 FUSE 必 EACCES（上版单分区提取失败的根因）；输入优先原始路径
+                    String input = originalLocalPath != null ? originalLocalPath : currentInput;
+                    boolean ok = extractOnePartition(input, outputDir, partitionName,
+                            finalPartitionSize, itemView, true,
+                            () -> Boolean.TRUE.equals(cancelledTokens.get(token)));
+                    if (ok) {
+                        final String fp = finalOutputPath;
+                        mainHandler.post(() ->
+                                toast("提取完成: " + partitionName + "\n保存到: " + fp));
+                    }
+                    return;   // 结果日志/进度/状态已由 extractOnePartition 处理
+                }
+
                 if (extractor == null) {
                     throw new Exception("Extractor is null");
                 }
-                
+
                 extractor.extractPartition(currentInput, outputDir, partitionName, 4, false, token);
                 android.util.Log.d("PayloadDumper", "提取调用完成: " + partitionName);
             } catch (Exception e) {
@@ -1282,6 +1306,10 @@ public final class PayloadDumperActivity extends BaseActivity {
         // 启动进度监听线程
         executor.execute(() -> {
             try {
+                // v3.40.14：本地链路进度由 extractOnePartition 的 stat 轮询驱动，
+                // 此 JNI 进度监听仅保留给在线（URL 流式）提取；设系统属性
+                // pd.legacy.progress=true 可强制走旧监听（诊断用）
+                if (isLocal && !Boolean.getBoolean("pd.legacy.progress")) return;
                 Thread.sleep(1000); // 等待提取线程启动
                 
                 long startTime = System.currentTimeMillis();
@@ -1584,13 +1612,55 @@ public final class PayloadDumperActivity extends BaseActivity {
         return new File(getApplicationInfo().nativeLibraryDir, "libpayload_dumper.so").getAbsolutePath();
     }
 
+    /** 解析 payload_dumper --list 表格输出：「boot<空白>1.00 MB」每行一个分区（同 DnaBinActivity） */
+    private static List<PayloadExtractor.PartitionInfo> parseDumperList(String output) {
+        List<PayloadExtractor.PartitionInfo> out = new java.util.ArrayList<>();
+        if (output == null) return out;
+        for (String raw : output.split("\n")) {
+            String line = raw.trim();
+            if (line.isEmpty() || line.startsWith("Partition Name") || line.startsWith("---")) continue;
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("^([A-Za-z0-9_.\\-]+)\\s+(.+)$").matcher(line);
+            if (!m.matches()) continue;
+            String name = m.group(1);
+            if (name.equalsIgnoreCase("Partition")) continue;
+            out.add(new PayloadExtractor.PartitionInfo(name, readableToBytes(m.group(2)), null));
+        }
+        return out;
+    }
+
+    /** 「1.00 MB / 465.29 GB / Unknown」→ 字节数（1024 进位；Unknown → 0） */
+    private static long readableToBytes(String s) {
+        if (s == null) return 0;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("^([\\d.]+)\\s*(B|KB|MB|GB|TB)$", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(s.trim());
+        if (!m.matches()) return 0;
+        try {
+            double v = Double.parseDouble(m.group(1));
+            String u = m.group(2).toUpperCase(java.util.Locale.ROOT);
+            long mul = 1;
+            switch (u) {
+                case "TB": mul = 1L << 40; break;
+                case "GB": mul = 1L << 30; break;
+                case "MB": mul = 1L << 20; break;
+                case "KB": mul = 1L << 10; break;
+            }
+            return (long) (v * mul);
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
     private void extractAllLocal() {
         if (extractAllRunning.get()) { toast("全选提取进行中"); return; }
-        if (localPartitions.isEmpty() || currentInput == null) {
+        if (localPartitions.isEmpty() || (currentInput == null && originalLocalPath == null)) {
             toast("请先选择文件并解析出分区列表");
             return;
         }
-        runExtractAll(currentInput, true, new java.util.ArrayList<>(localPartitions));
+        // v3.40.14：输入优先原始路径（root dumper 直读，哪怕解析走了缓存兜底）
+        String input = originalLocalPath != null ? originalLocalPath : currentInput;
+        runExtractAll(input, true, new java.util.ArrayList<>(localPartitions));
     }
 
     private void extractAllOnline() {
@@ -1707,68 +1777,11 @@ public final class PayloadDumperActivity extends BaseActivity {
                 status.setText("正在提取 " + name + " [" + no + "/" + totalParts + "]");
                 if (itemView != null) { itemView.setOutputPath(outFile.getAbsolutePath()); itemView.setProgress(0, 0, 1); }
             });
-            final String cmd = DnaTools.quote(dumperPath()) + " " + DnaTools.quote(input)
-                    + " -o " + DnaTools.quote(outputDir) + " -i " + DnaTools.quote(name) + " -n";
-            final java.lang.Process[] proc = new java.lang.Process[1];
-            final java.util.concurrent.atomic.AtomicInteger exitCode =
-                    new java.util.concurrent.atomic.AtomicInteger(-999);
-            final StringBuilder cmdOut = new StringBuilder();
-            Thread runner = new Thread(() -> {
-                try {
-                    java.lang.Process p = new ProcessBuilder("su").start();
-                    proc[0] = p;
-                    p.getOutputStream().write((cmd + "\nexit $?\n").getBytes("UTF-8"));
-                    p.getOutputStream().close();
-                    java.io.BufferedReader reader = new java.io.BufferedReader(
-                            new java.io.InputStreamReader(p.getInputStream()));
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        synchronized (cmdOut) { cmdOut.append(line).append('\n'); }
-                    }
-                    exitCode.set(p.waitFor());
-                } catch (Exception e) {
-                    exitCode.set(-1);
-                }
-            }, "pd-all-extract");
-            runner.setDaemon(true);
-            runner.start();
-            // 进度轮询：stat %b(已分配块)×512 = 真实落盘字节（并行 pwrite 下 %s 会虚高）
-            long lastBytes = 0, lastPollMs = System.currentTimeMillis(), stuckMs = System.currentTimeMillis();
-            while (runner.isAlive()) {
-                try { Thread.sleep(600); } catch (InterruptedException e) { break; }
-                if (extractAllCancel && proc[0] != null) proc[0].destroyForcibly();
-                long bytes = statBytes(outFile.getAbsolutePath());
-                long now = System.currentTimeMillis();
-                float speedMBs = (bytes - lastBytes) / 1048576f / Math.max(0.001f, (now - lastPollMs) / 1000f);
-                int pct = expected > 0 ? (int) Math.min(100, bytes * 100 / expected) : 0;
-                final int p2 = pct;
-                final float sp = speedMBs;
-                mainHandler.post(() -> { if (itemView != null) itemView.setProgress(p2, sp, 1); });
-                if (bytes > lastBytes) { lastBytes = bytes; stuckMs = now; }
-                else if (now - stuckMs > 300000 && proc[0] != null) {   // 5 分钟无进展 → 杀进程
-                    proc[0].destroyForcibly();
-                    log(isLocal, "⏱ " + name + " 提取超时（5 分钟无进展）");
-                }
-                lastPollMs = now;
-            }
-            try { runner.join(3000); } catch (InterruptedException ignored) { }
-            long size = statBytes(outFile.getAbsolutePath());
-            if (exitCode.get() == 0 && size > 0) {
+            if (extractOnePartition(input, outputDir, name, expected, itemView, isLocal,
+                    () -> extractAllCancel)) {
                 ok++;
-                log(isLocal, "✓ " + name + ".img (" + fmtMB(size) + ") 提取完成");
-                mainHandler.post(() -> { if (itemView != null) itemView.setComplete(); });
             } else if (extractAllCancel) {
-                log(isLocal, "■ " + name + " 已取消");
-                mainHandler.post(() -> { if (itemView != null) itemView.setError("已取消"); });
                 break;
-            } else {
-                String err = cmdOut.toString().trim();
-                String brief = err.isEmpty() ? ("退出码 " + exitCode.get()) : err.split("\n")[err.split("\n").length - 1];
-                log(isLocal, "✗ " + name + " 提取失败: " + brief);
-                if (brief.contains("delta") || brief.toLowerCase().contains("incremental")) {
-                    log(isLocal, "  提示: 这是增量 OTA 包，请使用 DNA 工具箱 → 分解增量包");
-                }
-                mainHandler.post(() -> { if (itemView != null) itemView.setError("提取失败"); });
             }
         }
         final int okF = ok;
@@ -1782,6 +1795,94 @@ public final class PayloadDumperActivity extends BaseActivity {
                 toast(okF == parts.size() ? "全选提取完成" : "完成 " + okF + "/" + parts.size());
             });
         }
+    }
+
+    /**
+     * v3.40.14：单分区提取统一入口（单分区按钮 / 全选共用）—— root payload_dumper
+     * 直读输入直写输出（root 属主文件/缓存副本都无权限问题），su + __PD_EXIT_ 标记行
+     * 拿真实退出码，stat 轮询真实落盘字节驱动分区行进度条，支持取消与 5 分钟卡死熔断。
+     * @return true=成功；false=失败或已取消（日志与分区行状态已在内部更新）
+     */
+    private boolean extractOnePartition(String input, String outputDir, String name,
+                                        long expected, PartitionItemView itemView, boolean isLocal,
+                                        java.util.function.BooleanSupplier cancelled) {
+        final File outFile = new File(outputDir, name + ".img");
+        // 清残留（防旧文件让进度虚高 / 误判完成）
+        com.topjohnwu.superuser.Shell.cmd("rm -f " + DnaTools.quote(outFile.getAbsolutePath())).exec();
+        final String cmd = "chmod 755 " + DnaTools.quote(dumperPath()) + " 2>/dev/null; "
+                + DnaTools.quote(dumperPath()) + " " + DnaTools.quote(input)
+                + " -o " + DnaTools.quote(outputDir)
+                + " -i " + DnaTools.quote(name) + " -n";
+        final java.lang.Process[] proc = new java.lang.Process[1];
+        final java.util.concurrent.atomic.AtomicInteger exitCode =
+                new java.util.concurrent.atomic.AtomicInteger(-999);
+        final StringBuilder cmdOut = new StringBuilder();
+        final java.util.regex.Pattern exitMark =
+                java.util.regex.Pattern.compile("__PD_EXIT_(\\d+)__");
+        Thread runner = new Thread(() -> {
+            try {
+                java.lang.Process p = new ProcessBuilder("su").start();
+                proc[0] = p;
+                p.getOutputStream().write((cmd + "\necho __PD_EXIT_$?__\n").getBytes("UTF-8"));
+                p.getOutputStream().close();
+                java.io.BufferedReader reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    java.util.regex.Matcher m = exitMark.matcher(line);
+                    if (m.find()) {
+                        exitCode.set(Integer.parseInt(m.group(1)));
+                        continue;
+                    }
+                    synchronized (cmdOut) { cmdOut.append(line).append('\n'); }
+                }
+                if (exitCode.get() == -999) exitCode.set(p.waitFor());
+            } catch (Exception e) {
+                exitCode.set(-1);
+            }
+        }, "pd-extract-" + name);
+        runner.setDaemon(true);
+        runner.start();
+        // 进度轮询：stat %b(已分配块)×512 = 真实落盘字节（并行 pwrite 下 %s 会虚高）
+        long lastBytes = 0, lastPollMs = System.currentTimeMillis(), stuckMs = System.currentTimeMillis();
+        while (runner.isAlive()) {
+            try { Thread.sleep(600); } catch (InterruptedException e) { break; }
+            if (cancelled.getAsBoolean() && proc[0] != null) proc[0].destroyForcibly();
+            long bytes = statBytes(outFile.getAbsolutePath());
+            long now = System.currentTimeMillis();
+            float speedMBs = (bytes - lastBytes) / 1048576f / Math.max(0.001f, (now - lastPollMs) / 1000f);
+            int pct = expected > 0 ? (int) Math.min(100, bytes * 100 / expected) : 0;
+            final int p2 = pct;
+            final float sp = speedMBs;
+            mainHandler.post(() -> { if (itemView != null) itemView.setProgress(p2, sp, 1); });
+            if (bytes > lastBytes) { lastBytes = bytes; stuckMs = now; }
+            else if (now - stuckMs > 300000 && proc[0] != null) {   // 5 分钟无进展 → 熔断
+                proc[0].destroyForcibly();
+                log(isLocal, "⏱ " + name + " 提取超时（5 分钟无进展）");
+            }
+            lastPollMs = now;
+        }
+        try { runner.join(3000); } catch (InterruptedException ignored) { }
+        if (cancelled.getAsBoolean()) {
+            log(isLocal, "■ " + name + " 已取消");
+            mainHandler.post(() -> { if (itemView != null) itemView.setError("已取消"); });
+            return false;
+        }
+        long size = statBytes(outFile.getAbsolutePath());
+        if (exitCode.get() == 0 && size > 0) {
+            log(isLocal, "✓ " + name + ".img (" + fmtMB(size) + ") 提取完成");
+            mainHandler.post(() -> { if (itemView != null) itemView.setComplete(); });
+            return true;
+        }
+        String err = cmdOut.toString().trim();
+        String brief = err.isEmpty() ? ("退出码 " + exitCode.get())
+                : err.substring(err.lastIndexOf('\n') + 1);
+        log(isLocal, "✗ " + name + " 提取失败: " + brief);
+        if (brief.contains("delta") || brief.toLowerCase(java.util.Locale.ROOT).contains("incremental")) {
+            log(isLocal, "  提示: 这是增量 OTA 包，请使用 DNA 工具箱 → 分解增量包");
+        }
+        mainHandler.post(() -> { if (itemView != null) itemView.setError("提取失败"); });
+        return false;
     }
 
     /** root stat 输出文件已写入字节（%b×512，异常回退 %s；文件不存在 = 0） */

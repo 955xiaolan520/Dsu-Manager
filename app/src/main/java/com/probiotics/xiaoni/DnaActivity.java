@@ -126,13 +126,31 @@ public final class DnaActivity extends BaseActivity {
             maxHeight = maxHeightPx;
             setVerticalScrollBarEnabled(false);
             setOverScrollMode(OVER_SCROLL_NEVER);
+            // v3.40.14 修复「滚动一会行一会不行」：旧逻辑按下即永久禁止父级拦截，
+            // 列表滚到顶/底后继续往边界方向拖 → 内层滚不动又抓着事件不放 → 手感卡死。
+            // 现按边界交还：拖动方向指向边界（外层该接管）时放开拦截权，其余时间独占。
             setOnTouchListener((v, event) -> {
                 int action = event.getActionMasked();
-                v.getParent().requestDisallowInterceptTouchEvent(
-                        action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
+                if (action == MotionEvent.ACTION_DOWN) {
+                    v.getParent().requestDisallowInterceptTouchEvent(true);
+                } else if (action == MotionEvent.ACTION_MOVE) {
+                    android.view.View child = getChildAt(0);
+                    boolean atTop = getScrollY() <= 0;
+                    boolean atBottom = child == null
+                            || getScrollY() + getHeight() >= child.getHeight() - dp1();
+                    // dy>0 手指下移=想往上滚（到顶后交外层）；dy<0 手指上移=想往下滚（到底后交外层）
+                    boolean outward = (atTop && event.getY() > lastY)
+                            || (atBottom && event.getY() < lastY);
+                    v.getParent().requestDisallowInterceptTouchEvent(!outward);
+                    lastY = event.getY();
+                } else {
+                    v.getParent().requestDisallowInterceptTouchEvent(false);
+                }
                 return false;
             });
         }
+        private float lastY;
+        private int dp1() { return Math.max(2, (int) (2 * getResources().getDisplayMetrics().density)); }
         @Override
         protected void onMeasure(int wms, int hms) {
             super.onMeasure(wms, hms);
