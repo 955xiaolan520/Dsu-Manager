@@ -444,7 +444,7 @@ public class MainActivity extends BaseActivity {
          sizeRow.setOrientation(LinearLayout.HORIZONTAL);
          installSizeButtons = new Button[4];
          String[] installSizes = {"8 GB", "16 GB", "32 GB", "64 GB"};
-         // v3.41.26：容量上限按剩余空间动态计算（参考 DSU-Sideloader），不再固定 128GB
+         // v3.42.11：容量上限按剩余空间动态计算（参考 DSU-Sideloader），不再固定 128GB
          double maxGb = maxDsuSizeGb();
          for (int i = 0; i < installSizes.length; i++) {
              final int sizeIndex = i;
@@ -467,7 +467,7 @@ public class MainActivity extends BaseActivity {
              sizeRow.addView(sizeButton, sizeLp);
          }
          installOptionsPanel.addView(sizeRow, new LinearLayout.LayoutParams(-1, dp(44)));
-         // v3.41.26：实时存储信息行 —— 剩余空间 + 自定义容量动态上限
+         // v3.42.11：实时存储信息行 —— 剩余空间 + 自定义容量动态上限
          long freeBytesNow = dataFreeBytes();
          TextView storageInfo = text(t(
                  "剩余空间 " + (freeBytesNow >= 0 ? formatSizeBytesHuman(freeBytesNow) : "未知")
@@ -5524,14 +5524,14 @@ public class MainActivity extends BaseActivity {
         LinearLayout box = new LinearLayout(this);
         box.setPadding(dp(24), dp(4), dp(24), 0);
         box.addView(input, new LinearLayout.LayoutParams(-1, dp(56)));
-        // v3.41.26：上限随剩余空间动态计算（不再固定 128GB），弹窗内展示实时可用空间
+        // v3.42.11：上限随剩余空间动态计算（不再固定 128GB），弹窗内展示实时可用空间
         long freeBytes = dataFreeBytes();
         AlertDialog dialog = new AlertDialog.Builder(this)
                  .setTitle(t("自定义 userdata 容量", "Custom userdata size"))
                  .setMessage(t("剩余空间 " + (freeBytes >= 0 ? formatSizeBytesHuman(freeBytes) : "未知")
-                                 + "，最大可分配 " + (int) maxDsuSizeGb() + " GB（已预留系统安全余量）",
+                                 + "，最大可分配 " + (int) maxDsuSizeGb() + " GB（与 DSU-Sideloader 算法一致：预留 4GB 解包空间后对半分配）",
                          "Free " + (freeBytes >= 0 ? formatSizeBytesHuman(freeBytes) : "unknown")
-                                 + ", up to " + (int) maxDsuSizeGb() + " GB (safety margin reserved)"))
+                                 + ", up to " + (int) maxDsuSizeGb() + " GB (same as DSU-Sideloader: 4GB reserved, then split in half)"))
                 .setView(box)
                  .setPositiveButton(t("选择 GSI 安装包", "Choose GSI package"), null)
                  .setNegativeButton(t("取消", "Cancel"), null)
@@ -5965,18 +5965,21 @@ public class MainActivity extends BaseActivity {
         }
     }
     /**
-     * v3.42.10：动态计算本机可分配的 DSU userdata 最大容量（GB）—— 不再固定 128GB。
-     * 对齐 DSU-Sideloader 源码：预留剩余空间的 40%（与 5GB 取大者）作为主系统
-     * 安全水位 —— DSU userdata 与主系统共享 /data 分区，预留不足会把主系统挤到没容量。
+     * v3.42.11：对齐 DSU-Sideloader 源码 StorageUtils.getAllocInfo() 的官方算法
+     * （不再自创预留比例）：
+     *   availGiB = /data 剩余字节 ÷ 1024³（整除取整）
+     *   availGiB ≥ 6 时再减 4GB 预留（GSI 解包 / 打包 gz 的临时空间）
+     *   最大可分配 = availGiB ÷ 2（整除）—— DSU userdata 与主系统共享 /data，各留一半
+     * 例：剩余 201GB → (201 - 4) ÷ 2 = 98GB（与 DSU-Sideloader 显示一致）。
      * 检测失败回退旧上限 128GB。
      */
     private double maxDsuSizeGb() {
         try {
-            long freeBytes = new android.os.StatFs("/data").getAvailableBytes();
-            long reserve = Math.max(freeBytes * 2 / 5, 5L * 1024L * 1024L * 1024L);
-            double usable = freeBytes - reserve;
-            if (usable < 1024d * 1024d * 1024d) return 1;   // 空间紧张时至少 1GB，让提示有意义
-            return Math.floor(usable / (1024d * 1024d * 1024d));
+            long availableBytes = new android.os.StatFs(
+                    android.os.Environment.getDataDirectory().getAbsolutePath()).getAvailableBytes();
+            long availGiB = availableBytes / (1024L * 1024L * 1024L);
+            if (availGiB >= 6) availGiB -= 4;   // 固定预留 4GB（官方注释：totally arbitrary number）
+            return availGiB / 2;
         } catch (Exception e) {
             return 128;
         }
