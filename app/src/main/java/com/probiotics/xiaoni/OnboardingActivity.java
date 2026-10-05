@@ -773,9 +773,12 @@ public final class OnboardingActivity extends BaseActivity {
     private TextView rootRow;          // v3.41.20：「验证 Root」行胶囊
     private boolean rootCheckRunning;  // Root 检测进行中（防重复点击）
     private TextView allFilesRow;      // v3.41.21：「所有文件访问」行状态圆点
+    private TextView installUnknownRow;   // v3.41.25：「安装未知应用」行状态圆点
     private Button confirmButton;      // v3.41.23：底部「一键授权」大按钮（授权中显示进度）
     /** v3.41.21：「继续」流程等待用户从系统设置开启所有文件访问（回来 onResume 自动前进） */
     private boolean pendingAllFiles;
+    /** v3.41.25：「继续」流程等待用户从系统设置开启安装未知应用（回来 onResume 自动前进） */
+    private boolean pendingInstallUnknown;
     /** 当前单行授权请求对应的权限（回调里判断永久拒绝 → 引导去设置） */
     private String[] pendingPerms;
     private TextView pendingRow;
@@ -863,6 +866,13 @@ public final class OnboardingActivity extends BaseActivity {
                 english ? "Required for picking ROM packages and saving images to public folders. Without Root this must be enabled manually in app details."
                         : "选择 ROM 包、保存镜像到公共目录需要此权限。未授权 Root 时需跳转应用详情手动开启",
                 () -> grantRow(allFilesRow, 1014, new String[0], true));
+        // v3.41.25：新增「安装未知应用」—— 应用内自动更新安装的核心权限
+        // ROOT 时 appops 静默开启；无 ROOT 时跳应用详情手动开启（开启后应用内更新即静默安装）
+        installUnknownRow = envRow(sheet, "📦",
+                english ? "Install unknown apps" : "安装未知应用",
+                english ? "Required for in-app self-update. Enabled automatically with Root; otherwise enable it in app details"
+                        : "应用内检查更新并自动安装新版本需要此权限。已授权 Root 时自动开启；未授权时需跳转应用详情手动开启",
+                () -> grantInstallUnknown());
         rootRow = envRow(sheet, "🧢",
                 english ? "Verify Root" : "验证 Root",
                 english ? "ROOT is required by DSU install, image extraction, DNA toolbox and OTG"
@@ -1142,6 +1152,42 @@ public final class OnboardingActivity extends BaseActivity {
     }
 
     /**
+     * v3.41.25：「安装未知应用」行授权 —— ROOT 可用时 appops set 静默开启
+     * （应用内更新即可真静默安装）；无 ROOT 回退跳系统应用详情页手动开启。
+     */
+    private void grantInstallUnknown() {
+        if (getPackageManager().canRequestPackageInstalls()) {
+            markAllowed(installUnknownRow);
+            return;
+        }
+        new Thread(() -> {
+            boolean rooted = false;
+            try { rooted = RootShell.INSTANCE.available(); } catch (Exception ignored) { }
+            if (rooted) {
+                try {
+                    RootShell.INSTANCE.exec("appops set " + getPackageName()
+                            + " REQUEST_INSTALL_PACKAGES allow", 10000L, null);
+                } catch (Exception ignored) { }
+                runOnUiThread(() -> {
+                    if (getPackageManager().canRequestPackageInstalls())
+                        markAllowed(installUnknownRow);
+                });
+            } else {
+                runOnUiThread(() -> requestInstallUnknownAccess());
+            }
+        }, "grant-install-unknown").start();
+    }
+
+    /** 跳系统「安装未知应用」设置页（本应用直达开关） */
+    private void requestInstallUnknownAccess() {
+        try {
+            startActivity(new android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    android.net.Uri.parse("package:" + getPackageName())));
+        } catch (Exception ignored) { }
+    }
+
+    /**
      * v3.8.8：底部「允许」一键授权 —— 收集全部未授权权限（通知 / 音频 / 照片和视频），
      * 一次 requestPermissions 发起真实系统授权；回调到达后刷新各行状态并进入下一页。
      * v3.41.21 全自动流：运行时权限齐了以后，若 Android 11+「所有文件访问」未开启，
@@ -1177,6 +1223,10 @@ public final class OnboardingActivity extends BaseActivity {
                         RootShell.INSTANCE.exec("appops set " + pkg + " MANAGE_EXTERNAL_STORAGE allow", 10000L, null);
                     } catch (Exception ignored) { }
                 }
+                // v3.41.25：安装未知应用也一并静默开启（应用内更新真静默安装的前提）
+                try {
+                    RootShell.INSTANCE.exec("appops set " + pkg + " REQUEST_INSTALL_PACKAGES allow", 10000L, null);
+                } catch (Exception ignored) { }
                 runOnUiThread(() -> {
                     refreshAllPermissionRows();
                     runRootCheck();
@@ -1219,6 +1269,12 @@ public final class OnboardingActivity extends BaseActivity {
             if (needAllFiles()) {
                 pendingAllFiles = true;
                 requestAllFilesAccess();
+                return;
+            }
+            // v3.41.25：「安装未知应用」未开启 → 继续引导（返回后自动前进）
+            if (!getPackageManager().canRequestPackageInstalls()) {
+                pendingInstallUnknown = true;
+                requestInstallUnknownAccess();
                 return;
             }
             dismissSheetThen();
@@ -1268,6 +1324,17 @@ public final class OnboardingActivity extends BaseActivity {
             // 「继续」流程等待所有文件访问：开启成功 → 自动关闭弹窗进入下一页
             if (pendingAllFiles && !needAllFiles()) {
                 pendingAllFiles = false;
+                // v3.41.25：所有文件访问完成 → 继续引导「安装未知应用」（链式，不中断）
+                if (!getPackageManager().canRequestPackageInstalls()) {
+                    pendingInstallUnknown = true;
+                    requestInstallUnknownAccess();
+                    return;
+                }
+                dismissSheetThen();
+            }
+            // v3.41.25：「继续」流程等待安装未知应用：开启成功 → 自动关闭弹窗进入下一页
+            if (pendingInstallUnknown && getPackageManager().canRequestPackageInstalls()) {
+                pendingInstallUnknown = false;
                 dismissSheetThen();
             }
         }
@@ -1278,6 +1345,10 @@ public final class OnboardingActivity extends BaseActivity {
         refreshPermissionRow(allowAudio, "android.permission.READ_MEDIA_AUDIO");
         refreshPermissionRow(allowMedia, "android.permission.READ_MEDIA_IMAGES");
         refreshAllFilesRow();
+        // v3.41.25：安装未知应用状态对账
+        if (installUnknownRow != null && getPackageManager().canRequestPackageInstalls()) {
+            markAllowed(installUnknownRow);
+        }
     }
 
     private void requestPermissionSet(String permissions, int requestCode, TextView row) {
@@ -1343,6 +1414,14 @@ public final class OnboardingActivity extends BaseActivity {
                                     : "还差一步：在系统设置中开启「所有文件访问」后返回即可",
                             android.widget.Toast.LENGTH_LONG).show();
                     requestAllFilesAccess();
+                } else if (!getPackageManager().canRequestPackageInstalls()) {
+                    // v3.41.25：运行时权限走完 → 继续引导「安装未知应用」
+                    pendingInstallUnknown = true;
+                    android.widget.Toast.makeText(this,
+                            english ? "One more step: enable \"Install unknown apps\", then return"
+                                    : "还差一步：在系统设置中开启「安装未知应用」后返回即可",
+                            android.widget.Toast.LENGTH_LONG).show();
+                    requestInstallUnknownAccess();
                 } else {
                     dismissSheetThen();
                 }

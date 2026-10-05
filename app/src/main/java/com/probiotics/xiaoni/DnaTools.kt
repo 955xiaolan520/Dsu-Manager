@@ -24,15 +24,14 @@ object DnaTools {
         "mkfs.f2fs", "payload_extract", "resize2fs", "sload_f2fs", "zstd",
     )
 
-    // v3.41.15：工具包云端获取 —— 对齐 UpdateCenter（APP 更新）的「API 动态解析 + 镜像回退」，
-    // 不再硬编码 release tag：先经 GitHub API（镜像优先）读 latest Release 的 assets，
-    // 找到 dna-tools*.zip 的 browser_download_url，再镜像前缀回退下载。
-    // 用户把 zip 传到任意版本 Release（且为最新 Release）即可，无需固定 v3.41.11。
+    // v3.41.25：工具包改用独立固定 Release（tag: dna-tools）—— 与 APP 版本 Release 彻底解耦，
+    // 以后工具链更新只需替换该 Release 里的 dna-tools*.zip 附件，APP 发版不必再跟着上传工具包；
+    // 这里经 GitHub API（镜像优先）按固定 tag 解析 assets 拿到 browser_download_url。
     private val TOOLS_API_URLS = arrayOf(
-        "https://gh-proxy.com/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
-        "https://ghfast.top/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
-        "https://ghproxy.net/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
-        "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
+        "https://gh-proxy.com/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/tags/dna-tools",
+        "https://ghfast.top/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/tags/dna-tools",
+        "https://ghproxy.net/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/tags/dna-tools",
+        "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/tags/dna-tools",
     )
     private val TOOLS_MIRRORS = arrayOf(
         "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "")
@@ -40,8 +39,8 @@ object DnaTools {
     private const val MIN_TOOLS_ZIP_BYTES = 14L * 1024 * 1024
 
     /**
-     * v3.41.15：经 GitHub API 解析 latest Release 里工具包附件的真实下载地址（镜像优先回退）。
-     * 与 UpdateCenter.fetchLatest 同套路：HttpURLConnection + JSON 解析 assets。
+     * v3.41.25：经 GitHub API 按固定 tag（dna-tools）解析独立 Release 里工具包附件的真实下载地址
+     * （镜像优先回退）。与 UpdateCenter.fetchLatest 同套路：HttpURLConnection + JSON 解析 assets。
      * @return browser_download_url；Release 没传附件返回 null（区别于网络失败抛异常）
      */
     private fun fetchToolsAssetUrl(onLog: ((String) -> Unit)?): String? {
@@ -449,12 +448,13 @@ object DnaTools {
 
     /** downloadTools 的失败原因（供 UI 区分「未上传」与「网络失败」给出准确提示） */
     const val TOOLS_ERR_NOT_UPLOADED =
-        "GitHub 最新 Release 未上传工具包 dna-tools-v1.zip，请在仓库 Releases 页面手动上传后重试"
+        "GitHub 工具链独立 Release（tag: dna-tools）未上传 dna-tools-v1.zip，请到该 Release 页面手动上传后重试"
 
     /**
-     * v3.41.15：从 GitHub Release 下载工具包（dna-tools-v1.zip ≈ 15M）并部署到 filesDir/dna-tools/。
-     * 对齐 APP 更新逻辑（UpdateCenter）：先经 API（镜像优先）动态解析 latest Release 附件地址，
-     * 再 aria2c 多线程 + 镜像线路逐个兜底下载（gh-proxy → ghfast → ghproxy → 直连）。
+     * v3.41.25：从 GitHub 独立固定 Release（tag: dna-tools）下载工具包（dna-tools-v1.zip ≈ 15M）
+     * 并部署到 filesDir/dna-tools/。对齐 APP 更新逻辑（UpdateCenter）：先经 API（镜像优先）
+     * 按固定 tag 解析附件地址，再 aria2c 多线程 + 镜像线路逐个兜底下载
+     * （gh-proxy → ghfast → ghproxy → 直连）。
      * @return 下载并部署全部成功
      */
     @JvmStatic

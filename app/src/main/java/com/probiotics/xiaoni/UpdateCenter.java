@@ -509,15 +509,51 @@ public final class UpdateCenter {
         }, "app-update-download").start();
     }
 
-    // ---------- 安装（v3.9.13：PackageInstaller 会话式免 root 自动安装） ----------
+    // ---------- 安装（v3.41.25：ROOT 静默优先 + PackageInstaller 回退） ----------
 
     /**
-     * PackageInstaller 会话式安装（免 root，无需任何系统权限）：
-     *  - Android 12+ 且已授予「安装未知应用」→ 同签名自更新静默安装，无确认弹窗（应用商店级体验）；
-     *  - Android 8~11 → 系统回调 PENDING_USER_ACTION，自动拉起安装确认页，点一下「安装」即完成；
-     *  - 个别 OEM 会话提交异常 → 回退系统安装器 Intent（老行为）。
+     * v3.41.25 三级安装策略（修复「下载完成 · 正在自动安装...」卡住不动）：
+     *  ① ROOT 可用 → appops 静默开启「安装未知应用」+ cat | pm install -r - 流式安装，
+     *     全程无任何系统弹窗 / 确认页（应用商店级真静默，ROOT 授权页除外）；
+     *  ② 无 ROOT / pm install 失败 → PackageInstaller 会话式（Android 12+ 静默尽力而为，
+     *     老系统回调 PENDING_USER_ACTION 自动拉起确认页，点一下「安装」即完成）；
+     *  ③ 会话提交异常 → 系统安装器 Intent（老行为兜底）。
      */
     public static void installApk(Activity activity, File apk, boolean english) {
+        new Thread(() -> {
+            boolean rooted = false;
+            try { rooted = RootShell.INSTANCE.available(); } catch (Exception ignored) { }
+            if (rooted) {
+                // ① ROOT：先静默开启「安装未知应用」appop（无需跳系统设置）
+                try {
+                    RootShell.INSTANCE.exec("appops set " + activity.getPackageName()
+                            + " REQUEST_INSTALL_PACKAGES allow", 10000L, null);
+                } catch (Exception ignored) { }
+                // 流式静默安装：root 可读应用私有目录，经管道喂给 pm，不落 /data/local/tmp
+                ShellResult r = null;
+                try {
+                    r = RootShell.INSTANCE.exec("cat '" + apk.getAbsolutePath() + "' | pm install -r -",
+                            180000L, null);
+                } catch (Exception ignored) { }
+                if (r != null && r.getSuccess()) {
+                    final boolean e = english;
+                    activity.runOnUiThread(() -> {
+                        //noinspection ResultOfMethodCallIgnored
+                        apk.delete();   // v3.9.14：安装成功自动清理安装包
+                        Toast.makeText(activity, e
+                                ? "✓ Update installed silently"
+                                : "✓ 已静默安装完成，安装包已自动清理", Toast.LENGTH_LONG).show();
+                    });
+                    return;
+                }
+            }
+            // ② 回退：PackageInstaller 会话式（原逻辑）
+            activity.runOnUiThread(() -> installViaPackageInstaller(activity, apk, english));
+        }, "apk-silent-install").start();
+    }
+
+    /** ② PackageInstaller 会话式安装（免 root；Android 12+ 静默尽力而为，老系统拉确认页） */
+    private static void installViaPackageInstaller(Activity activity, File apk, boolean english) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !activity.getPackageManager().canRequestPackageInstalls()) {
             Toast.makeText(activity, english
@@ -568,7 +604,7 @@ public final class UpdateCenter {
             Toast.makeText(activity, english ? "Installing update..." : "正在自动安装新版本...",
                     Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            // 个别 OEM 会话安装异常 → 回退系统安装器
+            // ③ 个别 OEM 会话安装异常 → 回退系统安装器
             try {
                 Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
                 intent.setData(UpdateFileProvider.getUriForFile(activity, apk));
