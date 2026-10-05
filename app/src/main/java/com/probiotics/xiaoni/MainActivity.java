@@ -444,6 +444,8 @@ public class MainActivity extends BaseActivity {
          sizeRow.setOrientation(LinearLayout.HORIZONTAL);
          installSizeButtons = new Button[4];
          String[] installSizes = {"8 GB", "16 GB", "32 GB", "64 GB"};
+         // v3.41.26：容量上限按剩余空间动态计算（参考 DSU-Sideloader），不再固定 128GB
+         double maxGb = maxDsuSizeGb();
          for (int i = 0; i < installSizes.length; i++) {
              final int sizeIndex = i;
              Button sizeButton = new Button(this);
@@ -454,12 +456,28 @@ public class MainActivity extends BaseActivity {
              sizeButton.setMinWidth(0);
              sizeButton.setMinHeight(0);
              sizeButton.setPadding(0, 0, 0, 0);
+             // 预设超过本机可分配上限 → 置灰禁用，避免选了装不上
+             if (Integer.parseInt(installSizes[i].replace(" GB", "")) > maxGb) {
+                 sizeButton.setEnabled(false);
+                 sizeButton.setTextColor(Color.rgb(168, 175, 189));
+             }
              sizeButton.setOnClickListener(v -> selectInstallSize(sizeIndex, installSizes[sizeIndex]));
              LinearLayout.LayoutParams sizeLp = new LinearLayout.LayoutParams(0, dp(44), 1);
              if (i > 0) sizeLp.setMargins(dp(5), 0, 0, 0);
              sizeRow.addView(sizeButton, sizeLp);
          }
          installOptionsPanel.addView(sizeRow, new LinearLayout.LayoutParams(-1, dp(44)));
+         // v3.41.26：实时存储信息行 —— 剩余空间 + 自定义容量动态上限
+         long freeBytesNow = dataFreeBytes();
+         TextView storageInfo = text(t(
+                 "剩余空间 " + (freeBytesNow >= 0 ? formatSizeBytesHuman(freeBytesNow) : "未知")
+                         + " · 自定义容量上限 " + (int) maxGb + " GB",
+                 "Free " + (freeBytesNow >= 0 ? formatSizeBytesHuman(freeBytesNow) : "unknown")
+                         + " · custom size up to " + (int) maxGb + " GB"),
+                 11, Color.rgb(90, 100, 120));
+         LinearLayout.LayoutParams storageInfoLp = new LinearLayout.LayoutParams(-1, -2);
+         storageInfoLp.topMargin = dp(6);
+         installOptionsPanel.addView(storageInfo, storageInfoLp);
          customInstallSizeInput = new EditText(this);
           customInstallSizeInput.setHint(t("自定义容量 GB", "Custom size GB"));
           customInstallSizeInput.setSingleLine(true);
@@ -5506,8 +5524,14 @@ public class MainActivity extends BaseActivity {
         LinearLayout box = new LinearLayout(this);
         box.setPadding(dp(24), dp(4), dp(24), 0);
         box.addView(input, new LinearLayout.LayoutParams(-1, dp(56)));
+        // v3.41.26：上限随剩余空间动态计算（不再固定 128GB），弹窗内展示实时可用空间
+        long freeBytes = dataFreeBytes();
         AlertDialog dialog = new AlertDialog.Builder(this)
                  .setTitle(t("自定义 userdata 容量", "Custom userdata size"))
+                 .setMessage(t("剩余空间 " + (freeBytes >= 0 ? formatSizeBytesHuman(freeBytes) : "未知")
+                                 + "，最大可分配 " + (int) maxDsuSizeGb() + " GB（已预留系统安全余量）",
+                         "Free " + (freeBytes >= 0 ? formatSizeBytesHuman(freeBytes) : "unknown")
+                                 + ", up to " + (int) maxDsuSizeGb() + " GB (safety margin reserved)"))
                 .setView(box)
                  .setPositiveButton(t("选择 GSI 安装包", "Choose GSI package"), null)
                  .setNegativeButton(t("取消", "Cancel"), null)
@@ -5521,13 +5545,14 @@ public class MainActivity extends BaseActivity {
                 String value = input.getText().toString().trim();
                 try {
                      double gb = Double.parseDouble(value.replace(',', '.'));
-                    if (gb <= 0 || gb > 128) throw new NumberFormatException();
+                    if (gb <= 0 || gb > maxDsuSizeGb()) throw new NumberFormatException();
                     dialog.dismiss();
                      userdataSizeBytes = Math.round(gb * 1024d * 1024d * 1024d);
                      pendingSizeLabel = value + " GB";
                      chooseZip();
                 } catch (NumberFormatException error) {
-                     input.setError(t("请输入 0 到 128 之间的容量", "Enter a size between 0 and 128"));
+                     input.setError(t("请输入 0 到 " + (int) maxDsuSizeGb() + " 之间的容量",
+                             "Enter a size between 0 and " + (int) maxDsuSizeGb()));
                 }
             });
         });
@@ -5609,14 +5634,15 @@ public class MainActivity extends BaseActivity {
      private void applyCustomInstallSize(){
           try {
               double gb = parseCustomSize(customInstallSizeInput.getText().toString());
-              if (gb <= 0 || gb > 128) throw new NumberFormatException();
+              if (gb <= 0 || gb > maxDsuSizeGb()) throw new NumberFormatException();
               selectedInstallSize = -1;
               pendingSizeLabel = formatCustomSize(gb) + " GB";
               userdataSizeBytes = Math.round(gb * 1024d * 1024d * 1024d);
               customInstallSizeInput.setText(pendingSizeLabel);
                for (Button button : installSizeButtons) { button.setTextColor(Color.rgb(40, 50, 70)); button.setBackgroundResource(R.drawable.liquid_glass_panel); }
           } catch (NumberFormatException error) {
-              customInstallSizeInput.setError(t("请输入 0 到 128 之间的容量", "Enter a size between 0 and 128"));
+              customInstallSizeInput.setError(t("请输入 0 到 " + (int) maxDsuSizeGb() + " 之间的容量（按剩余空间自动计算）",
+                      "Enter a size between 0 and " + (int) maxDsuSizeGb() + " (auto-calculated from free space)"));
           }
       }
       private double parseCustomSize(String value) {
@@ -5938,10 +5964,35 @@ public class MainActivity extends BaseActivity {
             return ParcelFileDescriptor.fromFd(fd);
         }
     }
+    /**
+     * v3.41.26：动态计算本机可分配的 DSU userdata 最大容量（GB）—— 不再固定 128GB。
+     * 参考 DSU-Sideloader：以 /data 分区实时剩余空间为基础，预留 GSI 解包/安装的
+     * 临时空间与系统安全水位（剩余的 10% 与 5GB 取大者），检测失败回退旧上限 128GB。
+     */
+    private double maxDsuSizeGb() {
+        try {
+            long freeBytes = new android.os.StatFs("/data").getAvailableBytes();
+            long reserve = Math.max(freeBytes / 10, 5L * 1024L * 1024L * 1024L);
+            double usable = freeBytes - reserve;
+            if (usable < 1024d * 1024d * 1024d) return 1;   // 空间紧张时至少 1GB，让提示有意义
+            return Math.floor(usable / (1024d * 1024d * 1024d));
+        } catch (Exception e) {
+            return 128;
+        }
+    }
+
+    /** /data 分区实时剩余空间（字节）；检测失败返回 -1 */
+    private long dataFreeBytes() {
+        try {
+            return new android.os.StatFs("/data").getAvailableBytes();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
     private long parseSizeBytes(String size){
         try {
             double gigabytes = Double.parseDouble(size.replace("GB", "").trim());
-            if (gigabytes > 0 && gigabytes <= 128) {
+            if (gigabytes > 0 && gigabytes <= maxDsuSizeGb()) {
                 return (long) (gigabytes * 1024d * 1024d * 1024d);
             }
         } catch (Exception ignored) { }
