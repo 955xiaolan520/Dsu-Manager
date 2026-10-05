@@ -1357,41 +1357,74 @@ public final class DnaActivity extends BaseActivity {
         final String outDir = projectPath();
         StringBuilder names = new StringBuilder();
         for (String n : ordered) { if (names.length() > 0) names.append(","); names.append(n); }
-        logLine("$ payload_extract -i " + binInput + " --images=" + names + " --out " + outDir + " --threads 4 --no-verify");
+        logLine("$ payload_extract -i " + binInput + " --images=" + names + " --out " + outDir + " --threads 8 --no-verify");
         notify(t("正在提取", "Extracting") + " · " + (project != null ? project : "PDNA"), true, true);
-        // v3.40.19：root CLI 提取（libpayload_extract.so pie 可执行）—— root 直读输入
-        // （bin/zip 原路径）、root 直写工程目录，无 FUSE 权限障碍、零复制、无 staging 中转
+        // v3.42.15：批量一次提取（逗号拼接 --images，CLI 8 线程分区级并行）。
+        // 旧逐分区循环每次冷启动进程 + 重扫 ZIP + 重解析 manifest，且单分区提取
+        // 永远单线程（--threads 只对多分区并行有效）——大分区包慢 5 倍的根因。
         executor.execute(() -> {
             int ok = 0, fail = 0;
+            // 清全部残留
+            StringBuilder rmAll = new StringBuilder();
+            for (String n : ordered)
+                rmAll.append("rm -f ").append(DnaTools.quote(new File(outDir, n + ".img").getAbsolutePath())).append("; ");
+            com.topjohnwu.superuser.Shell.cmd(rmAll + "true").exec();
+            // 总进度 stat 轮询：已落盘分区文件数驱动 status
+            final Runnable[] poll = new Runnable[1];
+            poll[0] = () -> {
+                if (!running.get()) return;
+                int done = 0;
+                for (String n : ordered) {
+                    File f = new File(outDir, n + ".img");
+                    if (f.isFile() && f.length() > 0) done++;
+                }
+                status.setText("⏳ " + t("并行提取中", "Extracting") + " · " + done + "/" + ordered.size());
+                mainHandler.postDelayed(poll[0], 1000);
+            };
+            mainHandler.post(poll[0]);
+            // indicatif 进度条行（含 █░▓）不进日志
+            DnaTools.Result r = DnaTools.payloadExtractCli(DnaActivity.this, binInput, outDir,
+                    String.join(",", ordered),
+                    line -> {
+                        String s = line == null ? "" : line;
+                        if (s.indexOf('█') >= 0 || s.indexOf('░') >= 0 || s.indexOf('▓') >= 0)
+                            return kotlin.Unit.INSTANCE;
+                        String tr = s.trim();
+                        if (!tr.isEmpty()) mainHandler.post(() -> logLine("  " + tr));
+                        return kotlin.Unit.INSTANCE;
+                    },
+                    () -> cancelFlag.get(), 30 * 60_000L);
+            mainHandler.removeCallbacks(poll[0]);
+            // 按落盘文件统计；失败的逐个重跑一次拿精确错误
+            java.util.List<String> failedParts = new java.util.ArrayList<>();
             for (int i = 0; i < ordered.size(); i++) {
-                if (cancelFlag.get()) break;
                 final String name = ordered.get(i);
-                final int idx = i + 1, total = ordered.size();
-                logLine("> " + t("提取", "Extract") + " [" + idx + "/" + total + "] " + name);
-                // 清残留 + stat 轮询已落盘字节驱动 status（root CLI 写工程目录，app stat 可见）
-                final File outFile = new File(outDir, name + ".img");
-                com.topjohnwu.superuser.Shell.cmd(
-                        "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
-                final Runnable[] poll = new Runnable[1];
-                poll[0] = () -> {
-                    if (!running.get()) return;
-                    status.setText("⏳ [" + idx + "/" + total + "] " + name + " · "
-                            + String.format(Locale.US, "%.0fM", outFile.length() / 1048576f));
-                    mainHandler.postDelayed(poll[0], 500);
-                };
-                mainHandler.post(poll[0]);
+                File outFile = new File(outDir, name + ".img");
+                long sz = outFile.isFile() ? outFile.length() : 0;
+                if (sz > 0) {
+                    ok++;
+                    final long size = sz;
+                    logLine("✓ " + name + ".img (" + String.format(Locale.US, "%.0fM", size / 1048576f)
+                            + ") → " + outDir + "/" + name + ".img");
+                } else {
+                    failedParts.add(name);
+                }
+            }
+            for (int i = 0; i < failedParts.size(); i++) {
+                final String name = failedParts.get(i);
+                if (cancelFlag.get()) break;
+                logLine("> " + t("重试", "Retry") + " " + name);
                 try {
-                    DnaTools.Result r = DnaTools.payloadExtractCli(this, binInput, outDir, name,
-                            null, () -> cancelFlag.get(), 20 * 60_000L);
-                    long sz = r.getSuccess() ? outFile.length() : 0;
+                    DnaTools.Result rr = DnaTools.payloadExtractCli(DnaActivity.this, binInput, outDir, name,
+                            null, () -> cancelFlag.get(), 10 * 60_000L);
+                    long sz = rr.getSuccess() ? new File(outDir, name + ".img").length() : 0;
                     if (sz > 0) {
                         ok++;
                         logLine("✓ " + name + ".img (" + String.format(Locale.US, "%.0fM", sz / 1048576f)
                                 + ") → " + outDir + "/" + name + ".img");
                     } else {
                         fail++;
-                        // v3.40.21：briefOf 抓 error: 行，跳过 clap 样板
-                        String brief = DnaTools.briefOf(r);
+                        String brief = DnaTools.briefOf(rr);
                         logLine("✗ " + name + ": " + brief);
                         if (brief.contains("ifferential") || brief.contains("source")) {
                             logLine("  " + t("增量 OTA 包请用「分解增量包」", "Incremental OTA: use Incremental unpack"));
@@ -1401,8 +1434,6 @@ public final class DnaActivity extends BaseActivity {
                     fail++;
                     String msg = e.getMessage();
                     logLine("✗ " + name + ": " + (msg != null ? msg : e.getClass().getSimpleName()));
-                } finally {
-                    mainHandler.removeCallbacks(poll[0]);
                 }
             }
             final int fOk = ok, fFail = fail;

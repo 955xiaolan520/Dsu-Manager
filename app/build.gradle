@@ -11,7 +11,7 @@ android { namespace 'com.probiotics.xiaoni'; compileSdk 37
     kotlinOptions {
         jvmTarget = '17'
     }
-    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 34214; versionName '3.42.14' }
+    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 34215; versionName '3.42.15' }
     def releaseKey = file('my-release-key.jks').exists() ? file('my-release-key.jks') : file('release-keystore.jks')
     signingConfigs { release { storeFile releaseKey; storePassword 'changeit'; keyAlias 'tianming-release'; keyPassword 'changeit' } }
     signingConfigs.release {

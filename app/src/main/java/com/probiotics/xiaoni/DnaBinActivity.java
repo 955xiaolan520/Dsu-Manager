@@ -931,37 +931,93 @@ public final class DnaBinActivity extends BaseActivity {
         io.execute(() -> {
             final long startMs = System.currentTimeMillis();
             final String rawInput = binPath != null ? binPath : openInput;
-            // v3.40.19：root CLI 提取（libpayload_extract.so pie 可执行）—— root 直读输入
-            // （bin/zip 原路径）、root 直写工程目录，无 FUSE 权限障碍、零复制。
-            // 保留逐分区顺序 UX：⏳ 正在提取 [i/n] → ✓ 提取完成，依次推进。
+            // v3.42.15：批量一次提取全部勾选分区（逗号拼接 --images，CLI 内部 8 线程并行）。
+            // 旧实现逐分区调 N 次 CLI：每次进程冷启动 + 重新扫 ZIP 中央目录 + 重新解析整个
+            // manifest，且 --threads 是「分区级并行」对单分区调用毫无作用（单分区永远单线程）
+            // —— OPPO 67 分区 13G 要 500s+ 的根因。CLI 帮助原文：--images 接受
+            // Comma-separated list；--threads 是 parallel extraction 的 worker 数。
+            // 批量后只解析一次 metadata、多分区并行解压，速度对齐 vivo 量级。
             int okCount = 0;
             String lastErr = null;
-            for (int i = 0; i < ordered.size(); i++) {
-                if (cancelFlag.get()) break;
-                final String n = ordered.get(i);
-                final int no = i + 1;
-                final File outFile = new File(outDir, n + ".img");
+            final java.util.List<String> failed = new ArrayList<>();
+            // 清全部残留防误判（旧 root 属主残留 app 经 FUSE 可能删不掉，用 root rm）
+            StringBuilder rmAll = new StringBuilder();
+            for (String n : ordered)
+                rmAll.append("rm -f ").append(DnaTools.quote(new File(outDir, n + ".img").getAbsolutePath())).append("; ");
+            com.topjohnwu.superuser.Shell.cmd(rmAll + "true").exec();
+
+            main.post(() -> {
+                log("⏳ " + t("正在并行提取", "Extracting in parallel") + " " + ordered.size()
+                        + t(" 个分区（8 线程）…", " partition(s), 8 threads..."));
+                status.setText("⏳ " + t("正在提取", "Extracting") + " · 0/" + ordered.size());
+            });
+            notify(t("正在并行提取", "Extracting in parallel") + " " + ordered.size()
+                    + t(" 个分区", " partition(s)"), true, false, 0, 0);
+
+            // 进度条刷新行（indicatif \r 累积长行）不进日志，只解析 x/y 刷新状态栏
+            final java.util.regex.Matcher[] hold = new java.util.regex.Matcher[1];
+            DnaTools.Result r = DnaTools.payloadExtractCli(this, rawInput, outDir,
+                    String.join(",", ordered),
+                    line -> {
+                        String s = line == null ? "" : line;
+                        java.util.regex.Matcher m = java.util.regex.Pattern
+                                .compile("(\\d+)\\s*/\\s*(\\d+)").matcher(s);
+                        if (m.find()) hold[0] = m;
+                        if (s.indexOf('█') >= 0 || s.indexOf('░') >= 0 || s.indexOf('▓') >= 0)
+                            return kotlin.Unit.INSTANCE;
+                        String t = s.trim();
+                        if (!t.isEmpty() && hold[0] == null) {
+                            final String fl = t;
+                            main.post(() -> log("  " + fl));
+                        }
+                        return kotlin.Unit.INSTANCE;
+                    },
+                    () -> cancelFlag.get(), 30 * 60_000L);
+            if (hold[0] != null) {
+                final int done = Math.min(ordered.size(),
+                        Integer.parseInt(hold[0].group(1)));
+                main.post(() -> status.setText("⏳ " + t("正在提取", "Extracting")
+                        + " · " + done + "/" + ordered.size()));
+            }
+            if (cancelFlag.get()) {
                 main.post(() -> {
-                    log("⏳ " + t("正在提取", "Extracting") + " [" + no + "/" + ordered.size() + "] " + n + ".img");
-                    status.setText("⏳ " + t("正在提取", "Extracting") + " " + n + ".img [" + no + "/" + ordered.size() + "]");
+                    running.set(false);
+                    parseBtn.setEnabled(true);
+                    runBtn.setText("▶  " + t("选择分区并提取", "Select & Extract"));
+                    log("■ " + t("已取消", "Cancelled"));
+                    status.setText("■ " + t("已取消", "Cancelled"));
+                    status.setTextColor(0xffa33b3b);
+                    notifyDone(false, t("已取消", "Cancelled"));
                 });
-                notify(t("正在提取", "Extracting") + " " + n + ".img [" + no + "/" + ordered.size() + "]",
-                        true, false, 0, 0);
+                refreshSources();
+                return;
+            }
+            // 按落盘文件统计成功；失败的逐个重跑一次拿精确错误（正常全成功时零开销）
+            for (int i = 0; i < ordered.size(); i++) {
+                final String n = ordered.get(i);
+                final File outFile = new File(outDir, n + ".img");
+                long sz = outFile.isFile() ? outFile.length() : 0;
+                if (sz > 0) {
+                    okCount++;
+                    final long size = sz;
+                    main.post(() -> log("✓ " + n + ".img (" + fmtSizeShort(size) + ") " + t("提取完成", "extracted")));
+                } else {
+                    failed.add(n);
+                }
+            }
+            for (int i = 0; i < failed.size(); i++) {
+                final String n = failed.get(i);
+                main.post(() -> log("⏳ " + t("重试", "Retry") + " " + n + ".img"));
                 try {
-                    // 清残留防误判（旧 root 属主残留 app 经 FUSE 可能删不掉，用 root rm）
-                    com.topjohnwu.superuser.Shell.cmd(
-                            "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
-                    DnaTools.Result r = DnaTools.payloadExtractCli(this, rawInput, outDir, n,
-                            null, () -> cancelFlag.get(), 20 * 60_000L);
-                    if (cancelFlag.get()) break;
-                    long sz = r.getSuccess() ? outFile.length() : 0;
+                    DnaTools.Result rr = DnaTools.payloadExtractCli(this, rawInput, outDir, n,
+                            null, () -> cancelFlag.get(), 10 * 60_000L);
+                    long sz = rr.getSuccess() ? new File(outDir, n + ".img").length() : 0;
                     if (sz > 0) {
+                        okCount++;
                         final long size = sz;
                         main.post(() -> log("✓ " + n + ".img (" + fmtSizeShort(size) + ") " + t("提取完成", "extracted")));
-                        okCount++;
                     } else {
-                        // v3.40.21：briefOf 抓 error: 行，跳过 clap 样板
-                        String brief = DnaTools.briefOf(r);
+                        String brief = DnaTools.briefOf(rr);
                         lastErr = brief;
                         final String msg = brief;
                         main.post(() -> {

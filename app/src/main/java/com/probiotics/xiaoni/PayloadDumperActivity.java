@@ -1492,8 +1492,12 @@ public final class PayloadDumperActivity extends BaseActivity {
     }
 
     /**
-     * 逐分区顺序提取核心：每分区一次 root CLI（libpayload_extract.so 多线程），
-     * stat 轮询输出文件字节数驱动分区行进度条，✓/✗ 逐行打日志，结尾汇总。
+     * v3.42.15：全选提取改为批量并行 —— 一次 root CLI 调用逗号拼接全部分区
+     * （--images a,b,c），CLI 内部 8 线程分区级并行，只解析一次 manifest。
+     * 旧实现逐分区顺序提取：每分区一次 CLI 冷启动 + 重新扫 ZIP + 重解析 manifest，
+     * 且单分区提取永远单线程 —— OPPO 67 分区 13G 提取 500s+ 的根因。
+     * 保留逐行进度：轮询 stat 每个输出文件字节数驱动各行进度条。
+     * 失败的分区逐行重跑一次 extractOnePartition 拿精确错误（正常全成功零开销）。
      */
     private void runExtractAllCore(String input, boolean isLocal, List<PayloadExtractor.PartitionInfo> parts) {
         String outputDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -1507,26 +1511,96 @@ public final class PayloadDumperActivity extends BaseActivity {
         // v3.40.19：root CLI 直写输出目录（无 app 写入 FUSE 权限问题），无需放行
         log(isLocal, "输出目录: " + outputDir);
         LinearLayout targetList = isLocal ? localPartitionsList : onlinePartitionsList;
-        int ok = 0;
         long startMs = System.currentTimeMillis();
-        for (int i = 0; i < parts.size(); i++) {
-            if (extractAllCancel) { log(isLocal, "■ 已取消全选提取"); break; }
+        final int totalParts = parts.size();
+        final String[] names = new String[totalParts];
+        final long[] expected = new long[totalParts];
+        final PartitionItemView[] views = new PartitionItemView[totalParts];
+        final File[] outFiles = new File[totalParts];
+        StringBuilder rmAll = new StringBuilder();
+        StringBuilder joined = new StringBuilder();
+        for (int i = 0; i < totalParts; i++) {
             PayloadExtractor.PartitionInfo info = parts.get(i);
-            final String name = info.getName();
-            final long expected = info.getSize();
-            final PartitionItemView itemView = (PartitionItemView) targetList.getChildAt(i);
-            final File outFile = new File(outputDir, name + ".img");
-            // 清残留（防旧文件让进度虚高）
-            com.topjohnwu.superuser.Shell.cmd("rm -f " + DnaTools.quote(outFile.getAbsolutePath())).exec();
-            final int no = i + 1;
-            final int totalParts = parts.size();
-            log(isLocal, "⏳ [" + no + "/" + totalParts + "] " + name
-                    + (expected > 0 ? " (" + fmtMB(expected) + ")" : ""));
+            names[i] = info.getName();
+            expected[i] = info.getSize();
+            views[i] = (PartitionItemView) targetList.getChildAt(i);
+            outFiles[i] = new File(outputDir, names[i] + ".img");
+            rmAll.append("rm -f ").append(DnaTools.quote(outFiles[i].getAbsolutePath())).append("; ");
+            if (joined.length() > 0) joined.append(",");
+            joined.append(names[i]);
+            final PartitionItemView iv = views[i];
+            final File of = outFiles[i];
             mainHandler.post(() -> {
-                status.setText("正在提取 " + name + " [" + no + "/" + totalParts + "]");
-                if (itemView != null) { itemView.setOutputPath(outFile.getAbsolutePath()); itemView.setProgress(0, 0, 1); }
+                if (iv != null) { iv.setOutputPath(of.getAbsolutePath()); iv.setProgress(0, 0, 1); }
             });
-            if (extractOnePartition(input, outputDir, name, expected, itemView, isLocal,
+        }
+        com.topjohnwu.superuser.Shell.cmd(rmAll + "true").exec();
+        log(isLocal, "⏳ " + totalParts + " 个分区并行提取（8 线程）...");
+        mainHandler.post(() -> status.setText("并行提取中 · 0/" + totalParts));
+        // 批量 CLI（后台线程），同时轮询全部输出文件字节驱动各行进度条与总进度
+        final java.util.concurrent.atomic.AtomicBoolean cliDone =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final boolean isUrl = input.startsWith("http://") || input.startsWith("https://");
+        Thread runner = new Thread(() -> {
+            DnaTools.Result r = DnaTools.payloadExtractCli(PayloadDumperActivity.this,
+                    input, outputDir, joined.toString(),
+                    line -> {   // indicatif 进度条行（█░▓）不进日志
+                        String s = line == null ? "" : line;
+                        if (s.indexOf('█') >= 0 || s.indexOf('░') >= 0 || s.indexOf('▓') >= 0)
+                            return kotlin.Unit.INSTANCE;
+                        String tr = s.trim();
+                        if (!tr.isEmpty()) log(isLocal, "  " + tr);
+                        return kotlin.Unit.INSTANCE;
+                    },
+                    () -> extractAllCancel,
+                    isUrl ? 60 * 60_000L : 30 * 60_000L);
+            cliDone.set(r.getSuccess());
+        }, "pd-cli-batch");
+        runner.setDaemon(true);
+        runner.start();
+        long lastPollMs = System.currentTimeMillis();
+        while (runner.isAlive()) {
+            try { Thread.sleep(800); } catch (InterruptedException e) { break; }
+            long now = System.currentTimeMillis();
+            int done = 0;
+            for (int i = 0; i < totalParts; i++) {
+                long bytes = outFiles[i].length();
+                if (bytes > 0 && (expected[i] <= 0 || bytes >= expected[i])) done++;
+                final int pct = expected[i] > 0 ? (int) Math.min(100, bytes * 100 / expected[i]) : 0;
+                final PartitionItemView iv = views[i];
+                final float sp = 0f;
+                if (iv != null && pct > 0 && pct < 100)
+                    mainHandler.post(() -> iv.setProgress(pct, sp, 1));
+            }
+            final int d = done;
+            if (now - lastPollMs >= 1000) {
+                lastPollMs = now;
+                mainHandler.post(() -> status.setText("并行提取中 · " + d + "/" + totalParts));
+            }
+        }
+        try { runner.join(2000); } catch (InterruptedException ignored) { }
+        // 统计落盘成功；失败行单独重跑（复用单分区链路拿精确错误 + 行内进度）
+        int ok = 0;
+        java.util.List<Integer> failedIdx = new java.util.ArrayList<>();
+        for (int i = 0; i < totalParts; i++) {
+            if (outFiles[i].isFile() && outFiles[i].length() > 0) {
+                ok++;
+                final String nm = names[i];
+                final long sz = outFiles[i].length();
+                log(isLocal, "✓ " + nm + ".img (" + fmtMB(sz) + ") 提取完成");
+                final PartitionItemView iv = views[i];
+                mainHandler.post(() -> { if (iv != null) iv.setProgress(100, 0, 1); });
+            } else {
+                failedIdx.add(i);
+            }
+        }
+        for (int fi = 0; fi < failedIdx.size(); fi++) {
+            if (extractAllCancel) break;
+            int i = failedIdx.get(fi);
+            final String name = names[i];
+            log(isLocal, "⏳ 重试 [" + (i + 1) + "/" + totalParts + "] " + name
+                    + (expected[i] > 0 ? " (" + fmtMB(expected[i]) + ")" : ""));
+            if (extractOnePartition(input, outputDir, name, expected[i], views[i], isLocal,
                     () -> extractAllCancel)) {
                 ok++;
             } else if (extractAllCancel) {

@@ -1122,7 +1122,10 @@ object DnaTools {
         val cmd = "mkdir -p " + quote(outputDir) + " && " + quote(lib) + " " + quote(input) +
                 " " + flags.getValue("images") + " " + quote(partitions) +
                 " " + flags.getValue("out") + " " + quote(outputDir) +
-                " " + flags.getValue("threads") + " 4 " + flags.getValue("noVerify")
+                // v3.42.15：4 → 8 线程。--threads 是「分区级并行」（CLI 帮助原文：
+                // Number of threads for parallel extraction，默认 2×CPU 核、上限 32），
+                // 逐分区调用时毫无作用；批量逗号拼接后真正生效，多分区并行解压
+                " " + flags.getValue("threads") + " 8 " + flags.getValue("noVerify")
         return run(ctx, cmd, onLog, isCancelled, timeoutMs)
     }
 
