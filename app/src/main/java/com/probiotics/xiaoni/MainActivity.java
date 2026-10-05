@@ -5965,14 +5965,15 @@ public class MainActivity extends BaseActivity {
         }
     }
     /**
-     * v3.41.26：动态计算本机可分配的 DSU userdata 最大容量（GB）—— 不再固定 128GB。
-     * 参考 DSU-Sideloader：以 /data 分区实时剩余空间为基础，预留 GSI 解包/安装的
-     * 临时空间与系统安全水位（剩余的 10% 与 5GB 取大者），检测失败回退旧上限 128GB。
+     * v3.41.27：动态计算本机可分配的 DSU userdata 最大容量（GB）—— 不再固定 128GB。
+     * 对齐 DSU-Sideloader 源码：预留剩余空间的 40%（与 5GB 取大者）作为主系统
+     * 安全水位 —— DSU userdata 与主系统共享 /data 分区，预留不足会把主系统挤到没容量。
+     * 检测失败回退旧上限 128GB。
      */
     private double maxDsuSizeGb() {
         try {
             long freeBytes = new android.os.StatFs("/data").getAvailableBytes();
-            long reserve = Math.max(freeBytes / 10, 5L * 1024L * 1024L * 1024L);
+            long reserve = Math.max(freeBytes * 2 / 5, 5L * 1024L * 1024L * 1024L);
             double usable = freeBytes - reserve;
             if (usable < 1024d * 1024d * 1024d) return 1;   // 空间紧张时至少 1GB，让提示有意义
             return Math.floor(usable / (1024d * 1024d * 1024d));
