@@ -44,6 +44,7 @@
         <activity android:name=".DnaModuleActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".DnaBinActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".DnaIncrementalActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".DnaOtaActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".DnaSuperActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".DnaUnzipActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".ThanksActivity" android:screenOrientation="portrait" android:exported="false" />

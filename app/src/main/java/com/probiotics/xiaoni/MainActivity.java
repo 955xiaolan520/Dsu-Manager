@@ -1399,6 +1399,7 @@ public class MainActivity extends BaseActivity {
           dnaSectionTitle(page, t("合成与打包", "Repack & Build"), 0xFF11998E);
           dnaMenuItem(page, "📦", t("合成 img-dat-br", "Build img-dat-br"), t("将工程目录重新打包成镜像", "Project dirs → image"), DnaActivity.MODE_REPACK, null, 2);
           dnaMenuItem(page, "🗜", t("合成 super.img", "Build super.img"), t("把 IMG 打包成 super.img（A / AB / VAB）", "IMGs → super.img"), DnaActivity.MODE_SUPER_PACK, null, 3);
+          dnaMenuItem(page, "📦", t("合成 OTA 卡刷包", "Build OTA zip"), t("img 集 + 模板 → payload 签名完整 A/B 卡刷包", "imgs + template → signed A/B OTA zip"), "dna_ota_pack", null, 3);
 
           // ===== 格式转换 =====
           dnaSectionTitle(page, t("格式转换", "Convert"), 0xFFE07B39);
@@ -1554,6 +1555,12 @@ public class MainActivity extends BaseActivity {
           // v3.30.36：分解增量包独立二级页（payload_dumper --source-dir，root 链路）
           if ("dna_incremental".equals(dnaMode)) {
               startActivity(new Intent(this, DnaIncrementalActivity.class));
+              overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
+              return;
+          }
+          // v3.43.0：合成 OTA 卡刷包独立二级页（delta_generator + OtaPacker 全链路）
+          if ("dna_ota_pack".equals(dnaMode)) {
+              startActivity(new Intent(this, DnaOtaActivity.class));
               overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
               return;
           }
