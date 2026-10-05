@@ -70,6 +70,9 @@ public final class OPlusOtaActivity extends BaseActivity {
     private EditText fullPrefix;
     private Spinner fullRegion;
     private CheckBox fullAnti;
+    private CheckBox fullPki;
+    private CheckBox fullCarrier;
+    private EditText fullNvid;
     private CheckBox fullGray;
     private CheckBox fullPreview;
     private EditText fullGuid;
@@ -244,11 +247,20 @@ public final class OPlusOtaActivity extends BaseActivity {
         fullGray = checkBox("灰度 / 内测更新（携带 recruitId）");
         panel.addView(fullGray, margins(-1, 38, 0));
         fullPreview = checkBox("预览版更新（使用 v6，需填写 GUID）");
-        panel.addView(fullPreview, margins(-1, 38, 4));
+        panel.addView(fullPreview, margins(-1, 38, 0));
+        fullPki = checkBox("PKI 模式（仅 OS17 内测/工程师版查不出时勾选，正式版勾不勾结果一样）");
+        panel.addView(fullPki, margins(-1, 38, 0));
+        // v3.50.10：自定义运营商通道是全量查询除预览版 GUID 外唯一可展开填写的条件（对齐上游 --nvid）
+        fullCarrier = checkBox("自定义运营商通道（按运营商查定制包，需填 NV ID）");
+        panel.addView(fullCarrier, margins(-1, 38, 0));
         fullGuid = field("GUID（预览版必填）", "64 位十六进制设备 GUID");
         fullGuid.setVisibility(View.GONE);
         fullPreview.setOnCheckedChangeListener((button, checked) -> fullGuid.setVisibility(checked ? View.VISIBLE : View.GONE));
         panel.addView(fullGuid, margins(-1, 50, 8));
+        fullNvid = field("NV Carrier ID（勾选后必填）", "8 位数字，如 10011000 中国移动");
+        fullNvid.setVisibility(View.GONE);
+        fullCarrier.setOnCheckedChangeListener((button, checked) -> fullNvid.setVisibility(checked ? View.VISIBLE : View.GONE));
+        panel.addView(fullNvid, margins(-1, 50, 8));
         Button query = button("查询官方全量更新");
         query.setOnClickListener(v -> query(0));
         panel.addView(query, margins(-1, 48, 0));
@@ -343,6 +355,9 @@ public final class OPlusOtaActivity extends BaseActivity {
         boolean preview = fullPreview.isChecked();
         String guid = fullGuid.getText().toString().trim();
         if (preview && !guid.matches("[0-9A-Fa-f]{64}")) { status.setText("预览版需要填写 64 位 GUID"); return; }
+        // v3.50.10：自定义运营商通道（对齐上游 --nvid，8 位 NV Carrier ID）
+        String nvid = fullCarrier.isChecked() ? fullNvid.getText().toString().trim() : "";
+        if (fullCarrier.isChecked() && !nvid.matches("[0-9]{8}")) { status.setText("自定义运营商需填写 8 位数字 NV Carrier ID（如 10011000）"); return; }
         status.setText("auto".equals(region) ? "正在自动匹配全部地区的全量包..." : "正在查询 " + region.toUpperCase() + " 全量包...");
         executor.execute(() -> {
             try {
@@ -352,16 +367,16 @@ public final class OPlusOtaActivity extends BaseActivity {
                 for (String suffix : suffixes) {
                     String ota = prefix + suffix;
                     if ("auto".equals(region)) {
-                        queryAllRegions(ota, "", fullAnti.isChecked(), fullGray.isChecked(), preview ? guid : "", versions, failures,
+                        queryAllRegions(ota, "", fullAnti.isChecked(), fullGray.isChecked(), preview ? guid : "", fullPki.isChecked(), nvid, versions, failures,
                                 result -> runOnUiThread(() -> renderOta(result)));
                     } else {
                         try {
                             JSONObject result;
                             try {
-                                result = queryRegional(ota, region, "", fullAnti.isChecked(), fullGray.isChecked(), preview ? guid : "");
+                                result = queryRegional(ota, region, "", fullAnti.isChecked(), fullGray.isChecked(), preview ? guid : "", fullPki.isChecked(), nvid);
                             } catch (Exception firstError) {
                                 if (!fullAnti.isChecked() || !isNoVersion(firstError)) throw firstError;
-                                result = queryRegional(ota, region, "", false, fullGray.isChecked(), preview ? guid : "");
+                                result = queryRegional(ota, region, "", false, fullGray.isChecked(), preview ? guid : "", fullPki.isChecked(), nvid);
                             }
                             versions.put(result);
                         } catch (Exception error) {
@@ -401,12 +416,12 @@ public final class OPlusOtaActivity extends BaseActivity {
                 if ("auto".equals(region)) {
                     JSONArray matches = new JSONArray();
                     StringBuilder failures = new StringBuilder();
-                    queryAllRegions(prefix, components, false, false, "", matches, failures,
+                    queryAllRegions(prefix, components, false, false, "", false, "", matches, failures,
                             result -> runOnUiThread(() -> renderOta(result)));
                     if (matches.length() == 0) throw new IllegalStateException("全部公开地区均未返回可用增量包");
                     runOnUiThread(() -> status.setText("自动匹配完成，找到 " + matches.length() + " 个地区版本"));
                 } else {
-                    JSONObject result = queryRegional(prefix, region, components, false, false, "");
+                    JSONObject result = queryRegional(prefix, region, components, false, false, "", false, "");
                     final JSONObject resolvedResult = result;
                     runOnUiThread(() -> renderOta(resolvedResult));
                 }
@@ -470,28 +485,206 @@ public final class OPlusOtaActivity extends BaseActivity {
         addPair(overview, "安全补丁", result.optString("securityPatch", "N/A"));
         JSONArray components = result.optJSONArray("components");
         if (components != null) for (int i = 0; i < components.length(); i++) renderComponent(overview, components.optJSONObject(i), i + 1, result.optString("version", ""));
+        // v3.43.6：OPEX 组件包（独立 /queryUpdate 端点异步查询，对齐 opex_query.py）
+        renderOpexSection(overview,
+                result.optString("otaVersion", ""),
+                result.optString("regionCode", "cn"),
+                extractOsMajor(result.optString("version", "")));
         String changelog = result.optString("changelog", "");
         if (!changelog.isEmpty() && !"N/A".equals(changelog)) {
-            overview.addView(label("更新说明", 17, 0xff20375b), margins(-1, 28, 2));
-            TextView changelogView = label(changelog, 13, 0xff596579);
-            changelogView.setTextIsSelectable(true);
-            changelogView.setLongClickable(true);
-            changelogView.setAutoLinkMask(android.text.util.Linkify.WEB_URLS);
-            changelogView.setLinksClickable(true);
-            overview.addView(changelogView, margins(-1, -2, 4));
-            Button openChangelog = button("更新日志链接");
-            openChangelog.setEnabled(changelog.startsWith("http"));
-            openChangelog.setOnClickListener(v -> openUrl(changelog));
-            overview.addView(openChangelog, margins(-1, 44, 4));
+            renderChangelogExpander(overview, changelog,
+                    result.optString("otaVersion", ""), result.optString("regionCode", ""));
         }
     }
 
+    /** 从系统版本（如 PJZ110_16.0.10.501(CN01)）提取 ColorOS 主版本号，供 OPEX 查询用 */
+    private static String extractOsMajor(String version) {
+        try {
+            String[] parts = version.split("_");
+            if (parts.length >= 2) {
+                String major = parts[1].split("\\.")[0].replaceAll("[^0-9]", "");
+                if (!major.isEmpty()) return major;
+            }
+        } catch (Exception ignored) { }
+        return "16";
+    }
+
+    /**
+     * v3.43.6：OPEX 区块 —— 先渲染标题 + 占位，再后台查独立 /queryUpdate 端点，
+     * 完成后填充（有包 → 卡片列表；无包 → 明确提示；失败 → 错误提示）。
+     */
+    private void renderOpexSection(LinearLayout parent, String otaVersion, String regionCode, String osMajor) {
+        parent.addView(label("OPEX 组件包", 17, 0xff20375b), margins(-1, 28, 4));
+        LinearLayout opexBox = new LinearLayout(this);
+        opexBox.setOrientation(LinearLayout.VERTICAL);
+        TextView status = label("正在查询 OPEX ...", 13, 0xff596579);
+        opexBox.addView(status, margins(-1, -2, 2));
+        parent.addView(opexBox, margins(-1, -2, 2));
+        final String brand = "OnePlus";
+        executor.execute(() -> {
+            JSONArray packages = null;
+            Exception error = null;
+            for (int attempt = 0; attempt < 3 && packages == null; attempt++) {
+                try {
+                    packages = OpexProtocol.query(otaVersion, regionCode, osMajor, brand);
+                } catch (Exception e) {
+                    error = e;
+                }
+            }
+            final JSONArray result = packages;
+            final Exception failure = error;
+            runOnUiThread(() -> {
+                opexBox.removeAllViews();
+                if (result == null) {
+                    opexBox.addView(label("OPEX 查询失败：" + readable(failure), 13, 0xffb0543a), margins(-1, -2, 2));
+                    return;
+                }
+                if (result.length() == 0) {
+                    opexBox.addView(label("该版本无 OPEX 组件包（官方未推送）", 13, 0xff596579), margins(-1, -2, 2));
+                    return;
+                }
+                for (int i = 0; i < result.length(); i++) renderOpex(opexBox, result.optJSONObject(i), i + 1);
+            });
+        });
+    }
+
+    /** v3.43.6：OPEX 包卡片（businessCode / 版本名 / 大小 / zipHash + 下载与复制） */
+    private void renderOpex(LinearLayout parent, JSONObject opex, int number) {
+        if (opex == null) return;
+        LiquidGlassPanel card = glass();
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        card.addView(label("OPEX " + number + "  ·  " + opex.optString("name", "Unknown"), 15, 0xff20375b), margins(-1, -2, 2));
+        addPair(card, "OPEX 版本", opex.optString("versionName", "N/A"));
+        long zipSize = opex.optLong("zipSize", 0);
+        if (zipSize > 0) addPair(card, "大小", zipSize + " Byte (" + String.format(Locale.ROOT, "%.2f MB", zipSize / 1048576.0) + ")");
+        addPair(card, "Zip Hash", opex.optString("zipHash", "N/A"));
+        String link = opex.optString("link", "");
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button download = button("下载 OPEX 包");
+        download.setTextSize(11);
+        download.setEnabled(link.startsWith("http"));
+        String opexName = opex.optString("name", "");
+        String opexVersion = opex.optString("versionName", "");
+        String downloadName = ("opex-" + opexName + "-" + opexVersion).replaceAll("[^a-zA-Z0-9._() -]", "_");
+        download.setOnClickListener(v -> startDownload(link, downloadName, ""));
+        Button copy = button("复制链接");
+        copy.setTextSize(11);
+        copy.setEnabled(link.startsWith("http"));
+        copy.setOnClickListener(v -> copyText("下载链接", link));
+        actions.addView(download, new LinearLayout.LayoutParams(0, dp(44), 1));
+        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(0, dp(44), 1);
+        copyLp.setMarginStart(dp(8));
+        actions.addView(copy, copyLp);
+        card.addView(actions, margins(-1, 50, 4));
+        parent.addView(card, margins(-1, -2, 8));
+    }
+
+    /**
+     * v3.43.5：更新日志胶囊展开卡片（点击展开官方日志内容，再点收缩）。
+     * 展开时走 descriptionInfo 接口拉结构化日志（对齐 changelog_query.py 的 upgInstDetail 解析），
+     * panelUrl 保留「浏览器打开」入口。
+     */
+    private void renderChangelogExpander(LinearLayout parent, String changelogUrl, String otaVersion, String regionCode) {
+        // 胶囊头（▶ 更新日志 …… 点击展开详情）
+        LinearLayout capsule = new LinearLayout(this);
+        capsule.setOrientation(LinearLayout.HORIZONTAL);
+        capsule.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        capsule.setPadding(dp(18), dp(14), dp(18), dp(14));
+        android.graphics.drawable.GradientDrawable capsuleBg = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xf2ffffff, 0xd9eef4fa});
+        capsuleBg.setCornerRadius(dp(26));
+        capsuleBg.setStroke(Math.max(1, dp(1)), 0x80ffffff);
+        capsule.setBackground(capsuleBg);
+        capsule.setElevation(dp(2));
+        TextView arrow = new TextView(this);
+        arrow.setText("▶");
+        arrow.setTextSize(14);
+        arrow.setTextColor(0xff2a6b7a);
+        capsule.addView(arrow, new LinearLayout.LayoutParams(-2, -2));
+        TextView title = new TextView(this);
+        title.setText("  更新日志");
+        title.setTextSize(15);
+        title.setTypeface(null, 1);
+        title.setTextColor(0xff2a6b7a);
+        capsule.addView(title, new LinearLayout.LayoutParams(-2, -2));
+        TextView hint = new TextView(this);
+        hint.setText("点击展开详情");
+        hint.setTextSize(12);
+        hint.setTextColor(0xff7a8b94);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        hintLp.rightMargin = dp(4);
+        capsule.addView(hint, hintLp);
+        // 展开内容区
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setVisibility(View.GONE);
+        android.graphics.drawable.GradientDrawable detailBg = new android.graphics.drawable.GradientDrawable();
+        detailBg.setColor(0x14ffffff);
+        detailBg.setCornerRadius(dp(18));
+        detailBg.setStroke(Math.max(1, dp(1)), 0x40ffffff);
+        details.setBackground(detailBg);
+        details.setPadding(dp(16), dp(12), dp(16), dp(12));
+        TextView content = new TextView(this);
+        content.setTextSize(13);
+        content.setTextColor(0xff41586e);
+        content.setLineSpacing(dp(3), 1f);
+        content.setTextIsSelectable(true);
+        content.setText("正在获取更新日志 ...");
+        details.addView(content, new LinearLayout.LayoutParams(-1, -2));
+        Button openInBrowser = button("在浏览器打开日志页面");
+        openInBrowser.setTextSize(11);
+        openInBrowser.setEnabled(changelogUrl.startsWith("http"));
+        openInBrowser.setOnClickListener(v -> openUrl(changelogUrl));
+        LinearLayout.LayoutParams openLp = new LinearLayout.LayoutParams(-1, dp(42));
+        openLp.topMargin = dp(8);
+        details.addView(openInBrowser, openLp);
+        final boolean[] loaded = {false};
+        capsule.setOnClickListener(v -> {
+            Haptics.perform(v);
+            boolean expanding = details.getVisibility() != View.VISIBLE;
+            details.setVisibility(expanding ? View.VISIBLE : View.GONE);
+            arrow.setText(expanding ? "▼" : "▶");
+            hint.setText(expanding ? "点击收缩详情" : "点击展开详情");
+            if (expanding && !loaded[0]) {
+                loaded[0] = true;
+                fetchChangelog(content, otaVersion, regionCode);
+            }
+        });
+        LinearLayout.LayoutParams capsuleLp = new LinearLayout.LayoutParams(-1, -2);
+        capsuleLp.topMargin = dp(14);
+        parent.addView(capsule, capsuleLp);
+        LinearLayout.LayoutParams detailsLp = new LinearLayout.LayoutParams(-1, -2);
+        detailsLp.topMargin = dp(6);
+        parent.addView(details, detailsLp);
+    }
+
+    /** 后台拉取官方更新日志（descriptionInfo 接口，明文 JSON，对齐 changelog_query.py） */
+    private void fetchChangelog(TextView content, String otaVersion, String regionCode) {
+        executor.execute(() -> {
+            String text;
+            try {
+                text = ChangelogProtocol.query(otaVersion, regionCode);
+                if (text == null || text.trim().isEmpty()) text = "官方服务器暂无该版本的更新日志。";
+            } catch (Exception error) {
+                text = "更新日志获取失败：" + readable(error) + "\n可点下方按钮在浏览器打开官方日志页面。";
+            }
+            final String changelogText = text;
+            runOnUiThread(() -> content.setText(changelogText));
+        });
+    }
+
     private JSONObject queryRegional(String prefix, String region, String components,
-                                     boolean antiQuery, boolean grayRelease, String guid) throws Exception {
+                                     boolean antiQuery, boolean grayRelease, String guid, boolean pki, String nvid) throws Exception {
         Exception last = null;
         for (String suffix : modelSuffixes(region)) {
             try {
-                return OPlusProtocol.query(prefix, region, components, antiQuery, grayRelease, guid, suffix);
+                JSONObject result = OPlusProtocol.query(prefix, region, components, antiQuery, grayRelease, guid, suffix, pki, nvid);
+                // v3.43.5：记录地区码，更新日志查询（descriptionInfo）需要按地区选 host
+                result.put("regionCode", region);
+                return result;
             } catch (Exception error) {
                 last = error;
                 if (!isNoVersion(error)) throw error;
@@ -501,17 +694,17 @@ public final class OPlusOtaActivity extends BaseActivity {
     }
 
     private void queryAllRegions(String prefix, String components, boolean antiQuery,
-                                 boolean grayRelease, String guid, JSONArray matches,
+                                 boolean grayRelease, String guid, boolean pki, String nvid, JSONArray matches,
                                  StringBuilder failures, Consumer<JSONObject> onMatch) {
         for (int i = 1; i < REGION_CODES.length; i++) {
             String region = REGION_CODES[i];
             try {
                 JSONObject result;
                 try {
-                    result = queryRegional(prefix, region, components, antiQuery, grayRelease, guid);
+                    result = queryRegional(prefix, region, components, antiQuery, grayRelease, guid, pki, nvid);
                 } catch (Exception firstError) {
                     if (!antiQuery || !isNoVersion(firstError)) throw firstError;
-                    result = queryRegional(prefix, region, components, false, grayRelease, guid);
+                    result = queryRegional(prefix, region, components, false, grayRelease, guid, pki, nvid);
                 }
                 final JSONObject matchedResult = result;
                 matchedResult.put("matchedRegion", REGION_LABELS[i]);
@@ -1278,7 +1471,7 @@ public final class OPlusOtaActivity extends BaseActivity {
         private static final String SG = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkA980wxi+eTGcFDiw2I6RrUeO4jL/Aj3Yw4dNuW7tYt+O1sRTHgrzxPD9SrOqzz7G0KgoSfdFHe3JVLPN+U1waK+T0HfLusVJshDaMrMiQFDUiKajb+QKr+bXQhVofH74fjat+oRJ8vjXARSpFk4/41x5j1Bt/2bHoqtdGPcUizZ4whMwzap+hzVlZgs7BNfepo24PWPRujsN3uopl+8u4HFpQDlQl7GdqDYDjz2NOHdFQI2UpSf0aIeKCKOpSKF72KDEESpJVQsqO4nxMwEi2jMujQeCHyTCjBZ+W35RzwT9+0pyZv8FB3c7FYY9FdF/+lvfax5mvFEBd9jO+dpMQIDAQAB";
         private static final String ZERO_GUID = "0000000000000000000000000000000000000000000000000000000000000000";
 
-        private static JSONObject query(String prefix, String region, String components, boolean antiQuery, boolean grayRelease, String guid, String modelSuffix) throws Exception {
+        private static JSONObject query(String prefix, String region, String components, boolean antiQuery, boolean grayRelease, String guid, String modelSuffix, boolean pki, String nvid) throws Exception {
             String base = prefix.split("_")[0];
             String model = region.equals("eu")
                     ? base + (modelSuffix.isEmpty() ? "EEA" : modelSuffix)
@@ -1297,6 +1490,8 @@ public final class OPlusOtaActivity extends BaseActivity {
             byte[] aes = random(32), iv = random(16);
             boolean preview = !guid.isEmpty();
             JSONObject request = new JSONObject().put("mode", "0").put("time", System.currentTimeMillis()).put("isRooted", "0").put("isLocked", true).put("type", "0").put("deviceId", preview ? guid.toLowerCase(Locale.ROOT) : ZERO_GUID).put("opex", new JSONObject().put("check", true));
+            // v3.43.5：对齐 tomboy_pro --pki（OS17 内部测试版查询修复）
+            request.put("isSuportPki", pki);
             if (grayRelease) request.put("recruitId", "whoami");
             if (!components.isEmpty()) {
                 JSONArray list = new JSONArray();
@@ -1307,17 +1502,39 @@ public final class OPlusOtaActivity extends BaseActivity {
                 request.put("components", list);
             }
             JSONObject scene = new JSONObject().put("protectedKey", Base64.getEncoder().encodeToString(rsaOaep(Base64.getEncoder().encode(aes), publicKey))).put("version", String.valueOf(System.currentTimeMillis() * 1000000L + 86400000000000L)).put("negotiationVersion", negotiation);
-            JSONObject headers = new JSONObject().put("language", langs[ri]).put("newLanguage", langs[ri]).put("androidVersion", "unknown").put("colorOSVersion", "unknown").put("romVersion", "unknown").put("infVersion", "1").put("otaVersion", otaVersion).put("model", model).put("mode", antiQuery ? "taste" : "manual").put("nvCarrier", carriers[ri]).put("pipelineKey", "ALLNET").put("operator", "ALLNET").put("companyId", "").put("version", "2").put("deviceId", randomDeviceId()).put("User-Agent", "okhttp/4.12.0").put("Accept-Encoding", "gzip").put("Content-Type", "application/json; charset=utf-8").put("protectedKey", new JSONObject().put("SCENE_1", scene).toString());
+            JSONObject headers = new JSONObject().put("language", langs[ri]).put("newLanguage", langs[ri]).put("androidVersion", "unknown").put("colorOSVersion", "unknown").put("romVersion", "unknown").put("infVersion", "1").put("otaVersion", otaVersion).put("model", model).put("mode", antiQuery ? "taste" : "manual").put("nvCarrier", nvid.isEmpty() ? carriers[ri] : nvid).put("pipelineKey", "ALLNET").put("operator", "ALLNET").put("companyId", "").put("version", "2").put("deviceId", randomDeviceId()).put("User-Agent", "okhttp/4.12.0").put("Accept-Encoding", "gzip").put("Content-Type", "application/json; charset=utf-8").put("protectedKey", new JSONObject().put("SCENE_1", scene).toString());
             JSONObject params = new JSONObject().put("cipher", Base64.getEncoder().encodeToString(aesCtr(request.toString().getBytes(StandardCharsets.UTF_8), aes, iv, true))).put("iv", Base64.getEncoder().encodeToString(iv));
             String raw = postJson("https://" + host + (preview ? "/update/v6" : "/update/v3"), headers, new JSONObject().put("params", params.toString()).toString());
             JSONObject envelope = new JSONObject(raw);
-            if (envelope.optInt("responseCode") != 200) throw new IllegalStateException("服务返回 " + envelope.optInt("responseCode"));
+            if (envelope.optInt("responseCode") != 200) throw new IllegalStateException("服务返回 " + envelope.optInt("responseCode")
+                    + envelopeCodeHint(envelope.optInt("responseCode")));
             Object bodyValue = envelope.get("body");
             JSONObject encrypted = bodyValue instanceof JSONObject
                     ? (JSONObject) bodyValue
                     : new JSONObject(String.valueOf(bodyValue));
             String plain = new String(aesCtr(Base64.getDecoder().decode(encrypted.getString("cipher")), aes, Base64.getDecoder().decode(encrypted.getString("iv")), false), StandardCharsets.UTF_8);
             return parse(plain);
+        }
+
+        /** v3.43.5：官方错误码语义（对齐 tomboy_pro.display_result 的错误分支） */
+        private static String envelopeCodeHint(int code) {
+            switch (code) {
+                case 2004: return "（该版本无可用更新）";
+                case 308: return "（官方接口限流，请稍后再试）";
+                case 204:
+                case 2200: return "（当前设备不在官方测试名单内）";
+                case 500: return "（官方服务端错误）";
+                default: return "";
+            }
+        }
+
+        /**
+         * v3.43.5：gauss auto→manual 源替换（对齐 tomboy_pro.replace_gauss_url）。
+         * auto 域名是系统自动升级专用（有 referer/UA 校验），manual 域名才能直接下载。
+         */
+        private static String replaceGaussUrl(String url) {
+            if (url == null || url.isEmpty() || "N/A".equals(url)) return url;
+            return url.replace("https://gauss-otacostauto-cn.allawnfs.com/", "https://gauss-componentotacostmanual-cn.allawnfs.com/");
         }
 
         private static JSONObject parse(String raw) throws Exception {
@@ -1327,7 +1544,7 @@ public final class OPlusOtaActivity extends BaseActivity {
                     .put("securityPatch", body.optString("securityPatch", "N/A"))
                     .put("publishedTime", body.optLong("publishedTime", 0) > 0 ? new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new java.util.Date(body.optLong("publishedTime"))) : "N/A");
             JSONObject description = body.optJSONObject("description");
-            out.put("changelog", description == null ? "N/A" : description.optString("panelUrl", "N/A"));
+            out.put("changelog", description == null ? "N/A" : replaceGaussUrl(description.optString("panelUrl", "N/A")));
             JSONArray components = new JSONArray(), source = body.optJSONArray("components");
             if (source != null) {
                 for (int i = 0; i < source.length(); i++) {
@@ -1340,7 +1557,7 @@ public final class OPlusOtaActivity extends BaseActivity {
                     for (int packetIndex = 0; packetIndex < packetList.length(); packetIndex++) {
                         JSONObject p = packetList.optJSONObject(packetIndex);
                         if (p == null) continue;
-                        String manual = p.optString("manualUrl", p.optString("url", "N/A"));
+                        String manual = replaceGaussUrl(p.optString("manualUrl", p.optString("url", "N/A")));
                         if (manual.contains("downloadCheck")) {
                             try { manual = resolveRedirect(manual); } catch (Exception ignored) { }
                         }
@@ -1349,13 +1566,14 @@ public final class OPlusOtaActivity extends BaseActivity {
                                 .put("version", c.optString("componentVersion", "Unknown"))
                                 .put("link", manual)
                                 .put("originalLink", p.optString("manualUrl", manual))
-                                .put("autoUrl", p.optString("url", "N/A"))
+                                .put("autoUrl", replaceGaussUrl(p.optString("url", "N/A")))
                                 .put("size", p.optString("size", "N/A"))
                                 .put("md5", p.optString("md5", "N/A")));
                     }
                 }
             }
             out.put("components", components);
+            // 注：OPEX 不在 /update/v3 响应里（实测恒为 null），v3.43.6 起走 OpexProtocol 独立端点
             return out;
         }
 
@@ -1387,6 +1605,212 @@ public final class OPlusOtaActivity extends BaseActivity {
             if (expires == null) expires = uri.getQueryParameter("x-oss-expires");
             String expiry = expires == null ? "" : "\n有效期至: " + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new java.util.Date(Long.parseLong(expires) * 1000L));
             return location + expiry;
+        }
+    }
+
+    /**
+     * v3.43.6：OPEX 独立查询协议（对齐 opex_query.py —— OPEX 走 /queryUpdate 独立端点，
+     * 与 /update/v3 完全不同的 host/公钥/请求体/响应结构；此前挂在 /update/v3 响应的
+     * opex 字段上实测恒为 null，属实现错误，服务器根本不在那里返回数据）。
+     * 请求体 {"mode":"0","time":ms,"businessList":[],"otaVersion":完整版本}，
+     * 请求头 protectedKey 用 "opex" scene，响应顶层直接 cipher/iv，
+     * 解密后 {"code":200,"data":[{businessCode,code,info:{zipSize,zipHash,autoUrl,manualUrl}}]}。
+     */
+    private static final class OpexProtocol {
+        private static final String CN_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr/B2JwdaZIQqVpx10R4Ro/ZjCLzssu3vIZCKNwDh4LMBkeHRjcjtaVPoPvvTKY74XlMg7fmRv0iQELnlFNtHjgg8YnmhZObUmpVdpHLhthRSBqpRKl2LhMgYtE/SELUKvzelw2byNcRnU9/PvbsADcgz7IUFAzOvvtxnbaOd9CAthvO+0BTSk3dnBt6CT4nScgr13BAn6RTJI0wV5DZMpLNsTEXiTcQT3ZX2LcT6bRN8yUmGuARjLh2VG7H1gSxjUUDsKcFmcJY/8zyB64nqvX4Gya86c2bVaEd+CsMsOEYISWdVrG+Rf6y3BaG1DZRQDh0GD1cwtvA+JtvEmqGkqwIDAQAB";
+        private static final String SG_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmsGhAIeXjkAqPW08T18ynlLOBOfDEzNz4MEvDmecfmrGnlxGpucThpLPC+Zwr7H+ZjIPSBReN5a3g+urA8X9WXZTeb9nC5aAjd3jAV/2iWSaN9D4t20jMg58E01xgEQGPwEMnAkQ/2AR74GQocQVYcz4ouOVfNxeb266hGMKydwubxaV2JtnIzacvUCIpm6tdSqUktbqKlzHCVdPCkJYSfcgsmO6f5kgsLAnOJpTEvCkh8m8x7X113hhHdu4FamSAM7NrOQFtYsndhDu7ISD13TEZcKJokxjUWwNix02NrZhDVlspnTr6yQ0+lAyVtjoTXJlpVoUtcSYbEvNjxIj5QIDAQAB";
+        private static final String IN_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoryRng0SUK/vtxyAx6E/QLcAKXAY3QlA4pZipRYKwH78KQCTM6HCVKxnrudRRu88M8JE2neO/nP1CI6sCR5e2AlM2p4ctZ07cE3nGyP7UoE8r9DiHrK/DXkIv+vQ9nPIbAopAYcL4Ke4ecBIH/MBbBIzzFHv9Hur/U5mXEVqCO1jHvwglG9y1l2pAdzL+lxocyYx28G8bM//KhAdeTJ877LH9UgL91jL68bJLr6N1R3KYHW56uoM7n/Y1ZlcALnoJI7gdlGEoEhAMf/VSxUoBxnDbuqfd8PNhTgyuRqXLYxSPSxbbgojHyJllkqhLcsZhW4D0fnvJMOdi+Ut1NONAwIDAQAB";
+        private static final String EU_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5j8QHA2FWysJd5NSz7IRlYhW3vcAri6AeLK/+X5lnWu9xeFTLd2zkjvasGPJR6kJVMQ5+AXdBCq5oR8umHqKRsMDB4doGhECfjauFm7uVmJJRfgL2cg5wPHWuAZfnWshlhuYZ1S1sTu4RIHQD7uQGxrXZzmkY+JlHB5byaekMuSwz3uJ9gwZ9WLP8LXh+MGC1ECJ476rnPehJom3/Mxxj+WTilMhDO2Ws61tskkDINdL1Qmj0ziia4hYziyLmDDDcrhDKB/tOpYioByFnDuyaEySLunR7bp4XDFcUfptCXQwEML12LzUlpifDxdj6ZZeHkpk9ZYs59JfNynXVBbcJcQIDAQAB";
+
+        private static String host(String region) {
+            if (region.equals("cn") || region.equals("cn_cmcc")) return "opex-service-cn.allawntech.com";
+            if (region.equals("eu")) return "opex-service-eu.allawnos.com";
+            if (region.equals("in")) return "opex-service-in.allawnos.com";
+            return "opex-service-sg.allawnos.com";
+        }
+
+        /** 返回 OPEX 包 JSONArray（空数组 = 该版本无 OPEX；不抛 2004/无数据类异常） */
+        private static JSONArray query(String otaVersion, String region, String osMajor, String brand) throws Exception {
+            if (otaVersion == null || otaVersion.isEmpty() || "N/A".equals(otaVersion))
+                throw new IllegalStateException("缺少 OTA 版本号");
+            String keyRegion = region.equals("cn") || region.equals("cn_cmcc") ? "cn" : region.equals("eu") ? "eu" : region.equals("in") ? "in" : "sg";
+            String publicKey = keyRegion.equals("cn") ? CN_KEY : keyRegion.equals("eu") ? EU_KEY : keyRegion.equals("in") ? IN_KEY : SG_KEY;
+            String negotiation = keyRegion.equals("cn") ? "1631001537253" : keyRegion.equals("eu") ? "1631002593566" : keyRegion.equals("in") ? "1631002407524" : "1631001988895";
+            int ri = region.equals("cn") || region.equals("cn_cmcc") ? 0 : region.equals("in") ? 1 : region.equals("eu") ? 2 : 3;
+            String[] langs = {"zh-CN", "en-IN", "en-GB", "en-SG"};
+            String[] carriers = {"10010111", "00011011", "01000100", "01011010"};
+            String model = otaVersion.split("_")[0];
+            byte[] aes = random(32), iv = random(16);
+            // osVersion "16" → "ColorOS16.0.0"；androidVersion → "Android16"（对齐 parse_os_version）
+            String osVersion = "ColorOS" + osMajor + ".0.0";
+            String androidVersion = "Android" + osMajor;
+            JSONObject request = new JSONObject()
+                    .put("mode", "0").put("time", System.currentTimeMillis())
+                    .put("businessList", new JSONArray()).put("otaVersion", otaVersion);
+            JSONObject scene = new JSONObject().put("protectedKey", Base64.getEncoder().encodeToString(rsaOaep(Base64.getEncoder().encode(aes), publicKey))).put("version", String.valueOf(System.currentTimeMillis() * 1000000L + 86400000000000L)).put("negotiationVersion", negotiation);
+            JSONObject headers = new JSONObject()
+                    .put("language", langs[ri]).put("newLanguage", langs[ri])
+                    .put("androidVersion", androidVersion).put("nvCarrier", carriers[ri])
+                    .put("deviceId", randomDeviceId().toLowerCase(Locale.ROOT))
+                    .put("osVersion", osVersion).put("productName", model)
+                    .put("brand", brand).put("queryMode", "0").put("version", "1")
+                    .put("User-Agent", "okhttp/5.3.2").put("Content-Type", "application/json; charset=utf-8")
+                    .put("protectedKey", new JSONObject().put("opex", scene).toString());
+            JSONObject payload = new JSONObject()
+                    .put("cipher", Base64.getEncoder().encodeToString(aesCtr(request.toString().getBytes(StandardCharsets.UTF_8), aes, iv, true)))
+                    .put("iv", Base64.getEncoder().encodeToString(iv));
+            String raw = postJson("https://" + host(region) + "/queryUpdate", headers, payload.toString());
+            JSONObject envelope = new JSONObject(raw);
+            int code = envelope.optInt("code", envelope.optInt("responseCode", 200));
+            if (code == 500) throw new IllegalStateException("OPEX 服务端错误（500）");
+            if (code != 200) throw new IllegalStateException("OPEX 服务返回 " + code);
+            String plain = new String(aesCtr(Base64.getDecoder().decode(envelope.getString("cipher")), aes, Base64.getDecoder().decode(envelope.getString("iv")), false), StandardCharsets.UTF_8);
+            JSONObject body = new JSONObject(plain);
+            if (body.optInt("code", 200) != 200) throw new IllegalStateException("OPEX 返回 " + body.optInt("code"));
+            Object dataValue = body.opt("data");
+            JSONArray packages;
+            if (dataValue instanceof JSONArray) {
+                packages = (JSONArray) dataValue;
+            } else if (dataValue instanceof JSONObject) {
+                packages = ((JSONObject) dataValue).optJSONArray("opexPackage");
+                if (packages == null) packages = new JSONArray();
+            } else {
+                packages = new JSONArray();
+            }
+            String versionName = dataValue instanceof JSONObject ? ((JSONObject) dataValue).optString("opexVersionName", "N/A") : "N/A";
+            JSONArray out = new JSONArray();
+            for (int i = 0; i < packages.length(); i++) {
+                JSONObject pkg = packages.optJSONObject(i);
+                if (pkg == null || pkg.optInt("code", 0) != 200) continue;
+                JSONObject info = pkg.optJSONObject("info");
+                if (info == null) continue;
+                out.put(new JSONObject()
+                        .put("name", pkg.optString("businessCode", "N/A"))
+                        .put("versionName", versionName)
+                        .put("zipHash", info.optString("zipHash", "N/A"))
+                        .put("zipSize", info.optLong("zipSize", 0))
+                        .put("link", info.optString("manualUrl", replaceGaussAuto(info.optString("autoUrl", "N/A")))));
+            }
+            return out;
+        }
+
+        /** gauss auto→manual 兜底（OPEX 域名与 OTA 不同：gauss-opexcostauto → gauss-opexcostmanual） */
+        private static String replaceGaussAuto(String url) {
+            if (url == null || url.isEmpty() || "N/A".equals(url)) return url;
+            return url.replace("https://gauss-opexcostauto-cn.allawnfs.com/", "https://gauss-opexcostmanual-cn.allawnfs.com/");
+        }
+    }
+
+    /**
+     * v3.43.5：官方更新日志查询（/descriptionInfo，明文 JSON，对齐 changelog_query.py）。
+     * 输入完整 OTA 版本（如 PJZ110_11.C.84_1840_202601060309）→ 截取前 3 段 + _197001010000
+     * → 返回结构化日志文本（分类 title + 条目，大陆地区带 · 前缀）。
+     */
+    private static final class ChangelogProtocol {
+        private static String query(String fullOtaVersion, String regionCode) throws Exception {
+            if (fullOtaVersion == null || fullOtaVersion.isEmpty() || "N/A".equals(fullOtaVersion))
+                throw new IllegalStateException("缺少 OTA 版本号，无法查询更新日志");
+            String region = regionCode == null || regionCode.isEmpty() ? "cn" : regionCode;
+            String host = region.equals("cn") || region.equals("cn_cmcc") ? "component-ota-cn.allawntech.com"
+                    : region.equals("eu") ? "component-ota-eu.allawnos.com"
+                    : region.equals("in") ? "component-ota-in.allawnos.com"
+                    : "component-ota-sg.allawnos.com";
+            String[] langs = {"zh-CN", "zh-CN", "en-IN", "en-GB", "en-SG"};
+            String[] carriers = {"10010111", "10011000", "00011011", "01000100", "01011010"};
+            int ri = region.equals("cn_cmcc") ? 1 : region.equals("in") ? 2 : region.equals("eu") ? 3 : 4;
+            if (region.equals("cn")) ri = 0;
+            // 版本裁剪：完整版本取前 3 段（MODEL_11.X.Y_ZZZN）+ 默认时间后缀
+            String[] parts = fullOtaVersion.toUpperCase(Locale.ROOT).split("_");
+            if (parts.length < 3) throw new IllegalStateException("OTA 版本格式不完整: " + fullOtaVersion);
+            String maskVersion = parts[0] + "_" + parts[1] + "_" + parts[2] + "_197001010000";
+            String model = parts[0].replace("PRE", "");
+            JSONObject inner = new JSONObject()
+                    .put("mode", 0).put("maskOtaVersion", maskVersion).put("bigVersion", 0).put("h5LinkVersion", 6);
+            JSONObject headers = new JSONObject()
+                    .put("language", langs[ri]).put("nvCarrier", carriers[ri]).put("mode", "manual")
+                    .put("osVersion", "unknown").put("maskOtaVersion", maskVersion)
+                    .put("otaVersion", maskVersion).put("model", model)
+                    .put("androidVersion", "unknown").put("Content-Type", "application/json");
+            HttpURLConnection connection = (HttpURLConnection) new URL("https://" + host + "/descriptionInfo").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(20000);
+            connection.setDoOutput(true);
+            Iterator<String> keys = headers.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                connection.setRequestProperty(key, headers.getString(key));
+            }
+            connection.getOutputStream().write(new JSONObject().put("params", inner.toString()).toString().getBytes(StandardCharsets.UTF_8));
+            int code = connection.getResponseCode();
+            String raw = read(code >= 400 ? connection.getErrorStream() : connection.getInputStream());
+            if (code != 200) throw new IllegalStateException("HTTP " + code);
+            JSONObject response = new JSONObject(raw);
+            int responseCode = response.optInt("responseCode", -1);
+            if (responseCode == 500 && "no modify".equals(response.optString("errMsg"))) return null;
+            if (responseCode != 200) throw new IllegalStateException("服务返回 " + responseCode + envelopeHint(responseCode));
+            String bodyText = response.optString("body", "");
+            if (bodyText.isEmpty()) return null;
+            return format(new JSONObject(bodyText), region.equals("cn") || region.equals("cn_cmcc"));
+        }
+
+        private static String envelopeHint(int code) {
+            switch (code) {
+                case 2004: return "（该版本无可用日志）";
+                case 308: return "（官方接口限流，请稍后再试）";
+                default: return "";
+            }
+        }
+
+        /** upgInstDetail → 可读文本（对齐 changelog_query.format_output） */
+        private static String format(JSONObject body, boolean bullet) {
+            StringBuilder out = new StringBuilder();
+            String versionName = body.optString("versionName", "");
+            if (!versionName.isEmpty()) out.append("ColorOS 版本: ").append(versionName).append("\n");
+            JSONArray detail = body.optJSONArray("upgInstDetail");
+            if (detail == null || detail.length() == 0)
+                return out.append("官方服务器暂无该版本的更新日志。").toString();
+            boolean first = true;
+            for (int i = 0; i < detail.length(); i++) {
+                JSONObject item = detail.optJSONObject(i);
+                if (item == null) continue;
+                if (item.has("children")) {
+                    if (!first) out.append("\n");
+                    first = false;
+                    JSONArray children = item.optJSONArray("children");
+                    for (int c = 0; c < children.length(); c++) {
+                        JSONObject child = children.optJSONObject(c);
+                        if (child == null) continue;
+                        if (c > 0) out.append("\n");
+                        String title = child.optString("title", "");
+                        if (!title.isEmpty()) out.append(title).append("\n");
+                        JSONArray contentList = child.optJSONArray("content");
+                        if (contentList != null) {
+                            for (int k = 0; k < contentList.length(); k++) {
+                                Object entry = contentList.opt(k);
+                                String text = entry instanceof JSONObject ? ((JSONObject) entry).optString("data", "") : String.valueOf(entry);
+                                if (text != null && !text.isEmpty()) out.append(bullet ? "· " : "").append(text).append("\n");
+                            }
+                        }
+                    }
+                } else if (item.has("link")) {
+                    if (!first) out.append("\n");
+                    first = false;
+                    String contentText = item.optString("content", "");
+                    if (!contentText.isEmpty()) out.append(contentText).append("\n");
+                    String linkHtml = item.optString("link", "");
+                    java.util.regex.Matcher href = java.util.regex.Pattern.compile("href\\s*=\\s*\"([^\"]+)\"").matcher(linkHtml);
+                    if (href.find()) out.append(href.group(1)).append("\n");
+                } else if ("updateTips".equals(item.optString("type"))) {
+                    if (!first) out.append("\n");
+                    first = false;
+                    String title = item.optString("title", "重要提示");
+                    out.append(title).append("\n");
+                    String tips = item.optString("content", "");
+                    if (!tips.isEmpty()) out.append(tips).append("\n");
+                }
+            }
+            return out.toString().trim();
         }
     }
 

@@ -33,7 +33,7 @@ class VivoOtaClient(private val context: Context) {
          * 解析日志正文时直接抓该文件而非渲染后的 HTML。
          */
         fun changelogDataUrl(h5Url: String): String =
-            h5Url.replace(Regex("/index\\.html$"), "/data/CN.js")
+            h5Url.substringBefore('?').replace(Regex("/index\\.html$"), "/data/CN.js")
 
         /** changelogDataUrl 的逆变换：还原出可在浏览器直接打开的 H5 页面地址。 */
         fun changelogPageUrl(url: String): String =
@@ -1093,28 +1093,43 @@ class VivoOtaClient(private val context: Context) {
     fun fetchChangelog(url: String): String? {
         if (url.isEmpty()) return null
         return try {
-            // 如果是 H5 页面地址，转换为数据文件地址
-            val dataUrl = if (url.contains("/index.html")) {
-                changelogDataUrl(url)
-            } else {
-                url
-            }
+            // H5 页面是 JS 空壳，正文在 data/CN.js（形如 "var x = {...JSON...}"）
+            val dataUrl = if (url.contains("/index.html")) changelogDataUrl(url) else url
             Log.d(TAG, "Fetching changelog from: $dataUrl")
-            
+
             val response = httpGet(dataUrl)
             Log.d(TAG, "Changelog response (${response.length} chars): ${response.take(500)}")
-            if (response.trimStart().startsWith("{")) {
-                parseChangelogJson(response)
-            } else if (response.trimStart().startsWith("<")) {
-                parseChangelogHtml(response)
-            } else {
-                response.trim()
+            val trimmed = response.trim()
+            when {
+                trimmed.startsWith("{") -> parseChangelogJson(trimmed)
+                // JS 数据文件：剥离 "var x =" 前缀提取 JSON（对齐 OPPO 更新日志的直接解析）
+                trimmed.startsWith("var ") || trimmed.contains("={") || trimmed.contains("= {") ->
+                    extractJsonFromJs(trimmed)?.let { parseChangelogJson(it) } ?: parseChangelogText(trimmed)
+                trimmed.startsWith("<") -> parseChangelogHtml(trimmed)
+                else -> parseChangelogText(trimmed)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Changelog fetch failed: ${e.message}")
-            null
+            // 数据文件失败时兜底抓 H5 原页直接抽正文
+            try {
+                val page = httpGet(url)
+                if (page.trimStart().startsWith("<")) parseChangelogHtml(page) else null
+            } catch (e2: Exception) {
+                null
+            }
         }
     }
+
+    /** 从 JS 数据文件提取 JSON：找首个 { 到最后一个 } 之间的内容 */
+    private fun extractJsonFromJs(js: String): String? {
+        val start = js.indexOf('{')
+        val end = js.lastIndexOf('}')
+        if (start < 0 || end <= start) return null
+        return js.substring(start, end + 1)
+    }
+
+    /** 兜底：非 JSON 非 HTML 的纯文本，按原文返回 */
+    private fun parseChangelogText(text: String): String = text.trim()
 
     private fun httpGet(urlString: String): String {
         val url = URL(urlString)

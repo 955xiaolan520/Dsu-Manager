@@ -1378,10 +1378,15 @@ public final class VivoActivity extends BaseActivity {
                         final String text = (content == null || content.isEmpty())
                                 ? "更新日志加载失败：" + changelogUrl : content;
                         runOnUiThread(() -> {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-                                changelogText.setText(android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_COMPACT));
+                            // 对齐 OPPO 日志直解析：纯文本直接 setText 保留换行，仅 HTML 走 fromHtml 渲染
+                            if (text.trim().startsWith("<")) {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                                    changelogText.setText(android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_COMPACT));
+                                } else {
+                                    changelogText.setText(android.text.Html.fromHtml(text));
+                                }
                             } else {
-                                changelogText.setText(android.text.Html.fromHtml(text));
+                                changelogText.setText(text);
                             }
                         });
                     });
