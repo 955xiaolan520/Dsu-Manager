@@ -1235,13 +1235,12 @@ public final class PayloadDumperActivity extends BaseActivity {
                 android.util.Log.d("PayloadDumper", "输入: " + currentInput);
                 android.util.Log.d("PayloadDumper", "输出目录: " + outputDir);
 
-                // v3.40.19：统一 root CLI 提取（libpayload_extract.so pie 可执行）——
-                // root 直读输入（本地 bin/zip 原路径、在线 URL 均可）、root 直写输出目录，
-                // 无 FUSE 权限障碍、零复制；进度/结果日志由 extractOnePartition 内部处理
+                // v3.42.18：JNI 优先（单分区内部块级 8 线程），失败/URL 回退 root CLI；
+                // 进度/结果日志由 extractOnePartition 内部处理
                 String rawInput = isLocal && originalLocalPath != null ? originalLocalPath : currentInput;
                 boolean ok = extractOnePartition(rawInput, outputDir, partitionName,
                         finalPartitionSize, itemView, isLocal,
-                        () -> Boolean.TRUE.equals(cancelledTokens.get(token)));
+                        () -> Boolean.TRUE.equals(cancelledTokens.get(token)), false);
                 if (ok) {
                     final String fp = finalOutputPath;
                     mainHandler.post(() ->
@@ -1467,10 +1466,10 @@ public final class PayloadDumperActivity extends BaseActivity {
         if (!extractAllRunning.compareAndSet(false, true)) return;
         extractAllCancel = false;
         setExtractAllUi(true, isLocal);
-        log(isLocal, "⚡ 全选提取: " + parts.size() + " 个分区（root CLI 多线程提取）");
+        log(isLocal, "⚡ 全选提取: " + parts.size() + " 个分区（JNI 多线程引擎，CLI 兜底）");
         executor.execute(() -> {
             try {
-                // v3.40.19：root CLI 直读原路径（bin/zip/URL 均可，无 FUSE 权限障碍、零复制）
+                // v3.42.18：JNI 优先（ensureJniReadable 放行直读零复制），CLI 批量兜底
                 runExtractAllCore(input, isLocal, parts);
             } finally {
                 extractAllRunning.set(false);
@@ -1492,12 +1491,10 @@ public final class PayloadDumperActivity extends BaseActivity {
     }
 
     /**
-     * v3.42.15：全选提取改为批量并行 —— 一次 root CLI 调用逗号拼接全部分区
-     * （--images a,b,c），CLI 内部 8 线程分区级并行，只解析一次 manifest。
-     * 旧实现逐分区顺序提取：每分区一次 CLI 冷启动 + 重新扫 ZIP + 重解析 manifest，
-     * 且单分区提取永远单线程 —— OPPO 67 分区 13G 提取 500s+ 的根因。
-     * 保留逐行进度：轮询 stat 每个输出文件字节数驱动各行进度条。
-     * 失败的分区逐行重跑一次 extractOnePartition 拿精确错误（正常全成功零开销）。
+     * v3.42.18：全选提取 —— JNI 优先（单分区内部块级 8 线程，对齐 DnaBin v3.42.17
+     * 实测 OPPO 67 分区 76s / vivo 61 分区 16s），JNI 整体不可用或全军覆没才回退
+     * CLI 批量（v3.42.15 的逗号拼接批量，保留作兜底）。
+     * 在线全选：整包下载到 cache 后走本地路径，同样适用 JNI。
      */
     private void runExtractAllCore(String input, boolean isLocal, List<PayloadExtractor.PartitionInfo> parts) {
         String outputDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -1508,17 +1505,15 @@ public final class PayloadDumperActivity extends BaseActivity {
             mainHandler.post(() -> { status.setText("全选提取失败"); toast("无法创建输出目录"); });
             return;
         }
-        // v3.40.19：root CLI 直写输出目录（无 app 写入 FUSE 权限问题），无需放行
         log(isLocal, "输出目录: " + outputDir);
         LinearLayout targetList = isLocal ? localPartitionsList : onlinePartitionsList;
-        long startMs = System.currentTimeMillis();
+        final long startMs = System.currentTimeMillis();
         final int totalParts = parts.size();
         final String[] names = new String[totalParts];
         final long[] expected = new long[totalParts];
         final PartitionItemView[] views = new PartitionItemView[totalParts];
         final File[] outFiles = new File[totalParts];
         StringBuilder rmAll = new StringBuilder();
-        StringBuilder joined = new StringBuilder();
         for (int i = 0; i < totalParts; i++) {
             PayloadExtractor.PartitionInfo info = parts.get(i);
             names[i] = info.getName();
@@ -1526,8 +1521,6 @@ public final class PayloadDumperActivity extends BaseActivity {
             views[i] = (PartitionItemView) targetList.getChildAt(i);
             outFiles[i] = new File(outputDir, names[i] + ".img");
             rmAll.append("rm -f ").append(DnaTools.quote(outFiles[i].getAbsolutePath())).append("; ");
-            if (joined.length() > 0) joined.append(",");
-            joined.append(names[i]);
             final PartitionItemView iv = views[i];
             final File of = outFiles[i];
             mainHandler.post(() -> {
@@ -1535,12 +1528,132 @@ public final class PayloadDumperActivity extends BaseActivity {
             });
         }
         com.topjohnwu.superuser.Shell.cmd(rmAll + "true").exec();
-        log(isLocal, "⏳ " + totalParts + " 个分区并行提取（8 线程）...");
+        // ---- JNI 主路径 ----
+        final boolean isUrl = input.startsWith("http://") || input.startsWith("https://");
+        String jniInput = null;
+        if (!isUrl) {
+            jniInput = DnaTools.ensureJniReadable(PayloadDumperActivity.this, input,
+                    msg -> { log(isLocal, msg); return kotlin.Unit.INSTANCE; });
+        }
+        if (jniInput != null) {
+            int r = runExtractAllJni(input, jniInput, isLocal, outputDir, totalParts,
+                    names, expected, views, outFiles, startMs);
+            if (r >= 0) return;   // JNI 路径已完成（含失败分区 CLI 重试与结尾统计）
+            log(isLocal, "… JNI 全部失败，回退 CLI 批量重试 ...");
+        }
+        // ---- CLI 批量兜底 ----
+        runExtractAllCliBatch(input, isLocal, outputDir, totalParts, names, expected, views, outFiles, startMs);
+    }
+
+    /**
+     * v3.42.18：全选 JNI 逐分区提取（单分区内部 8 线程）+ 失败分区 CLI 单分区重试。
+     * 取消即时响应：等待循环检测 extractAllCancel 立即退出并 root rm 半成品
+     * （JNI 无中断接口，后台 native 跑完写已 unlink 的 fd，不占可见空间）。
+     * @return 成功分区数；-1 = JNI 全军覆没（调用方应回退 CLI 批量）
+     */
+    private int runExtractAllJni(String rawInput, String jniInput, boolean isLocal, String outputDir,
+                                 int totalParts, String[] names, long[] expected,
+                                 PartitionItemView[] views, File[] outFiles, long startMs) {
+        log(isLocal, "⚡ JNI 多线程引擎 · 单分区 8 线程并行解压");
+        mainHandler.post(() -> status.setText("JNI 提取中 · 0/" + totalParts));
+        final PayloadExtractor px = new PayloadExtractor();
+        int ok = 0;
+        final java.util.List<Integer> failedIdx = new java.util.ArrayList<>();
+        for (int i = 0; i < totalParts; i++) {
+            if (extractAllCancel) break;
+            final String name = names[i];
+            final int no = i + 1;
+            final long token = tokenGenerator.getAndIncrement();
+            log(isLocal, "⏳ [" + no + "/" + totalParts + "] " + name
+                    + (expected[i] > 0 ? " (" + fmtMB(expected[i]) + ")" : ""));
+            final File outFile = outFiles[i];
+            final StringBuilder jniErr = new StringBuilder();
+            final java.util.concurrent.atomic.AtomicBoolean jniDone =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+            Thread jr = new Thread(() -> {
+                try {
+                    px.extractPartition(jniInput, outputDir, name, 8, false, token);
+                    jniDone.set(true);
+                } catch (Throwable e) {
+                    String m = e.getMessage();
+                    synchronized (jniErr) { jniErr.append(m == null || m.isEmpty() ? e.toString() : m); }
+                }
+            }, "pd-jni-all-" + name);
+            jr.setDaemon(true);
+            jr.start();
+            long lastB = 0, lastMs = System.currentTimeMillis();
+            while (jr.isAlive()) {
+                try { Thread.sleep(600); } catch (InterruptedException e) { break; }
+                if (extractAllCancel) {   // 取消即时退出 + 清半成品
+                    com.topjohnwu.superuser.Shell.cmd(
+                            "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
+                    break;
+                }
+                long bytes = outFile.length();
+                long now = System.currentTimeMillis();
+                float spd = (bytes - lastB) / 1048576f / Math.max(0.001f, (now - lastMs) / 1000f);
+                int pct = expected[i] > 0 ? (int) Math.min(100, bytes * 100 / expected[i]) : 0;
+                final int p2 = pct; final float sp = spd;
+                final PartitionItemView iv = views[i];
+                mainHandler.post(() -> { if (iv != null) iv.setProgress(p2, sp, 1); });
+                if (bytes > lastB) lastB = bytes;
+                lastMs = now;
+            }
+            if (extractAllCancel) {
+                log(isLocal, "■ 已取消（" + name + "）");
+                break;
+            }
+            try { jr.join(2000); } catch (InterruptedException ignored) { }
+            long sz = outFile.isFile() ? outFile.length() : 0;
+            if (jniDone.get() && sz > 0) {
+                ok++;
+                final long size = sz;
+                log(isLocal, "✓ " + name + ".img (" + fmtMB(size) + ") 提取完成");
+                final PartitionItemView iv = views[i];
+                mainHandler.post(() -> { if (iv != null) iv.setProgress(100, 0, 1); });
+            } else {
+                failedIdx.add(i);
+            }
+            final int done = i + 1;
+            mainHandler.post(() -> status.setText("JNI 提取中 · " + done + "/" + totalParts));
+        }
+        if (extractAllCancel) {
+            finishExtractAll(ok, totalParts, isLocal, outputDir, startMs);
+            return ok;
+        }
+        // JNI 全军覆没 → 交回调用方走 CLI 批量
+        if (ok == 0 && failedIdx.size() == totalParts) return -1;
+        // 失败分区 → CLI 单分区重试（forceCli，拿精确错误）
+        for (int fi = 0; fi < failedIdx.size(); fi++) {
+            if (extractAllCancel) break;
+            int i = failedIdx.get(fi);
+            log(isLocal, "⏳ 重试 [" + (i + 1) + "/" + totalParts + "] " + names[i]
+                    + (expected[i] > 0 ? " (" + fmtMB(expected[i]) + ")" : ""));
+            if (extractOnePartition(rawInput, outputDir, names[i], expected[i], views[i], isLocal,
+                    () -> extractAllCancel, true)) {
+                ok++;
+            } else if (extractAllCancel) {
+                break;
+            }
+        }
+        finishExtractAll(ok, totalParts, isLocal, outputDir, startMs);
+        return ok;
+    }
+
+    /** v3.42.15 的 CLI 批量兜底（逗号拼接一次调用，分区级 8 线程并行） */
+    private void runExtractAllCliBatch(String input, boolean isLocal, String outputDir,
+                                       int totalParts, String[] names, long[] expected,
+                                       PartitionItemView[] views, File[] outFiles, long startMs) {
+        log(isLocal, "⏳ " + totalParts + " 个分区并行提取（CLI · 8 线程）...");
         mainHandler.post(() -> status.setText("并行提取中 · 0/" + totalParts));
-        // 批量 CLI（后台线程），同时轮询全部输出文件字节驱动各行进度条与总进度
         final java.util.concurrent.atomic.AtomicBoolean cliDone =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
         final boolean isUrl = input.startsWith("http://") || input.startsWith("https://");
+        StringBuilder joined = new StringBuilder();
+        for (int i = 0; i < totalParts; i++) {
+            if (joined.length() > 0) joined.append(",");
+            joined.append(names[i]);
+        }
         Thread runner = new Thread(() -> {
             DnaTools.Result r = DnaTools.payloadExtractCli(PayloadDumperActivity.this,
                     input, outputDir, joined.toString(),
@@ -1601,42 +1714,106 @@ public final class PayloadDumperActivity extends BaseActivity {
             log(isLocal, "⏳ 重试 [" + (i + 1) + "/" + totalParts + "] " + name
                     + (expected[i] > 0 ? " (" + fmtMB(expected[i]) + ")" : ""));
             if (extractOnePartition(input, outputDir, name, expected[i], views[i], isLocal,
-                    () -> extractAllCancel)) {
+                    () -> extractAllCancel, false)) {
                 ok++;
             } else if (extractAllCancel) {
                 break;
             }
         }
+        finishExtractAll(ok, totalParts, isLocal, outputDir, startMs);
+    }
+
+    /** 全选结尾统计（JNI / CLI 批量共用） */
+    private void finishExtractAll(int ok, int totalParts, boolean isLocal, String outputDir, long startMs) {
         final int okF = ok;
         final long secs = (System.currentTimeMillis() - startMs) / 1000;
         if (!extractAllCancel) {
-            log(isLocal, (okF == parts.size() ? "✓ 全选提取完成: " : "⚠ 全选提取部分失败: ")
-                    + okF + "/" + parts.size() + " · 耗时 " + secs + "s");
+            log(isLocal, (okF == totalParts ? "✓ 全选提取完成: " : "⚠ 全选提取部分失败: ")
+                    + okF + "/" + totalParts + " · 耗时 " + secs + "s");
             log(isLocal, "文件位于: " + outputDir);
             mainHandler.post(() -> {
-                status.setText(okF == parts.size() ? "全选提取完成 · " + okF : "部分完成 · " + okF + "/" + parts.size());
-                toast(okF == parts.size() ? "全选提取完成" : "完成 " + okF + "/" + parts.size());
+                status.setText(okF == totalParts ? "全选提取完成 · " + okF : "部分完成 · " + okF + "/" + totalParts);
+                toast(okF == totalParts ? "全选提取完成" : "完成 " + okF + "/" + totalParts);
             });
         }
     }
 
     /**
-     * v3.40.19：单分区提取统一入口（单分区按钮 / 全选/在线 URL 共用）——
-     * root CLI libpayload_extract.so（pie 可执行）：root 直读输入（bin/zip/URL 均可，
-     * URL 模式内部 Range 流式只拉所需数据段）、root 直写输出目录，
-     * 全程无 FUSE/sdcardfs 权限障碍、零复制（此前 JNI 跑 app 进程才有放行/复制缓存弯路）。
+     * v3.42.18：单分区提取统一入口（单分区按钮 / 全选失败重试 共用）——
+     * JNI 优先（libpayload_extract_jni.so 单分区内部块级 8 线程，对齐 DnaBin v3.42.17
+     * 实测 OPPO 67 分区 76s），失败/URL 输入回退 root CLI（libpayload_extract.so，
+     * URL 模式内部 Range 流式多连接只拉所需数据段）。
      * stat 轮询落盘字节驱动分区行进度条与速度，本地 5 分钟 / 在线 20 分钟无进展熔断。
+     * 取消：等待循环即时退出 + root rm 半成品（JNI 无中断接口，后台 native 跑完
+     * 写已 unlink 的 fd 自动释放，不占可见空间、不阻塞后续任务）。
+     * @param forceCli true=跳过 JNI 直接 CLI（JNI 已失败过的分区重试）
      * @return true=成功；false=失败或已取消（日志与分区行状态已在内部更新）
      */
     private boolean extractOnePartition(String input, String outputDir, String name,
                                         long expected, PartitionItemView itemView, boolean isLocal,
-                                        java.util.function.BooleanSupplier cancelled) {
+                                        java.util.function.BooleanSupplier cancelled,
+                                        boolean forceCli) {
         final File outFile = new File(outputDir, name + ".img");
         // 清残留（防旧文件让进度虚高 / 误判完成）；root rm：旧版本 root 链路写的
         // root 属主残留文件 app 经 FUSE 可能删不掉
         com.topjohnwu.superuser.Shell.cmd(
                 "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
         final boolean isUrl = input.startsWith("http://") || input.startsWith("https://");
+        // ---- JNI 主路径（本地输入且非强制 CLI）----
+        if (!isUrl && !forceCli) {
+            String jniInput = DnaTools.ensureJniReadable(PayloadDumperActivity.this, input,
+                    msg -> { log(isLocal, msg); return kotlin.Unit.INSTANCE; });
+            if (jniInput != null) {
+                final StringBuilder jniErr = new StringBuilder();
+                final java.util.concurrent.atomic.AtomicBoolean jniDone =
+                        new java.util.concurrent.atomic.AtomicBoolean(false);
+                final long token = tokenGenerator.getAndIncrement();
+                Thread jr = new Thread(() -> {
+                    try {
+                        new PayloadExtractor().extractPartition(jniInput, outputDir, name, 8, false, token);
+                        jniDone.set(true);
+                    } catch (Throwable e) {
+                        String m = e.getMessage();
+                        synchronized (jniErr) { jniErr.append(m == null || m.isEmpty() ? e.toString() : m); }
+                    }
+                }, "pd-jni-" + name);
+                jr.setDaemon(true);
+                jr.start();
+                long lastB = 0, lastMs = System.currentTimeMillis();
+                while (jr.isAlive()) {
+                    try { Thread.sleep(600); } catch (InterruptedException e) { break; }
+                    if (cancelled.getAsBoolean()) {   // 取消即时退出 + 清半成品
+                        com.topjohnwu.superuser.Shell.cmd(
+                                "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
+                        break;
+                    }
+                    long bytes = outFile.length();
+                    long now = System.currentTimeMillis();
+                    float spd = (bytes - lastB) / 1048576f / Math.max(0.001f, (now - lastMs) / 1000f);
+                    int pct = expected > 0 ? (int) Math.min(100, bytes * 100 / expected) : 0;
+                    final int p2 = pct; final float sp = spd;
+                    mainHandler.post(() -> { if (itemView != null) itemView.setProgress(p2, sp, 1); });
+                    if (bytes > lastB) lastB = bytes;
+                    lastMs = now;
+                }
+                if (cancelled.getAsBoolean()) {
+                    log(isLocal, "■ " + name + " 已取消");
+                    mainHandler.post(() -> { if (itemView != null) itemView.setError("已取消"); });
+                    return false;
+                }
+                try { jr.join(2000); } catch (InterruptedException ignored) { }
+                if (jniDone.get() && outFile.isFile() && outFile.length() > 0) {
+                    log(isLocal, "✓ " + name + ".img (" + fmtMB(outFile.length()) + ") 提取完成");
+                    mainHandler.post(() -> { if (itemView != null) itemView.setComplete(); });
+                    return true;
+                }
+                String je; synchronized (jniErr) { je = jniErr.toString().trim(); }
+                log(isLocal, "… JNI " + name + " 失败" + (je.isEmpty() ? "" : ": " + je)
+                        + "，回退 CLI 重试");
+                // 落到下方 CLI 兜底
+            }
+        }
+        // ---- CLI 兜底 / URL 直读 ----
         final long stuckLimit = isUrl ? 20 * 60_000L : 300_000L;   // 在线先下载后落盘，放宽熔断
         final StringBuilder errOut = new StringBuilder();
         final java.util.concurrent.atomic.AtomicBoolean nativeDone =
@@ -1660,6 +1837,11 @@ public final class PayloadDumperActivity extends BaseActivity {
         long lastBytes = 0, lastPollMs = System.currentTimeMillis(), stuckMs = System.currentTimeMillis();
         while (runner.isAlive()) {
             try { Thread.sleep(600); } catch (InterruptedException e) { break; }
+            if (cancelled.getAsBoolean()) {   // v3.42.18：取消即时退出 + 清半成品
+                com.topjohnwu.superuser.Shell.cmd(
+                        "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
+                break;
+            }
             long bytes = outFile.length();
             long now = System.currentTimeMillis();
             float speedMBs = (bytes - lastBytes) / 1048576f / Math.max(0.001f, (now - lastPollMs) / 1000f);
