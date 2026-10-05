@@ -1089,6 +1089,23 @@ object DnaTools {
     }
 
     /**
+     * v3.42.16：FUSE 视图路径 → 底层真实路径。root CLI 读写 /storage/emulated/0 或
+     * /sdcard（FUSE 视图）时每次读写都要经 sdcard FUSE daemon 转发 —— 13G 输入 +
+     * 13G 输出全走 FUSE 是 OPPO 大包 208s 的主瓶颈（vivo 快是 JNI app 直写真实 fs）。
+     * root 进程直读直写 /data/media/0（FUSE 的 lower fs 本体）绕过 daemon 转发，
+     * 读写吞吐大幅提升且省掉 FUSE 转发的 CPU 开销；FUSE 视图即时反映 lower 变化，
+     * 文件管理器照常可见。其余路径（/data、URL 等）原样返回。
+     */
+    @JvmStatic
+    fun realPath(p: String): String {
+        var s = p
+        if (s == "/storage/emulated/0" || s == "/sdcard") return "/data/media/0"
+        if (s.startsWith("/storage/emulated/0/")) s = "/data/media/0/" + s.substring(20)
+        else if (s.startsWith("/sdcard/")) s = "/data/media/0/" + s.substring(8)
+        return s
+    }
+
+    /**
      * v3.40.21：root CLI 提取 —— libpayload_extract.so 是 pie 可执行文件（非 JNI 库，
      * 0 个 Java 符号；JNI 桥接是 libpayload_extract_jni.so 的 Java_native_PayloadExtractNative_*）。
      * 经 root shell 直接运行：root 直读 payload.bin / OTA zip（含 URL，内部 Range 流式）、
@@ -1119,14 +1136,31 @@ object DnaTools {
             onLog?.invoke("… CLI 旗标: ${flags["images"]} / ${flags["out"]} / " +
                     "${flags["threads"]} / ${flags["noVerify"]} …")
         }
-        val cmd = "mkdir -p " + quote(outputDir) + " && " + quote(lib) + " " + quote(input) +
+        // v3.42.15：4 → 8 线程。--threads 是「分区级并行」（CLI 帮助原文：
+        // Number of threads for parallel extraction，默认 2×CPU 核、上限 32），
+        // 逐分区调用时毫无作用；批量逗号拼接后真正生效，多分区并行解压
+        val tail = " " + flags.getValue("threads") + " 8 " + flags.getValue("noVerify")
+        // v3.42.16：输入输出都换底层真实路径（绕过 sdcard FUSE daemon 转发，读写双提速）
+        val inReal = realPath(input)
+        val outReal = realPath(outputDir)
+        val cmd = "mkdir -p " + quote(outReal) + " && " + quote(lib) + " " + quote(inReal) +
                 " " + flags.getValue("images") + " " + quote(partitions) +
-                " " + flags.getValue("out") + " " + quote(outputDir) +
-                // v3.42.15：4 → 8 线程。--threads 是「分区级并行」（CLI 帮助原文：
-                // Number of threads for parallel extraction，默认 2×CPU 核、上限 32），
-                // 逐分区调用时毫无作用；批量逗号拼接后真正生效，多分区并行解压
-                " " + flags.getValue("threads") + " 8 " + flags.getValue("noVerify")
-        return run(ctx, cmd, onLog, isCancelled, timeoutMs)
+                " " + flags.getValue("out") + " " + quote(outReal) + tail
+        var r = run(ctx, cmd, onLog, isCancelled, timeoutMs)
+        // 真实路径一个目标文件都没产出（极端场景如 /data/media 不可访问）→ 回退
+        // FUSE 视图路径重跑；有任一产物说明真实路径工作正常，个别失败交给调用方单分区重试
+        if (!r.success && (inReal != input || outReal != outputDir) && !isCancelled()) {
+            val names = partitions.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val anyOutput = names.any { File(outputDir, "$it.img").let { f -> f.isFile && f.length() > 0 } }
+            if (!anyOutput) {
+                onLog?.invoke("… 真实路径无产物，回退 FUSE 路径重试 ...")
+                val cmdFallback = "mkdir -p " + quote(outputDir) + " && " + quote(lib) +
+                        " " + quote(input) + " " + flags.getValue("images") + " " + quote(partitions) +
+                        " " + flags.getValue("out") + " " + quote(outputDir) + tail
+                r = run(ctx, cmdFallback, onLog, isCancelled, timeoutMs)
+            }
+        }
+        return r
     }
 
     // CLI 旗标探测缓存（进程级）：null = 未探测
