@@ -70,9 +70,7 @@ public final class UpdateCenter {
             "https://ghproxy.net/",
             "",
     };
-    /** v3.40.11 慢速看门狗：任一下载源持续低于此速度达 SLOW_WINDOW_MS 且后面还有源可换 → 弃源切换 */
-    private static final long SLOW_SPEED = 128 * 1024;   // 128 KB/s
-    private static final long SLOW_WINDOW_MS = 6000;     // 持续 6 秒
+    // v3.42.12：慢速看门狗已随单线程下载移除 —— Aria2c 多线程自带 45 秒无进展切线路机制
 
     private static final String REPO_PAGE =
             "https://github.com/955xiaolan520/Dsu-Manager/releases";
@@ -402,82 +400,68 @@ public final class UpdateCenter {
         new Thread(() -> {
             Exception last = null;
             boolean done = false;
-            // v3.40.11：镜像优先逐个回退 + 慢速看门狗。
-            // 旧逻辑只有「连接失败」才切源——现在直连 GitHub 能连上但被限速到 KB/s 级，
-            // 永远不失败 → 永远不切换 → 14 KB/s 龟速爬完；看门狗补上「连得上但太慢」的切换触发。
+            // v3.42.12：下载核心改为 Aria2c 16 连接多线程（与 DNA 工具包下载完全同源）。
+            // 旧单线程 HttpURLConnection 在国内线路极易掉到 KB/s 级 → 频繁触发慢速看门狗
+            // 反复切源（截图「源过慢，自动切换下一个...」即此问题）；多线程把单连接限速
+            // 摊到 16 条连接上，实测可跑满带宽，且 45 秒无进展才切线路，不再反复横跳。
             for (int pi = 0; pi < DL_PREFIXES.length; pi++) {
                 if (cancelled.get() || done) break;
-                final boolean lastSource = pi == DL_PREFIXES.length - 1;
-                HttpURLConnection connection = null;
-                try {
-                    connection = (HttpURLConnection) new URL(DL_PREFIXES[pi] + info.apkUrl).openConnection();
-                    connection.setConnectTimeout(10000);
-                    connection.setReadTimeout(30000);
-                    connection.setInstanceFollowRedirects(true);
-                    connection.setRequestProperty("User-Agent", "Dsu-Manager-Android/" + BuildConfig.VERSION_NAME);
-                    int code = connection.getResponseCode();
-                    if (code < 200 || code >= 300) throw new java.io.IOException("HTTP " + code);
-                    long contentLength = connection.getContentLengthLong();
-                    boolean slowSource = false;
-                    try (InputStream input = connection.getInputStream();
-                         FileOutputStream output = new FileOutputStream(apk)) {
-                        byte[] buffer = new byte[16384];
-                        int read;
-                        long total = 0, windowBytes = 0, windowStart = System.currentTimeMillis(), lastUi = 0;
-                        long slowSince = System.currentTimeMillis();
-                        while ((read = input.read(buffer)) != -1) {
-                            if (cancelled.get()) throw new java.io.IOException("cancelled");
-                            output.write(buffer, 0, read);
-                            total += read;
-                            windowBytes += read;
-                            long now = System.currentTimeMillis();
-                            if (now - lastUi >= 300) {   // UI 节流 300ms
-                                lastUi = now;
-                                long speed = windowBytes * 1000 / Math.max(1, now - windowStart);
-                                windowBytes = 0;
-                                windowStart = now;
-                                // 慢速看门狗：速度达标就重置计时；持续过慢且后面还有源 → 弃源切换
-                                if (speed >= SLOW_SPEED) slowSince = now;
-                                else if (!lastSource && now - slowSince >= SLOW_WINDOW_MS) {
-                                    slowSource = true;
-                                    break;
+                final int piFinal = pi;
+                if (!DL_PREFIXES[pi].isEmpty()) {
+                    ui.post(() -> speedView.setText(english
+                            ? "via " + DL_PREFIXES[piFinal].replace("https://", "").replace("/", "")
+                            : "线路 " + DL_PREFIXES[piFinal].replace("https://", "").replace("/", "")));
+                }
+                Aria2c.Result r = Aria2c.INSTANCE.download(
+                        activity,
+                        DL_PREFIXES[pi] + info.apkUrl,
+                        apk,
+                        p -> {
+                            // 进度（含字节换算：API 已知 APK 大小）
+                            final int pct = p;
+                            ui.post(() -> {
+                                progress.setProgress(pct);
+                                percent.setText(pct + "%");
+                                if (info.apkSize > 0) {
+                                    long got = info.apkSize * pct / 100;
+                                    bytes.setText((english ? "Downloaded " : "已下载 ") + formatBytes(got)
+                                            + " / " + formatBytes(info.apkSize));
                                 }
-                                final long t = total, cl = contentLength, sp = speed;
-                                ui.post(() -> {
-                                    int p = cl > 0 ? (int) Math.min(100, t * 100 / cl) : 0;
-                                    progress.setProgress(p);
-                                    percent.setText(p + "%");
-                                    speedView.setText(formatBytes(sp) + "/s");
-                                    bytes.setText(cl > 0
-                                            ? (english ? "Downloaded " : "已下载 ") + formatBytes(t)
-                                            + " / " + formatBytes(cl)
-                                            : (english ? "Downloaded " : "已下载 ") + formatBytes(t)
-                                            + (english ? " · total size unknown" : " · 总大小获取中"));
-                                });
+                            });
+                            return kotlin.Unit.INSTANCE;
+                        },
+                        false,
+                        () -> cancelled.get(),
+                        line -> {
+                            // aria2c summary 行（含 "CN:"）：解析 DL: 实时速度显示
+                            java.util.regex.Matcher m = java.util.regex.Pattern
+                                    .compile("DL:([0-9.]+)(B|KiB|MiB|GiB)")
+                                    .matcher(line);
+                            if (m.find()) {
+                                double v = Double.parseDouble(m.group(1));
+                                long mult = m.group(2).equals("GiB") ? 1073741824L
+                                        : m.group(2).equals("MiB") ? 1048576L
+                                        : m.group(2).equals("KiB") ? 1024L : 1L;
+                                final long sp = (long) (v * mult);
+                                ui.post(() -> speedView.setText(formatBytes(sp) + "/s"));
                             }
-                        }
-                    }
-                    if (slowSource) {
-                        //noinspection ResultOfMethodCallIgnored
-                        apk.delete();
-                        ui.post(() -> speedView.setText(english
-                                ? "slow source, switching..." : "源过慢，自动切换下一个..."));
-                        throw new java.io.IOException("slow source, switching");
-                    }
-                    // ZIP 头校验：镜像异常时可能返回 HTML 错误页
-                    if (!isZipFile(apk)) {
-                        //noinspection ResultOfMethodCallIgnored
-                        apk.delete();
-                        throw new java.io.IOException(english
-                                ? "mirror returned invalid file" : "镜像返回了无效内容");
-                    }
+                            return kotlin.Unit.INSTANCE;
+                        },
+                        info.apkSize > 0 ? info.apkSize : 0L,
+                        null,
+                        "Dsu-Manager-Android/" + BuildConfig.VERSION_NAME);
+                if (r.getSuccess() && apk.isFile() && isZipFile(apk)) {
                     done = true;
-                } catch (Exception error) {
-                    last = error;
-                    //noinspection ResultOfMethodCallIgnored
-                    apk.delete();
-                } finally {
-                    if (connection != null) connection.disconnect();
+                    break;
+                }
+                if (cancelled.get() || "已取消".equals(r.getMessage())) break;
+                last = new java.io.IOException(r.getMessage() == null || r.getMessage().isEmpty()
+                        ? "download failed" : r.getMessage());
+                //noinspection ResultOfMethodCallIgnored
+                apk.delete();
+                if (!done && pi < DL_PREFIXES.length - 1) {
+                    ui.post(() -> speedView.setText(english
+                            ? "switching source..." : "切换下一个线路..."));
                 }
             }
             final boolean ok = done;
