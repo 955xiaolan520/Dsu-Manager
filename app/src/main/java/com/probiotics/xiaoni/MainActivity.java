@@ -10,6 +10,8 @@ import android.provider.OpenableColumns;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.ClipDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Path;
@@ -92,6 +94,8 @@ public class MainActivity extends BaseActivity {
     // v3.28.2：DNA 主页工具链状态 / 当前工程视图
     private TextView dnaStatusView;
     private TextView dnaProjectView;
+    // v3.41.11：工具链云端下载防重入（下载中禁点）
+    private final java.util.concurrent.atomic.AtomicBoolean dnaDownloading = new java.util.concurrent.atomic.AtomicBoolean(false);
     private LinearLayout imageManagementPanel;
     private FrameLayout contentRoot;   // 根布局（引导页淡入转场用）
     // OTG 页面相关
@@ -151,6 +155,8 @@ public class MainActivity extends BaseActivity {
         // 初始化 ADB Manager
         adbManager = new AdbManager(this);
         new Thread(() -> adbManager.extractBinaries()).start();
+        // v3.41.13：后台清理上次进程遗留的 JNI 提取整包副本 / OTA 解包目录（可达十几 G）
+        DnaTools.INSTANCE.cleanStaleCaches(this);
         buildUi();
         // 从引导页淡入进入：只淡入内容层（页面 + 底部导航），渐变背景常驻 → 任何 ROM 都不闪黑屏
         if (getIntent().getBooleanExtra("crossfade_entry", false)) {
@@ -177,14 +183,34 @@ public class MainActivity extends BaseActivity {
             languageMode = selectedLanguage;
             english = languageMode == 2 || (languageMode == 0 && Locale.getDefault().getLanguage().equals("en"));
             buildUi();
-            if (rootAuthorized) refreshStatus();
         }
+        // v3.41.22：GSI 状态无条件自动刷新（root 已授权时）—— 此前仅在语言变化分支里刷新，
+        // 从设置页/其他页返回（语言未变）或 buildUi 静默重建后状态卡停在「正在读取」，
+        // 看起来像检测失败，用户得手动点一次「检测 GSI 状态」才恢复
+        if (rootAuthorized) refreshStatus();
+        // v3.41.22：大缓存自动清理 —— root 属主副本可能高达十几 G，启动/返回路过即后台清
+        autoDeepCleanIfNeeded();
         // 应用窗口透明设置
         boolean isTransparent = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("window_transparent_bg", false);
         applyWindowTransparency(isTransparent);
         bindRootService();
         if (!rootAuthorized) refreshRootStatus();
         if (currentTab == 4) refreshMorePage();
+    }
+
+    /** v3.41.22：可清理缓存超过 100M 时后台自动深度清理（全扫描白名单 + su 兜底），完成后提示 */
+    private void autoDeepCleanIfNeeded() {
+        new Thread(() -> {
+            try {
+                long cleanable = DnaTools.INSTANCE.cleanableBytes(this);
+                if (cleanable <= 100L * 1024 * 1024) return;
+                long freed = DnaTools.INSTANCE.deepCleanAll(this);
+                if (freed > 0) {
+                    runOnUiThread(() -> toast("♻ " + t("已自动清理缓存副本", "Auto-cleaned cache copies")
+                            + " " + String.format(Locale.US, "%.2fG", freed / 1073741824f)));
+                }
+            } catch (Throwable ignored) { }
+        }, "auto-deep-clean").start();
     }
 
     @Override protected void onPause() {
@@ -572,6 +598,16 @@ public class MainActivity extends BaseActivity {
           root.post(() -> applySystemInsets(root, root.getRootWindowInsets()));
          contentRoot = root;   // 供引导页淡入转场使用
          setContentView(root);
+         // v3.41.20：buildUi 重建后恢复状态卡 —— 此前语言切换触发重建时 rootStatus 永远
+         // 停在「ROOT 检测中」、gsiStatus 停在「正在读取动态系统状态...」，看起来像 GSI 检测失败。
+         // rootStatus 先按已知状态落文案，GSI 状态立即发起一次真实刷新。
+         if (rootStatus != null) {
+             rootStatus.setText(rootAuthorized ? t("ROOT 已授权", "ROOT granted") : t("ROOT 检测中", "Checking ROOT"));
+             rootStatus.setBackgroundResource(rootAuthorized ? R.drawable.root_status_bg : R.drawable.button_blue);
+         }
+         updateActionButtons();
+         if (rootAuthorized) refreshStatus();
+         else if (!rootCheckInProgress) refreshRootStatus();
      }
 
      /** 液态玻璃功能卡片（图三）：对角三段渐变 + 白色高光描边 + 大圆角 + 白色涟漪 + 悬浮阴影；点击全局振动反馈 */
@@ -1171,6 +1207,30 @@ public class MainActivity extends BaseActivity {
           dnaStatusView.setTypeface(null, 1);
           statusText.addView(dnaStatusView, new LinearLayout.LayoutParams(-1, -2));
           statusCard.addView(statusText, new LinearLayout.LayoutParams(0, -2, 1f));
+          // v3.41.11：下载工具按钮（17 个 CLI 工具改为 GitHub Release 云端下载，APK 减重约 27M）
+          Button downloadBtn = new Button(this, null, 0);
+          downloadBtn.setText(t("下载工具", "Download"));
+          downloadBtn.setAllCaps(false);
+          downloadBtn.setTextSize(13);
+          downloadBtn.setTypeface(null, 1);
+          downloadBtn.setTextColor(0xff172b4d);
+          downloadBtn.setGravity(Gravity.CENTER);
+          downloadBtn.setPadding(0, 0, 0, 0);
+          GradientDrawable downloadBg = new GradientDrawable();
+          downloadBg.setColor(0x664CAF50);
+          downloadBg.setCornerRadius(dp(16));
+          downloadBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          downloadBtn.setBackground(downloadBg);
+          downloadBtn.setStateListAnimator(null);
+          downloadBtn.setMinWidth(0);
+          downloadBtn.setMinHeight(0);
+          downloadBtn.setOnClickListener(v -> {
+              Haptics.perform(v);
+              downloadDnaTools();
+          });
+          statusCard.addView(downloadBtn, new LinearLayout.LayoutParams(dp(88), dp(40)));
+          LinearLayout.LayoutParams checkLp = new LinearLayout.LayoutParams(dp(76), dp(40));
+          checkLp.leftMargin = dp(8);
           Button checkBtn = new Button(this, null, 0);
           checkBtn.setText(t("检测", "Check"));
           checkBtn.setAllCaps(false);
@@ -1190,9 +1250,9 @@ public class MainActivity extends BaseActivity {
           checkBtn.setMinHeight(0);
           checkBtn.setOnClickListener(v -> {
               Haptics.perform(v);
-              refreshDnaToolchain();
+              showDnaToolchainReport();
           });
-          statusCard.addView(checkBtn, new LinearLayout.LayoutParams(dp(76), dp(40)));
+          statusCard.addView(checkBtn, checkLp);
           LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
           statusLp.topMargin = dp(4);
           statusLp.bottomMargin = dp(10);
@@ -1314,13 +1374,13 @@ public class MainActivity extends BaseActivity {
           dnaMenuItem(page, "⚡", t("分解增量包", "Incremental unpack"), t("delta 增量 OTA + 旧镜像目录 → 新 img", "delta OTA + old images → new img"), "dna_incremental", null, 0);
           dnaMenuItem(page, "🧩", t("分解 br", "Extract br"), t("解包 BR 文件", "Unpack brotli"), DnaActivity.MODE_EXTRACT, "br", 0);
           dnaMenuItem(page, "🧾", t("分解 dat", "Extract dat"), t("解包 DAT 文件", "Unpack dat"), DnaActivity.MODE_EXTRACT, "dat", 0);
-          dnaMenuItem(page, "🧱", t("分解 img", "Extract img"), t("解包 IMG 文件（自动识别 erofs / ext4 / f2fs）", "Unpack image (erofs / ext4 / f2fs)"), DnaActivity.MODE_EXTRACT, "img", 0);
+          dnaMenuItem(page, "🧊", t("分解 img", "Extract img"), t("解包 IMG 文件（自动识别 erofs / ext4 / f2fs）", "Unpack image (erofs / ext4 / f2fs)"), DnaActivity.MODE_EXTRACT, "img", 0);
           dnaMenuItem(page, "🗂", t("分解 super", "Extract super"), t("解包 super.img 并提取指定分区", "super.img → partitions"), DnaActivity.MODE_SUPER_UNPACK, null, 1);
 
           // ===== 合成与打包 =====
           dnaSectionTitle(page, t("合成与打包", "Repack & Build"), 0xFF11998E);
           dnaMenuItem(page, "📦", t("合成 img-dat-br", "Build img-dat-br"), t("将工程目录重新打包成镜像", "Project dirs → image"), DnaActivity.MODE_REPACK, null, 2);
-          dnaMenuItem(page, "🧱", t("合成 super.img", "Build super.img"), t("把 IMG 打包成 super.img（A / AB / VAB）", "IMGs → super.img"), DnaActivity.MODE_SUPER_PACK, null, 3);
+          dnaMenuItem(page, "🗜", t("合成 super.img", "Build super.img"), t("把 IMG 打包成 super.img（A / AB / VAB）", "IMGs → super.img"), DnaActivity.MODE_SUPER_PACK, null, 3);
 
           // ===== 格式转换 =====
           dnaSectionTitle(page, t("格式转换", "Convert"), 0xFFE07B39);
@@ -1525,24 +1585,355 @@ public class MainActivity extends BaseActivity {
           }
       }
 
-      /** 异步检测 DNA 工具链（root + 17 个二进制自检） */
+      /** 异步检测 DNA 工具链（root + 17 个二进制自检；v3.41.11 区分「未下载」与「无 ROOT」）
+       *  v3.41.17：线程安全 —— 初始「检测中」提示经 runOnUiThread 上屏（修复从 dna-deep-check
+       *  等子线程调用时 CalledFromWrongThreadException 崩溃） */
       private void refreshDnaToolchain() {
           if (dnaStatusView == null) return;
-          dnaStatusView.setText(t("检测中 …", "Checking..."));
-          dnaStatusView.setTextColor(0xff5a6b82);
+          runOnUiThread(() -> {
+              if (dnaStatusView == null || isFinishing() || isDestroyed()) return;
+              dnaStatusView.setText(t("检测中 …", "Checking..."));
+              dnaStatusView.setTextColor(0xff5a6b82);
+          });
           new Thread(() -> {
               boolean ok = DnaTools.ensure(this) != null;
+              boolean rootAvail = ok;
+              if (!rootAvail) {
+                  try { rootAvail = RootShell.INSTANCE.available(); } catch (Exception e) { rootAvail = false; }
+              }
+              final boolean rootOk = rootAvail;
+              final boolean installed = DnaTools.toolsInstalled(this);
               runOnUiThread(() -> {
                   if (dnaStatusView == null) return;
                   if (ok) {
                       dnaStatusView.setText(t("✓ 就绪（ROOT 可用）", "✓ Ready (ROOT OK)"));
                       dnaStatusView.setTextColor(0xff1d7a4f);
+                  } else if (rootOk && !installed) {
+                      dnaStatusView.setText(t("工具未下载（点右侧「下载工具」）", "Tools not downloaded"));
+                      dnaStatusView.setTextColor(0xffb07a1d);
                   } else {
                       dnaStatusView.setText(t("未就绪（需要 ROOT 授权）", "Not ready (ROOT required)"));
                       dnaStatusView.setTextColor(0xffa33b3b);
                   }
               });
           }, "dna-toolchain-check").start();
+      }
+
+      /**
+       * v3.41.16：工具链深度检测报告（「检测」按钮）——
+       * ROOT 授权 / 工具包完整性（17 个逐一校验）/ 关键工具真实执行（dna·busybox·magiskboot）。
+       * 文件存在 ≠ 可用：架构不符或下载截断的 ELF 只有真实执行才能暴露，这是 DNA 功能可用的关键判定。
+       * 逐项检测、每完成一项立即上屏。
+       */
+      private void showDnaToolchainReport() {
+          Dialog dialog = new Dialog(this);
+          dialog.setCancelable(true);
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(20), dp(18), dp(20), dp(16));
+          GradientDrawable bg = new GradientDrawable();
+          bg.setColor(0xF2e9f0f7);
+          bg.setCornerRadius(dp(24));
+          bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          panel.setBackground(bg);
+          TextView title = text("🔍 " + t("工具链检测", "Toolchain Check"), 16, 0xff17334f);
+          title.setTypeface(null, 1);
+          title.setPadding(0, 0, 0, dp(10));
+          panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          LinearLayout rows = new LinearLayout(this);
+          rows.setOrientation(LinearLayout.VERTICAL);
+          // v3.41.18：内容区包进 ScrollView（weight=1 占满剩余空间）——
+          // ROOT/完整性/影响说明/功能自检逐项上屏后总高常超一屏，固定高度会把
+          // 结论与「关闭」按钮挤出屏幕（文字看得见尾巴却无法查看）；超出部分上下滑动
+          android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+          scroll.setFillViewport(true);
+          scroll.setVerticalScrollBarEnabled(true);
+          scroll.addView(rows, new LinearLayout.LayoutParams(-1, -2));
+          panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+          TextView verdict = text(t("正在检测 …", "Checking..."), 13, 0xff5a6b82);
+          verdict.setTypeface(null, 1);
+          verdict.setPadding(0, dp(12), 0, dp(4));
+          panel.addView(verdict, new LinearLayout.LayoutParams(-1, -2));
+          // v3.41.19：底部双大按钮（替换单调的文字「关闭」）——
+          // 左「关闭」（中性灰）+ 右上下文按钮：工具包不完整 →「下载工具」（绿），完整 →「重新检测」（青）
+          LinearLayout btnRow = new LinearLayout(this);
+          btnRow.setOrientation(LinearLayout.HORIZONTAL);
+          Button closeBtn = new Button(this, null, 0);
+          closeBtn.setText(t("关闭", "Close"));
+          closeBtn.setAllCaps(false);
+          closeBtn.setTextSize(14);
+          closeBtn.setTypeface(null, 1);
+          closeBtn.setTextColor(0xff172b4d);
+          closeBtn.setGravity(Gravity.CENTER);
+          closeBtn.setPadding(0, 0, 0, 0);
+          GradientDrawable closeBg = new GradientDrawable();
+          closeBg.setColor(0x669AA7B8);
+          closeBg.setCornerRadius(dp(18));
+          closeBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          closeBtn.setBackground(closeBg);
+          closeBtn.setStateListAnimator(null);
+          closeBtn.setMinWidth(0);
+          closeBtn.setMinHeight(0);
+          closeBtn.setOnClickListener(v -> dialog.dismiss());
+          LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+          closeLp.rightMargin = dp(5);
+          btnRow.addView(closeBtn, closeLp);
+          Button actionBtn = new Button(this, null, 0);
+          actionBtn.setText("↻ " + t("重新检测", "Re-check"));
+          actionBtn.setAllCaps(false);
+          actionBtn.setTextSize(14);
+          actionBtn.setTypeface(null, 1);
+          actionBtn.setTextColor(0xff172b4d);
+          actionBtn.setGravity(Gravity.CENTER);
+          actionBtn.setPadding(0, 0, 0, 0);
+          GradientDrawable actionBg = new GradientDrawable();
+          actionBg.setColor(0x6635A8C4);
+          actionBg.setCornerRadius(dp(18));
+          actionBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          actionBtn.setBackground(actionBg);
+          actionBtn.setStateListAnimator(null);
+          actionBtn.setMinWidth(0);
+          actionBtn.setMinHeight(0);
+          actionBtn.setOnClickListener(v -> {
+              dialog.dismiss();
+              showDnaToolchainReport();   // 重新跑一遍完整检测
+          });
+          LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+          actionLp.leftMargin = dp(5);
+          btnRow.addView(actionBtn, actionLp);
+          LinearLayout.LayoutParams btnRowLp = new LinearLayout.LayoutParams(-1, dp(46));
+          btnRowLp.topMargin = dp(6);
+          panel.addView(btnRow, btnRowLp);
+          dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, -2));
+          // v3.41.18：高度从固定 420dp 改为屏高 72% 自适应（长内容时更长的可视区，超出部分滚动）
+          android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+          showWide(dialog, Math.round(dm.heightPixels * 0.72f / dm.density));
+          new Thread(() -> {
+              // 1. ROOT 授权
+              boolean rootOk;
+              try { rootOk = RootShell.INSTANCE.available(); } catch (Exception e) { rootOk = false; }
+              addCheckRow(rows, t("ROOT 授权", "ROOT"), rootOk,
+                      rootOk ? "su 可用" : t("未授予 ROOT 权限", "no root grant"));
+              // 2. 工具包完整性（17 个逐一：存在 + 大小>0 + 可执行）
+              java.util.List<String> missing = DnaTools.INSTANCE.missingTools(this);
+              boolean complete = missing.isEmpty();
+              String compDetail = complete
+                      ? "17/17 · " + fmtSize(DnaTools.INSTANCE.toolsBytes(this)) + t(" · 全部可执行", " · all executable")
+                      : missing.size() >= 17
+                      ? t("工具包未下载（点「下载工具」）", "not downloaded")
+                      : t("缺失 ", "missing ") + missing.size() + ": " + android.text.TextUtils.join(", ", missing);
+              addCheckRow(rows, t("工具包完整性", "Tools integrity"), complete, compDetail);
+              // v3.41.17：工具包不完整时说明影响范围（哪些功能不能用、哪些不受影响）
+              // 影响面与代码实际依赖一致：所有 DNA CLI 功能经 DnaTools.run→ensure（需工具包）；
+              // bin 解析主链路为内置 Java/JNI 直读（可用），但提取走 payloadExtractCli→run（不可用）；
+              // ROM 分区提取主链路为内置 PayloadExtractor（可用），payload_dumper 仅是兜底。
+              if (!complete) {
+                  addImpactNote(rows, "⚠ " + t("影响说明：工具包未就位", "Impact: tools missing") + "\n"
+                          + t("不可用（依赖工具包）：", "Unavailable (needs tools):") + "\n"
+                          + "· " + t("分解 bin（能解析选区，无法提取镜像）", "bin unpack (parse OK, extract fails)") + "\n"
+                          + "· " + t("分解增量包 / br / dat / Dt", "incremental / br / dat / Dt unpack") + "\n"
+                          + "· " + t("分解 / 合成 SUPER、合成 img-dat-br", "SUPER unpack/repack, repack img-dat-br") + "\n"
+                          + "· " + t("img 格式转换、解压 ROM、插件", "convert / unzip ROM / plugins") + "\n"
+                          + t("不受影响（内置组件）：", "Unaffected (built-in):") + "\n"
+                          + "· " + t("ROM 分区提取 / OTG 助手", "ROM partition extract / OTG") + "\n"
+                          + "· " + t("DSU / GSI 安装、终端、下载更新", "DSU / GSI / terminal / update") + "\n"
+                          + t("→ 点状态卡「下载工具」补齐（约 15M）", "→ tap Download (~15M)"));
+                  // 右下按钮「重新检测」→「下载工具」（绿），直接在报告里一键补齐
+                  runOnUiThread(() -> {
+                      if (isFinishing() || isDestroyed()) return;
+                      actionBtn.setText("⬇ " + t("下载工具", "Download"));
+                      GradientDrawable dlBg = new GradientDrawable();
+                      dlBg.setColor(0x664CAF50);
+                      dlBg.setCornerRadius(dp(18));
+                      dlBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+                      actionBtn.setBackground(dlBg);
+                      actionBtn.setOnClickListener(v -> {
+                          dialog.dismiss();
+                          downloadDnaTools();
+                      });
+                  });
+              }
+              // 3. 关键工具真实执行（dna 走 ensure 全链路：伪装目录 + 中转同步 + gettype）
+              java.util.List<DnaTools.CheckItem> funcs = DnaTools.INSTANCE.functionalCheck(this);
+              boolean allOk = rootOk && complete;
+              for (DnaTools.CheckItem item : funcs) {
+                  addCheckRow(rows, item.getName(), item.getOk(), item.getDetail());
+                  allOk = allOk && item.getOk();
+              }
+              // 汇总结论 + 同步状态卡
+              final boolean finalOk = allOk;
+              runOnUiThread(() -> {
+                  if (isFinishing() || isDestroyed()) return;
+                  verdict.setText(finalOk
+                          ? "✓ " + t("DNA 功能可用（分解 / 提取 / 打包均正常）", "DNA ready")
+                          : "✗ " + t("DNA 功能不可用，请按上面失败项处理", "DNA NOT ready"));
+                  verdict.setTextColor(finalOk ? 0xff1d7a4f : 0xffa33b3b);
+              });
+              refreshDnaToolchain();
+          }, "dna-deep-check").start();
+      }
+
+      /** 检测报告单行（✓/✗ + 名称 + 右侧灰字详情），主线程上屏 */
+      private void addCheckRow(LinearLayout rows, String name, boolean ok, String detail) {
+          runOnUiThread(() -> {
+              if (isFinishing() || isDestroyed()) return;
+              LinearLayout row = new LinearLayout(this);
+              row.setOrientation(LinearLayout.HORIZONTAL);
+              row.setGravity(Gravity.CENTER_VERTICAL);
+              row.setPadding(0, dp(5), 0, dp(5));
+              TextView icon = text(ok ? "✓" : "✗", 15, ok ? 0xff1d7a4f : 0xffa33b3b);
+              icon.setTypeface(null, 1);
+              row.addView(icon, new LinearLayout.LayoutParams(-2, -2));
+              TextView nameView = text(" " + name, 13, 0xff17334f);
+              nameView.setTypeface(null, 1);
+              row.addView(nameView, new LinearLayout.LayoutParams(-2, -2));
+              TextView detailView = text(detail, 11, 0xff5a6b82);
+              detailView.setGravity(Gravity.END);
+              detailView.setPadding(dp(8), 0, 0, 0);
+              row.addView(detailView, new LinearLayout.LayoutParams(0, -2, 1f));
+              rows.addView(row, new LinearLayout.LayoutParams(-1, -2));
+          });
+      }
+
+      /** 检测报告影响说明块（工具包缺失时：哪些功能不可用 / 哪些不受影响），主线程上屏 */
+      private void addImpactNote(LinearLayout rows, String content) {
+          runOnUiThread(() -> {
+              if (isFinishing() || isDestroyed()) return;
+              TextView note = text(content, 11, 0xff8a5a1d);
+              note.setLineSpacing(dp(2), 1f);
+              GradientDrawable noteBg = new GradientDrawable();
+              noteBg.setColor(0x26F5A623);
+              noteBg.setCornerRadius(dp(10));
+              note.setBackground(noteBg);
+              note.setPadding(dp(10), dp(8), dp(10), dp(8));
+              LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2);
+              noteLp.setMargins(0, dp(4), 0, dp(4));
+              rows.addView(note, noteLp);
+          });
+      }
+
+      /**
+       * v3.41.11：云端下载 DNA 工具包（dna-tools-v1.zip ≈ 15M，GitHub Release + 镜像线路兜底）。
+       * 弹窗显示进度条 + 实时日志；完成/失败后自动刷新工具链状态。
+       */
+      private void downloadDnaTools() {
+          if (!dnaDownloading.compareAndSet(false, true)) {
+              toast(t("正在下载中，请稍候 …", "Download in progress..."));
+              return;
+          }
+          Dialog dialog = new Dialog(this);
+          dialog.setCancelable(false);
+          LinearLayout panel = new LinearLayout(this);
+          panel.setOrientation(LinearLayout.VERTICAL);
+          panel.setPadding(dp(20), dp(18), dp(20), dp(16));
+          GradientDrawable bg = new GradientDrawable();
+          bg.setColor(0xF2e9f0f7);
+          bg.setCornerRadius(dp(24));
+          bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+          panel.setBackground(bg);
+          TextView title = text("⬇ " + t("下载工具", "Download Tools"), 16, 0xff17334f);
+          title.setTypeface(null, 1);
+          title.setPadding(0, 0, 0, dp(10));
+          panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+          bar.setMax(100);
+          bar.setProgress(0);
+          GradientDrawable barBg = new GradientDrawable();
+          barBg.setColor(0x33000000);
+          barBg.setCornerRadius(dp(6));
+          GradientDrawable barFill = new GradientDrawable();
+          barFill.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+          barFill.setColors(new int[]{0xFF35A8C4, 0xFF1d7a4f});
+          barFill.setCornerRadius(dp(6));
+          LayerDrawable barLayers = new LayerDrawable(new Drawable[]{barBg, new ClipDrawable(barFill, Gravity.LEFT, ClipDrawable.HORIZONTAL)});
+          barLayers.setId(0, android.R.id.background);
+          barLayers.setId(1, android.R.id.progress);
+          bar.setProgressDrawable(barLayers);
+          panel.addView(bar, new LinearLayout.LayoutParams(-1, dp(12)));
+          TextView log = text(t("正在准备下载 …", "Preparing..."), 12, 0xff5a6b82);
+          log.setPadding(0, dp(10), 0, 0);
+          panel.addView(log, new LinearLayout.LayoutParams(-1, -2));
+          dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, -2));
+          showWide(dialog, 420);
+          final String[] lastLog = {""};
+          new Thread(() -> {
+              boolean ok = DnaTools.downloadTools(this,
+                      line -> {
+                          lastLog[0] = line;
+                          runOnUiThread(() -> {
+                              if (isFinishing() || isDestroyed()) return;
+                              log.setText(line);
+                          });
+                          return kotlin.Unit.INSTANCE;
+                      },
+                      p -> {
+                          runOnUiThread(() -> {
+                              if (isFinishing() || isDestroyed()) return;
+                              bar.setProgress(p);
+                          });
+                          return kotlin.Unit.INSTANCE;
+                      });
+              runOnUiThread(() -> {
+                  dnaDownloading.set(false);
+                  if (isFinishing() || isDestroyed()) return;
+                  if (ok) {
+                      dialog.dismiss();
+                      Toast.makeText(this, t("工具下载部署完成", "Tools deployed"), Toast.LENGTH_LONG).show();
+                      refreshDnaToolchain();
+                      return;
+                  }
+                  // v3.41.15：失败保留弹窗显示具体原因 + 重试按钮（对齐 APP 更新弹窗交互，
+                  // 「未上传工具包」与「网络失败」在日志里有明确区分，不再一律「检查网络」）
+                  bar.setProgress(0);
+                  log.setText(lastLog[0].isEmpty() ? t("下载失败", "Download failed") : lastLog[0]);
+                  LinearLayout btnRow = new LinearLayout(this);
+                  btnRow.setOrientation(LinearLayout.HORIZONTAL);
+                  btnRow.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+                  btnRow.setPadding(0, dp(12), 0, 0);
+                  Button retry = new Button(this, null, 0);
+                  retry.setText(t("重试", "Retry"));
+                  retry.setAllCaps(false);
+                  retry.setTextSize(13.5f);
+                  retry.setTypeface(null, 1);
+                  retry.setTextColor(0xFFFFFFFF);
+                  GradientDrawable retryBg = new GradientDrawable();
+                  retryBg.setColor(0xFF1d7a4f);
+                  retryBg.setCornerRadius(dp(16));
+                  retry.setBackground(retryBg);
+                  retry.setStateListAnimator(null);
+                  retry.setMinWidth(0);
+                  retry.setMinHeight(0);
+                  retry.setPadding(dp(18), 0, dp(18), 0);
+                  retry.setOnClickListener(v -> {
+                      Haptics.perform(v);
+                      dialog.dismiss();
+                      downloadDnaTools();
+                  });
+                  btnRow.addView(retry, new LinearLayout.LayoutParams(-2, dp(40)));
+                  Button close = new Button(this, null, 0);
+                  close.setText(t("关闭", "Close"));
+                  close.setAllCaps(false);
+                  close.setTextSize(13.5f);
+                  close.setTextColor(0xff5a6b82);
+                  close.setBackground(null);
+                  close.setStateListAnimator(null);
+                  close.setMinWidth(0);
+                  close.setMinHeight(0);
+                  close.setPadding(dp(14), 0, dp(4), 0);
+                  close.setOnClickListener(v -> dialog.dismiss());
+                  LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-2, dp(40));
+                  closeParams.setMargins(dp(6), 0, 0, 0);
+                  btnRow.addView(close, closeParams);
+                  panel.addView(btnRow, new LinearLayout.LayoutParams(-1, -2));
+              });
+          }, "dna-tools-download").start();
+      }
+
+      /** v3.41.12：存储清理字节数格式化（G/M/K） */
+      private String fmtSize(long bytes) {
+          if (bytes >= 1073741824L) return String.format(Locale.US, "%.2fG", bytes / 1073741824f);
+          if (bytes >= 1048576L) return String.format(Locale.US, "%.1fM", bytes / 1048576f);
+          return (bytes / 1024L) + "K";
       }
 
       /** 刷新 DNA 页当前工程显示 */
@@ -4683,6 +5074,71 @@ public class MainActivity extends BaseActivity {
           LinearLayout.LayoutParams screenParams = new LinearLayout.LayoutParams(-1, dp(60));
           screenParams.setMargins(0, 0, 0, dp(18));
           page.addView(screenCard, screenParams);
+
+          // v3.41.12：存储清理卡 —— root 属主的提取/刷机缓存副本不计入系统「缓存」统计
+          // （设置里显示 0B、清除缓存按钮灰色），只能在此清理
+          LinearLayout cleanCard = new LinearLayout(this);
+          cleanCard.setOrientation(LinearLayout.VERTICAL);
+          cleanCard.setPadding(dp(14), dp(10), dp(14), dp(10));
+          cleanCard.setBackgroundResource(R.drawable.liquid_glass_panel);
+          TextView cleanTitle = text("🧹 " + t("存储清理", "Storage Clean"), 15, Color.rgb(20, 29, 55));
+          cleanTitle.setTypeface(null, 1);
+          cleanCard.addView(cleanTitle, new LinearLayout.LayoutParams(-1, -2));
+          TextView cleanDesc = text(t("清理 ROM 提取 / 刷机产生的缓存副本（root 属主文件不计入系统缓存统计，系统「清除缓存」清不掉）",
+                  "Clean extraction & flashing cache copies (root-owned files not counted as system cache)"), 11, 0xff5a6b82);
+          cleanDesc.setPadding(0, dp(4), 0, dp(8));
+          cleanCard.addView(cleanDesc, new LinearLayout.LayoutParams(-1, -2));
+          Button cleanBtn = new Button(this, null, 0);
+          cleanBtn.setText(t("计算中 …", "Scanning..."));
+          cleanBtn.setAllCaps(false);
+          cleanBtn.setTextSize(13.5f);
+          cleanBtn.setTypeface(null, 1);
+          cleanBtn.setTextColor(0xff172b4d);
+          cleanBtn.setGravity(Gravity.CENTER);
+          cleanBtn.setPadding(0, 0, 0, 0);
+          GradientDrawable cleanBg = new GradientDrawable();
+          cleanBg.setColor(0x664CAF50);
+          cleanBg.setCornerRadius(dp(16));
+          cleanBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+          cleanBtn.setBackground(cleanBg);
+          cleanBtn.setStateListAnimator(null);
+          cleanBtn.setMinWidth(0);
+          cleanBtn.setMinHeight(0);
+          cleanBtn.setEnabled(false);
+          cleanCard.addView(cleanBtn, new LinearLayout.LayoutParams(-1, dp(42)));
+          LinearLayout.LayoutParams cleanParams = new LinearLayout.LayoutParams(-1, -2);
+          cleanParams.setMargins(0, 0, 0, dp(18));
+          page.addView(cleanCard, cleanParams);
+          final Button fCleanBtn = cleanBtn;
+          // 后台统计可清理空间（extracted 目录文件多，stat 遍历勿卡 UI）
+          new Thread(() -> {
+              final long bytes = DnaTools.INSTANCE.cleanableBytes(this);
+              runOnUiThread(() -> {
+                  if (isFinishing() || isDestroyed()) return;
+                  fCleanBtn.setEnabled(true);
+                  fCleanBtn.setText(bytes > 0
+                          ? t("深度清理（可释放 ", "Clean (frees ") + fmtSize(bytes) + t("）", ")")
+                          : t("无可清理缓存", "Nothing to clean"));
+              });
+          }, "clean-scan").start();
+          cleanBtn.setOnClickListener(v -> {
+              Haptics.perform(v);
+              fCleanBtn.setEnabled(false);
+              fCleanBtn.setText(t("正在清理 …", "Cleaning..."));
+              new Thread(() -> {
+                  // v3.41.22：deepClean + deepCleanAll 双保险（点名清单 + 全扫描白名单，su 兜底 root 属主文件）
+                  DnaTools.INSTANCE.deepClean(this);
+                  final long freed = DnaTools.INSTANCE.deepCleanAll(this);
+                  runOnUiThread(() -> {
+                      if (isFinishing() || isDestroyed()) return;
+                      fCleanBtn.setEnabled(true);
+                      fCleanBtn.setText(t("深度清理", "Clean"));
+                      Toast.makeText(this, freed > 0
+                              ? t("✓ 已释放 ", "✓ Freed ") + fmtSize(freed)
+                              : t("缓存已清理", "Cache is clean"), Toast.LENGTH_LONG).show();
+                  });
+              }, "clean-run").start();
+          });
           
           // v3.30.23：「关于 Dsu 管理器」入口已并入「特别鸣谢」页（ThanksActivity）
           // v3.30.21：特别鸣谢入口（对齐原版 DNA thanks 声明：不分先后，如有遗忘望提醒）
@@ -4898,7 +5354,9 @@ public class MainActivity extends BaseActivity {
      private void saveLanguage(int mode) {
          getSharedPreferences("settings", MODE_PRIVATE).edit().putInt("language_mode", mode).apply();
          languageMode = mode;
-         english = mode == 2;
+         // v3.41.20：补「系统语言」分支 —— 此前选系统语言（mode=0）时 english 恒 false，
+         // 英文系统下界面仍是中文（与 onCreate 的初始化逻辑不一致）
+         english = mode == 2 || (mode == 0 && Locale.getDefault().getLanguage().equals("en"));
          buildUi();
      }
 
@@ -4950,7 +5408,9 @@ public class MainActivity extends BaseActivity {
             String raw = runPrivilegedResult("/system/bin/gsi_tool", "status");
             String status = formatGsiStatus(raw);
             runOnUiThread(() -> {
-                gsiStatus.setText(status);
+                // v3.41.20：状态卡显示走 localizedStatus —— 此前直接 setText 中文，
+                // 英文模式下首页显示中文状态（内部比较仍用中文常量，逻辑不变）
+                gsiStatus.setText(localizedStatus(status));
                  if (status.equals("GSI 已成功安装，等待启动")) {
                      showInstalledGsiSummary();
                  } else {

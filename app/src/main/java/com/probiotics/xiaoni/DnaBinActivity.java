@@ -97,6 +97,17 @@ public final class DnaBinActivity extends BaseActivity {
         io.shutdownNow();
         cancelNote();
         if (extractor != null) { try { extractor.close(); } catch (Exception ignored) {} }
+        // v3.41.14：返回上一页即自动清理拷贝的解析缓存副本，释放了空间则提示
+        // v3.41.21：移入后台线程 —— root 属主副本需 su rm 兜底删除，大目录可能耗时数秒
+        new Thread(() -> {
+            long freed = DnaTools.INSTANCE.releaseJniCache(this);
+            if (freed > 0) {
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(),
+                        "♻ " + t("已自动清理缓存副本", "Auto-cleaned cache copies")
+                                + " " + String.format(Locale.US, "%.1fM", freed / 1048576f),
+                        Toast.LENGTH_SHORT).show());
+            }
+        }, "bin-cache-clean").start();
     }
 
     // ================= 通知栏同步（v3.30.31：进度实时，不延迟） =================

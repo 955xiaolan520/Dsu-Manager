@@ -8,33 +8,76 @@ import java.util.concurrent.TimeUnit
 
 /**
  * DNA 工具箱运行时（v3.10.0 新增）：
- * - 首次使用把 jniLibs 内置的 17 个 ARM64 工具释放到 filesDir/dna-tools/ 并还原真实文件名（dna、busybox、lpmake...）
+ * - v3.41.11：17 个 ARM64 工具不再内置 jniLibs（APK 减重约 27M），改为云端下载
+ *   （GitHub Release dna-tools-v1.zip ≈ 15M，aria2c 多线程 + 镜像线路兜底），
+ *   下载后部署到 filesDir/dna-tools/ 并还原真实文件名（dna、busybox、lpmake...）
  * - 原版 DNA 工具箱（com.dna.tools）即从应用数据目录执行工具，root 下运行无兼容问题
  * - 部分 ROM 的 SELinux 禁止 magisk 域 exec app_data_file 时，自动经 root 中转到 /data/local/tmp/dna-tools 兜底
  * - 所有命令经 su 执行，stdout/stderr 合并流式回传（与 Aria2c 相同的看门狗 + 取消机制）
  */
 object DnaTools {
 
-    // jniLibs 名称 → 工具真实名称（dna 按名称调用兄弟工具，必须还原）
-    private val BINARIES = linkedMapOf(
-        "libdna.so" to "dna",
-        "libdna_busybox.so" to "busybox",
-        "libdna_brotli.so" to "brotli",
-        "libdna_e2fsdroid.so" to "e2fsdroid",
-        "libdna_extract_erofs.so" to "extract.erofs",
-        "libdna_extract_f2fs.so" to "extract.f2fs",
-        "libdna_img2simg.so" to "img2simg",
-        "libdna_simg2img.so" to "simg2img",
-        "libdna_lpmake.so" to "lpmake",
-        "libdna_magiskboot.so" to "magiskboot",
-        "libdna_mke2fs.so" to "mke2fs",
-        "libdna_mkfs_erofs.so" to "mkfs.erofs",
-        "libdna_mkfs_f2fs.so" to "mkfs.f2fs",
-        "libdna_payload_extract.so" to "payload_extract",
-        "libdna_resize2fs.so" to "resize2fs",
-        "libdna_sload_f2fs.so" to "sload_f2fs",
-        "libdna_zstd.so" to "zstd",
+    // 工具真实名称清单（dna 按名称调用兄弟工具，必须还原原名；旧版 jniLibs 部署过的目录同样兼容）
+    private val TOOLS = arrayOf(
+        "dna", "busybox", "brotli", "e2fsdroid", "extract.erofs", "extract.f2fs",
+        "img2simg", "simg2img", "lpmake", "magiskboot", "mke2fs", "mkfs.erofs",
+        "mkfs.f2fs", "payload_extract", "resize2fs", "sload_f2fs", "zstd",
     )
+
+    // v3.41.15：工具包云端获取 —— 对齐 UpdateCenter（APP 更新）的「API 动态解析 + 镜像回退」，
+    // 不再硬编码 release tag：先经 GitHub API（镜像优先）读 latest Release 的 assets，
+    // 找到 dna-tools*.zip 的 browser_download_url，再镜像前缀回退下载。
+    // 用户把 zip 传到任意版本 Release（且为最新 Release）即可，无需固定 v3.41.11。
+    private val TOOLS_API_URLS = arrayOf(
+        "https://gh-proxy.com/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
+        "https://ghfast.top/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
+        "https://ghproxy.net/https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
+        "https://api.github.com/repos/955xiaolan520/Dsu-Manager/releases/latest",
+    )
+    private val TOOLS_MIRRORS = arrayOf(
+        "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "")
+    // 完整性下限：工具包 ≈ 15M，拒绝镜像返回的 KB 级 HTML 错误页
+    private const val MIN_TOOLS_ZIP_BYTES = 14L * 1024 * 1024
+
+    /**
+     * v3.41.15：经 GitHub API 解析 latest Release 里工具包附件的真实下载地址（镜像优先回退）。
+     * 与 UpdateCenter.fetchLatest 同套路：HttpURLConnection + JSON 解析 assets。
+     * @return browser_download_url；Release 没传附件返回 null（区别于网络失败抛异常）
+     */
+    private fun fetchToolsAssetUrl(onLog: ((String) -> Unit)?): String? {
+        var lastError: java.io.IOException? = null
+        for (api in TOOLS_API_URLS) {
+            var conn: java.net.HttpURLConnection? = null
+            try {
+                conn = java.net.URL(api).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 8000
+                conn.readTimeout = 12000
+                conn.setRequestProperty("Accept", "application/vnd.github+json")
+                conn.setRequestProperty("User-Agent", "Dsu-Manager-Android")
+                conn.useCaches = false
+                val code = conn.responseCode
+                if (code < 200 || code >= 300) throw java.io.IOException("HTTP $code")
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val assets = org.json.JSONArray(
+                    org.json.JSONObject(body).optJSONArray("assets")?.toString() ?: "[]")
+                for (i in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(i) ?: continue
+                    val name = asset.optString("name", "")
+                    if (name.startsWith("dna-tools") && name.endsWith(".zip")) {
+                        return asset.optString("browser_download_url", "")
+                    }
+                }
+                return null   // API 通了但没有工具包附件 → 明确的「未上传」
+            } catch (e: java.io.IOException) {
+                lastError = e
+                onLog?.invoke("API 线路失败：${e.message}")
+            } finally {
+                conn?.disconnect()
+            }
+        }
+        throw lastError ?: java.io.IOException("no mirror reachable")
+    }
 
     class Result(val success: Boolean, val output: String, val message: String) {
         // Java 侧便捷访问（属性 getter 为 getSuccess/getOutput/getMessage）
@@ -304,8 +347,8 @@ object DnaTools {
 
 
     /**
-     * 确保工具可用：释放 + 赋执行权限 + root 同步到中转目录 + 预建伪装包目录 + 自检（dna gettype）。
-     * 返回工具目录；root 不可用或释放失败返回 null。
+     * 确保工具可用：工具已就位（云端下载 / 旧版部署遗留）+ root 同步到中转目录 + 预建伪装包目录 + 自检（dna gettype）。
+     * 返回工具目录；root 不可用或工具未下载返回 null。
      */
     @JvmStatic
     @JvmOverloads
@@ -319,7 +362,9 @@ object DnaTools {
             return relay
         }
         activeDir?.let { dir -> if (selfTest(dir)) return dir }
-        val dir = deploy(ctx, toolsDir(ctx), onLog) ?: return null
+        // v3.41.11：工具链云端化 —— 本地未部署时不再从 jniLibs 释放，需先点「下载工具」
+        if (!toolsInstalled(ctx)) return null
+        val dir = toolsDir(ctx)
         onLog?.invoke("同步工具链到 $RELAY_PATH ...")
         val synced = relayViaRoot(ctx, dir, onLog)
         if (synced != null && selfTest(synced)) {
@@ -327,6 +372,174 @@ object DnaTools {
             return synced
         }
         return null
+    }
+
+    /** 本地工具是否已就位（云端下载部署 / 旧版 jniLibs 遗留，17 个全部可执行才算） */
+    @JvmStatic
+    fun toolsInstalled(ctx: Context): Boolean {
+        val dir = toolsDir(ctx)
+        return TOOLS.all { File(dir, it).isFile && File(dir, it).canExecute() }
+    }
+
+    // ============ v3.41.16：工具链深度自检（「检测」按钮完整报告） ============
+    // 文件存在 ≠ 可用：架构不符 / 下载截断的 ELF 只有真实执行才能暴露 ——
+    // 「检测」从「只看状态」升级为「完整性逐项校验 + 关键工具真实执行」
+
+    /** 缺失或不可执行的工具名清单（空 = 17 个全部就位） */
+    @JvmStatic
+    fun missingTools(ctx: Context): List<String> {
+        val dir = toolsDir(ctx)
+        return TOOLS.filter { !(File(dir, it).isFile && File(dir, it).canExecute()) }
+    }
+
+    /** 工具目录总字节数（检测报告显示用） */
+    @JvmStatic
+    fun toolsBytes(ctx: Context): Long = treeSize(toolsDir(ctx))
+
+    /** 单项检查结果（Java 侧经 getName/getOk/getDetail 读取） */
+    class CheckItem(val name: String, val ok: Boolean, val detail: String)
+
+    /**
+     * 关键工具真实执行自检（dna / busybox / magiskboot 三个代表）：
+     * - dna：走 ensure 全链路（伪装目录 + 中转目录同步 + gettype 自检）—— DNA 核心功能可用的最终判定
+     * - busybox / magiskboot：版本或 usage 回显 —— 校验 ELF 完好（截断/架构不符会静默失败）
+     * @return 三项结果（顺序固定，供检测报告逐行展示）
+     */
+    @JvmStatic
+    fun functionalCheck(ctx: Context): List<CheckItem> {
+        val items = ArrayList<CheckItem>()
+        // 1. dna：完整链路（ensure 内部已做 root 同步 + gettype）
+        val ensureLogs = ArrayList<String>()
+        val dir = ensure(ctx) { line -> ensureLogs.add(line) }
+        items.add(CheckItem(
+            "dna 自检", dir != null,
+            if (dir != null) "gettype 通过 · ${dir.absolutePath}"
+            else ensureLogs.lastOrNull() ?: "自检失败（root 未授权或工具损坏）"
+        ))
+        if (dir != null) {
+            // 2. busybox：版本回显
+            val bb = runCatching {
+                RootShell.exec("'" + File(dir, "busybox").absolutePath + "' 2>&1 | head -1", timeoutMs = 15000)
+            }.getOrNull()
+            val bbLine = bb?.stdout?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim() ?: ""
+            items.add(CheckItem("busybox", bbLine.contains("BusyBox", true),
+                if (bbLine.contains("BusyBox", true)) bbLine else "无版本回显（文件损坏或架构不符）"))
+            // 3. magiskboot：usage 回显（无参退出码非 0，按输出判断）
+            // v3.41.19 修复恒误报：标准 magiskboot 无参输出第 1 行是版本横幅、第 2 行空行、
+            // "Usage" 在第 3 行 —— 旧 head -2 永远截不到，二进制再健康也报"无 usage 回显"。
+            // 改为 head -10 + 同时匹配版本横幅（MagiskBoot）与 Usage。
+            val mb = runCatching {
+                RootShell.exec("cd '" + dir.absolutePath + "' && './magiskboot' 2>&1 | head -10", timeoutMs = 15000)
+            }.getOrNull()
+            val mbOut = mb?.stdout ?: ""
+            val mbOk = mbOut.contains("Usage", true) || mbOut.contains("MagiskBoot", true)
+            val mbLine = mbOut.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: ""
+            items.add(CheckItem("magiskboot", mbOk,
+                when {
+                    mbOk && mbLine.isNotBlank() -> mbLine      // 显示版本横幅，如 "MagiskBoot v26.x - Boot Image Patching Tool"
+                    mbOk -> "usage 回显正常"
+                    else -> "无回显（文件损坏或架构不符）"
+                }))
+        } else {
+            items.add(CheckItem("busybox", false, "跳过（dna 未通过）"))
+            items.add(CheckItem("magiskboot", false, "跳过（dna 未通过）"))
+        }
+        return items
+    }
+
+    /** downloadTools 的失败原因（供 UI 区分「未上传」与「网络失败」给出准确提示） */
+    const val TOOLS_ERR_NOT_UPLOADED =
+        "GitHub 最新 Release 未上传工具包 dna-tools-v1.zip，请在仓库 Releases 页面手动上传后重试"
+
+    /**
+     * v3.41.15：从 GitHub Release 下载工具包（dna-tools-v1.zip ≈ 15M）并部署到 filesDir/dna-tools/。
+     * 对齐 APP 更新逻辑（UpdateCenter）：先经 API（镜像优先）动态解析 latest Release 附件地址，
+     * 再 aria2c 多线程 + 镜像线路逐个兜底下载（gh-proxy → ghfast → ghproxy → 直连）。
+     * @return 下载并部署全部成功
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun downloadTools(
+        ctx: Context,
+        onLog: ((String) -> Unit)? = null,
+        onProgress: ((Int) -> Unit)? = null,
+    ): Boolean {
+        val dest = File(ctx.cacheDir, "dna-tools-v1.zip")
+        // 第一步：API 解析工具包真实地址（镜像回退；null = Release 无附件）
+        val assetUrl = try {
+            onLog?.invoke("正在查询工具包地址（GitHub API）…")
+            fetchToolsAssetUrl(onLog)
+        } catch (e: java.io.IOException) {
+            onLog?.invoke("✗ 无法访问 GitHub API：${e.message}")
+            onLog?.invoke("✗ 请检查网络（或稍后重试）")
+            return false
+        }
+        if (assetUrl.isNullOrBlank()) {
+            onLog?.invoke("✗ $TOOLS_ERR_NOT_UPLOADED")
+            return false
+        }
+        onLog?.invoke("已定位工具包：${assetUrl.substringAfterLast('/')}")
+        // 第二步：镜像前缀回退下载
+        var lastError = "下载失败"
+        for (mirror in TOOLS_MIRRORS) {
+            val url = mirror + assetUrl
+            if (mirror.isNotEmpty()) onLog?.invoke("尝试线路：${mirror.trimEnd('/')}")
+            val r = Aria2c.download(ctx, url, dest, { p -> onProgress?.invoke(p) },
+                onLog = { line -> onLog?.invoke(line) })
+            if (r.success && dest.isFile && dest.length() >= MIN_TOOLS_ZIP_BYTES) break
+            lastError = if (dest.isFile && dest.length() in 1 until MIN_TOOLS_ZIP_BYTES)
+                "文件不完整（${dest.length() / 1048576}M / 15M）"
+            else r.message.ifBlank { "下载失败" }
+            onLog?.invoke("线路失败：$lastError")
+            dest.delete()
+            if (r.message == "已取消") break
+        }
+        if (!dest.isFile || dest.length() < MIN_TOOLS_ZIP_BYTES) {
+            onLog?.invoke("✗ 工具包下载失败：$lastError")
+            return false
+        }
+        onProgress?.invoke(100)
+        onLog?.invoke("下载完成（${dest.length() / 1048576}M），正在部署 …")
+        val deployed = deployToolsZip(dest, toolsDir(ctx))
+        dest.delete()
+        if (!deployed) {
+            onLog?.invoke("✗ 工具包部署失败（解压异常或包不完整）")
+            return false
+        }
+        // 作废中转目录与进程缓存，下次 ensure 重新同步全新工具链
+        activeDir = null
+        runCatching { RootShell.exec("rm -rf '$RELAY_PATH'", timeoutMs = 15000) }
+        onLog?.invoke("✓ 工具链部署完成（17 个工具）")
+        return true
+    }
+
+    /**
+     * 解压工具包到临时目录，17 个工具全部就位后原子替换 toolsDir（失败不影响旧工具链）。
+     * Zip Slip 防护：只取条目 basename，且必须是工具清单内的名称。
+     */
+    private fun deployToolsZip(zipFile: File, outDir: File): Boolean {
+        return try {
+            val staging = File(outDir.parentFile, "dna-tools.staging")
+            staging.deleteRecursively()
+            if (!staging.exists() && !staging.mkdirs()) return false
+            java.util.zip.ZipFile(zipFile).use { zip ->
+                zip.entries().asSequence().forEach { entry ->
+                    if (entry.isDirectory) return@forEach
+                    val name = entry.name.substringAfterLast('/')
+                    if (name !in TOOLS) return@forEach
+                    val out = File(staging, name)
+                    zip.getInputStream(entry).use { input ->
+                        out.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    out.setExecutable(true, false)
+                }
+            }
+            if (!TOOLS.all { File(staging, it).isFile }) return false
+            outDir.deleteRecursively()
+            staging.renameTo(outDir)
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // v3.30.18：工程前缀 PDMA_ → PDNA_ 统一迁移（旧版 App 创建的 PDMA_ 工程改名为 PDNA_）
@@ -351,39 +564,6 @@ object DnaTools {
             val cur = prefs.getString(KEY_CURRENT, null)
             if (cur != null && cur.startsWith("PDMA_"))
                 prefs.edit().putString(KEY_CURRENT, "PDNA_" + cur.removePrefix("PDMA_")).apply()
-        }
-    }
-
-    // 从 nativeLibraryDir 释放全部工具（版本变化时自动重释放）
-    private fun deploy(ctx: Context, outDir: File, onLog: ((String) -> Unit)?): File? {
-        return try {
-            val nativeDir = File(ctx.applicationInfo.nativeLibraryDir)
-            val versionCode = runCatching {
-                ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionCode
-            }.getOrDefault(0)
-            val marker = File(outDir, ".v$versionCode")
-            if (marker.isFile && BINARIES.keys.all { File(outDir, BINARIES[it]!!).canExecute() }) {
-                return outDir
-            }
-            if (!outDir.exists() && !outDir.mkdirs()) return null
-            BINARIES.forEach { (soName, realName) ->
-                val src = File(nativeDir, soName)
-                if (!src.isFile) {
-                    onLog?.invoke("缺少组件 $soName")
-                    return null
-                }
-                val dst = File(outDir, realName)
-                src.copyTo(dst, overwrite = true)
-                if (!dst.setExecutable(true, false)) {
-                    runCatching { RootShell.exec("chmod 755 '${dst.absolutePath}'", timeoutMs = 10000) }
-                }
-            }
-            outDir.listFiles()?.forEach { if (it.name.startsWith(".v")) it.delete() }
-            marker.createNewFile()
-            outDir
-        } catch (e: Exception) {
-            onLog?.invoke("工具释放失败: ${e.message}")
-            null
         }
     }
 
@@ -412,10 +592,10 @@ object DnaTools {
         // 二次校验：17 个工具全部就位（cp 静默失败时兜底重试一次逐个复制）
         val verify = RootShell.exec(
             "ls -1 '" + relay.absolutePath + "' | wc -l", timeoutMs = 10000)
-        if (verify.stdout.trim().toIntOrNull()?.let { it >= BINARIES.size } == true) return relay
+        if (verify.stdout.trim().toIntOrNull()?.let { it >= TOOLS.size } == true) return relay
         onLog?.invoke("工具链不完整，重试逐个复制 ...")
         val retry = buildString {
-            for (name in BINARIES.values) {
+            for (name in TOOLS) {
                 append("cp -f '").append(src.absolutePath).append("/").append(name)
                     .append("' '").append(relay.absolutePath).append("/").append(name).append("'; ")
             }
@@ -583,6 +763,158 @@ object DnaTools {
         return resolved
     }
 
+    // ============ v3.41.12：私有目录深度清理 ============
+    // 问题：FUSE/sdcardfs 直读不可用时，ensureJniReadable 经 root cp 把整包 ROM 复制到
+    // cacheDir/payload_jni_input（12G 包 = 12G 副本）。该文件属主是 root —— Android 的
+    // 缓存统计按属主 UID 配额，root 属主文件不计入「缓存」（设置里显示 0B、清除缓存按钮
+    // 灰色），却整包计入「数据」→ 出现"占用 12.6G 但清不掉缓存"的现象。
+    // 系统只有「清除数据」能删（连 ROOT 授权/设置/工具链一起没），故 App 内提供本入口。
+
+    // 待清理清单（filesDir 与 cacheDir 各查一遍；不含 aria2c/dna-tools/dna-scripts 等必需文件）
+    private val CLEAN_ENTRIES = arrayOf(
+        "ota",                     // filesDir：OTG 助手解包的 payload.bin + extracted 分区镜像（中断/退出遗留）
+        "payload_jni_input",       // cacheDir：JNI 提取整包缓存副本（root 属主，最大的坑）
+        "payload_online_full.zip", // cacheDir：在线 payload 整包下载
+        "flash-images",            // cacheDir：刷机镜像缓存副本（带时间戳累积）
+        "bin_parse_input",         // cacheDir：分解 bin 输入缓存
+        "dna-tools-v1.zip",        // cacheDir：工具包下载残留（部署失败/中断遗留）
+        "dsu-manager-update.apk",  // cacheDir：更新包安装残留
+        "dsu-install.zip",         // cacheDir：DSU 安装包缓存
+        "local-rootfs-pick",       // cacheDir：rootfs 选择缓存
+        "logo.img",                // cacheDir：logo 镜像缓存
+    )
+
+    private fun treeSize(f: File): Long = runCatching {
+        if (f.isDirectory) f.listFiles()?.sumOf { treeSize(it) } ?: 0L else f.length()
+    }.getOrDefault(0L)
+
+    /**
+     * v3.41.22 全扫描白名单：filesDir / cacheDir 下除这些条目外全部视为可清理副本。
+     * 必需文件：DNA 工具链与脚本、aria2c/adb/fastboot 组件、系统目录（shared_prefs /
+     * databases / code_cache / app_webview）。CLEAN_ENTRIES 清不掉的「漏网」大文件
+     * （新版本新增的缓存名、意外路径）由全扫描兜住。
+     */
+    private val KEEP_ENTRIES = setOf(
+        "dna-tools", "dna-scripts", "aria2c", "adb", "fastboot",
+        "rootfs",        // 终端 Linux rootfs（LinuxImages）
+        "bin",           // AdbManager 释放的 adb / fastboot
+        "dna-module",    // 用户安装的 DNA 插件
+        "shared_prefs", "databases", "code_cache", "app_webview",
+    )
+
+    /** 统计可清理空间（字节）。app 是目录属主可 stat root 属主文件，大小统计可靠。
+     *  v3.41.22：改为全扫描白名单统计（CLEAN_ENTRIES 全部不在白名单内，天然被覆盖） */
+    @JvmStatic
+    fun cleanableBytes(ctx: Context): Long {
+        var total = 0L
+        for (base in arrayOf(ctx.filesDir, ctx.cacheDir)) {
+            val children = base.listFiles() ?: continue
+            for (child in children) {
+                if (child.name in KEEP_ENTRIES) continue
+                total += treeSize(child)
+            }
+        }
+        return total
+    }
+
+    /**
+     * v3.41.22 终极清理：全扫描 filesDir + cacheDir，白名单（工具链/脚本/下载组件/系统目录）
+     * 之外的所有文件与目录全部删除 —— Java 删除 + su rm -rf 兜底（root 属主副本）。
+     * CLEAN_ENTRIES 点名式清理的增强版：无论副本叫什么名字都逃不掉。
+     * 返回实际释放字节数。
+     */
+    @JvmStatic
+    fun deepCleanAll(ctx: Context): Long {
+        var freed = 0L
+        for (base in arrayOf(ctx.filesDir, ctx.cacheDir)) {
+            val children = base.listFiles() ?: continue
+            for (child in children) {
+                if (child.name in KEEP_ENTRIES) continue
+                freed += treeSize(child)
+                runCatching { child.deleteRecursively() }
+                if (child.exists()) runCatching {
+                    RootShell.exec("rm -rf '" + child.absolutePath + "'", timeoutMs = 180000)
+                }
+            }
+        }
+        jniReadableMemo = null
+        return freed
+    }
+
+    /**
+     * 深度清理私有目录大文件，返回实际释放字节数。
+     * root 属主文件：优先 Java 删除（父目录属主是 app，无 sticky 位，unlink 允许），
+     * 残留（部分 ROM 的 SELinux 拦截）经 su rm -rf 兜底。
+     */
+    @JvmStatic
+    fun deepClean(ctx: Context): Long {
+        var freed = 0L
+        for (name in CLEAN_ENTRIES) {
+            for (base in arrayOf(ctx.filesDir, ctx.cacheDir)) {
+                val f = File(base, name)
+                if (!f.exists()) continue
+                freed += treeSize(f)
+                runCatching { f.deleteRecursively() }
+                if (f.exists()) runCatching {
+                    RootShell.exec("rm -rf '" + f.absolutePath + "'", timeoutMs = 120000)
+                }
+            }
+        }
+        // JNI 输入 memo 作废（缓存副本已删，下次提取重新放行/复制）
+        jniReadableMemo = null
+        return freed
+    }
+
+    /**
+     * v3.41.13：启动自动清理跨进程遗留的大缓存。
+     *
+     * 遗留成因：JNI 兜底副本（payload_jni_input）与 OTG 解包目录（files/ota）只在
+     * 「同进程内换文件 / 刷机流程正常走完」时自动删除 —— App 被杀或流程中断后，
+     * 副本成为死文件且可能高达十几 G。启动时进程内必然没有提取/刷机任务在跑，清理安全；
+     * 两个目录都是按需重建的（extractOtaPackage 开头自删重建、ensureJniReadable 重新拷贝）。
+     *
+     * v3.41.21 修复「12.6G 清不掉、必须卸载」：root 属主的副本文件（root cp 产生）
+     * 对 app 进程是 EACCES，此前仅 File.deleteRecursively() 删不动 → 改走 deepClean
+     * 全套路（覆盖 CLEAN_ENTRIES 全部条目 + su rm -rf 兜底），启动时把历史遗留一并清空。
+     */
+    @JvmStatic
+    fun cleanStaleCaches(ctx: Context) {
+        Thread({
+            runCatching { deepClean(ctx) }
+        }, "startup-clean").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * v3.41.14：页面退出即清理 —— 分解/提取页 onDestroy 时调用，删除本次会话拷贝的
+     * JNI 解析兜底副本（payload_jni_input / bin_parse_input），返回实际释放字节数供调用方提示。
+     *
+     * v3.41.21 修复：root 属主副本此前删不动（返回上一页提示了清理但文件仍在，
+     * 设置里数据占用一直不降）→ Java 删除后残留经 su rm -rf 兜底；filesDir 下
+     * 同名目录一并清理。调用方应在后台线程调用（root 删除大目录可能耗时数秒）。
+     *
+     * 安全性：副本只服务于"解析/列分区"，提取链路全部走原始路径（root CLI 直读）；
+     * 页面销毁时本次会话已结束，无引用。作废 memo：下次进入页面重新按需放行/拷贝。
+     */
+    @JvmStatic
+    fun releaseJniCache(ctx: Context): Long {
+        var freed = 0L
+        for (name in arrayOf("payload_jni_input", "bin_parse_input")) {
+            for (base in arrayOf(ctx.cacheDir, ctx.filesDir)) {
+                val f = File(base, name)
+                if (f.exists()) {
+                    freed += treeSize(f)
+                    runCatching { f.deleteRecursively() }
+                    // root 属主残留（app 视图 EACCES）经 su 兜底删除
+                    if (f.exists()) runCatching {
+                        RootShell.exec("rm -rf '" + f.absolutePath + "'", timeoutMs = 120000)
+                    }
+                }
+            }
+        }
+        jniReadableMemo = null
+        return freed
+    }
+
     /**
      * v3.40.17：确保 app 进程（JNI）可写 /sdcard 下的输出目录。
      * root 属主目录经 FUSE 对 app 写 = EACCES，且 FUSE 视图 chmod 不生效 →
@@ -669,9 +1001,13 @@ object DnaTools {
     ): Result {
         val dir = ensure(ctx, onLog) ?: run {
             // v3.28.7：区分 ROOT 不可用与工具链部署失败，避免误导性报错
+            // v3.41.11：新增工具未下载提示（工具链已云端化）
             val rootOk = runCatching { RootShell.available() }.getOrDefault(false)
-            return Result(false, "", if (rootOk) "DNA 工具链初始化失败（工具同步异常，请点「检测」重试）"
-            else "DNA 工具链初始化失败（需要 ROOT 授权）")
+            return Result(false, "", when {
+                !rootOk -> "DNA 工具链初始化失败（需要 ROOT 授权）"
+                !toolsInstalled(ctx) -> "DNA 工具未下载（请在 DNA 主页点「下载工具」）"
+                else -> "DNA 工具链初始化失败（工具同步异常，请点「检测」重试）"
+            })
         }
         val project = currentProject(ctx)
         val pro = project?.let { "$WORK_ROOT/$it" } ?: WORK_ROOT

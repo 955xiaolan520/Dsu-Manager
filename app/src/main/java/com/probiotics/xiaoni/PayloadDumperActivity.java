@@ -1784,5 +1784,22 @@ public final class PayloadDumperActivity extends BaseActivity {
         if (extractor != null) {
             extractor.close();
         }
+        // v3.41.14：返回上一页即自动清理拷贝的缓存（JNI 解析兜底副本 + 在线整包下载残留），
+        // 释放了空间则提示一下（在线 zip 是页面内逐分区提取的输入源，页面销毁后会话已结束）
+        // v3.41.21：移入后台线程 —— root 属主副本需 su rm 兜底删除，大目录可能耗时数秒
+        new Thread(() -> {
+            long freed = DnaTools.INSTANCE.releaseJniCache(this);
+            File onlineZip = new File(getCacheDir(), "payload_online_full.zip");
+            if (onlineZip.isFile()) {
+                freed += onlineZip.length();
+                //noinspection ResultOfMethodCallIgnored
+                onlineZip.delete();
+            }
+            final long total = freed;
+            if (total > 0) {
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(),
+                        "♻ 已自动清理缓存副本 " + fmtMB(total), Toast.LENGTH_SHORT).show());
+            }
+        }, "dump-cache-clean").start();
     }
 }

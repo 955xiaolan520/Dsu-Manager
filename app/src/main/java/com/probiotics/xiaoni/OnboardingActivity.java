@@ -8,6 +8,7 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
+import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
@@ -29,37 +30,42 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.Locale;
-import java.util.Random;
 
 /**
- * 首次进入 APP 的引导页（共 5 页，原汁原味的液态玻璃）：
+ * 首次进入 APP 的引导页（共 7 页，原汁原味的液态玻璃 + 动态极光背景）：
  *  1. 用户协议与隐私政策 + 人机验证（图二）
  *  2. ROM 查询与高速下载（图三）
  *  3. ROM 镜像提取（图四）
- *  4. DSU 与更多能力（图五）
- *  5. 一切已就绪 → 开始使用（图六）
- * 完成后弹出图一 MIUI 白色底部授权弹窗（通知 / 音频文件 / 照片和视频）。
+ *  4. DNA 工具箱（v3.41.20 新增）
+ *  5. OTG 助手（v3.41.20 新增）
+ *  6. DSU 与更多能力（图五）
+ *  7. 一切已就绪 → 开始使用（图六）
+ * 协议通过后弹出「环境与权限」卡片弹窗（通知 / 音频 / 照片视频 / 验证 Root）。
  */
 public final class OnboardingActivity extends BaseActivity {
 
     private static final String[] CLAUSES_ZH = {
-            "本应用为 DSU 动态系统更新 / ROM 下载与提取工具，仅供个人学习与研究使用，请勿用于商业用途。",
+            "本应用为 DSU 动态系统更新 / ROM 下载与提取 / DNA 镜像打包 / OTG 刷机助手工具，仅供个人学习与研究使用，请勿用于商业用途。",
             "ROM 与设备清单数据来自公开社区数据源（HyperOS.fans / HyperData 等），下载链接为各厂商官方更新节点直链，本应用不存储任何 ROM 文件。",
             "本应用不收集、不上传任何个人信息；设备清单获取与版本查询直接连接公开数据源，其余操作均在本地完成。",
             "下载的 ROM 包保存在公共下载目录 Download/DsuManager，aria2c 多线程下载支持断点续传。",
-            "ROM 刷写、DSU 安装、镜像提取等操作存在一定风险，操作前请自行做好数据备份；因使用本应用造成的任何数据丢失或设备损坏，由使用者自行承担。",
+            "DNA 工具箱的 17 个命令行工具（约 15M）在首次使用时从 GitHub Release 云端下载（含 gh-proxy 等公共加速镜像线路自动回退），下载、校验与部署均在本地完成。",
+            "OTG 刷机助手对本机分区与外接 U 盘设备的读写操作风险较高，请确认镜像来源可靠；刷写前请自行做好数据备份。",
+            "ROM 刷写、DSU 安装、镜像提取、OTG 刷机等操作存在一定风险，操作前请自行做好数据备份；因使用本应用造成的任何数据丢失或设备损坏，由使用者自行承担。",
             "继续使用即表示你已阅读并同意以上条款。",
     };
     private static final String[] CLAUSES_EN = {
-            "This app is a DSU (Dynamic System Updates) / ROM download & extraction tool, for personal study and research only.",
+            "This app is a DSU (Dynamic System Updates) / ROM download & extraction / DNA image packing / OTG flashing assistant tool, for personal study and research only.",
             "ROM and device catalog data come from public community sources (HyperOS.fans / HyperData etc.). Download links are direct links to vendor official update nodes. No ROM files are hosted by this app.",
             "This app collects and uploads no personal information. Device catalog fetching and version queries connect to public data sources directly; everything else runs locally.",
             "Downloaded ROM packages are saved to the public download folder Download/DsuManager. aria2c multi-threaded download supports resume.",
-            "ROM flashing, DSU installation and image extraction are risky. Back up your data before proceeding. Any data loss or device damage caused by using this app is at your own risk.",
+            "The 17 DNA command-line tools (~15M) are downloaded on first use from GitHub Release (with automatic fallback across public mirror routes such as gh-proxy). Download, verification and deployment all run locally.",
+            "The OTG flashing assistant reads and writes local partitions and attached USB drives, which is high-risk. Verify image sources before flashing and back up your data.",
+            "ROM flashing, DSU installation, image extraction and OTG flashing are risky. Back up your data before proceeding. Any data loss or device damage caused by using this app is at your own risk.",
             "By continuing you confirm that you have read and agreed to the terms above.",
     };
 
-    // 功能页顺序（图三 → 图四 → 图五）：[0]=卡片标题，[1..n]="emoji|标题|描述"
+    // 功能页顺序（图三 → 图四 → DNA → OTG → 图五）：[0]=卡片标题，[1..n]="emoji|标题|描述"
     private static final String[][] PAGES_ZH = {
             {"🚀 ROM 查询与高速下载",
                     "📱|全系机型覆盖|Xiaomi / Redmi / POCO / OPPO / vivo 全系 240+ 机型，按系列智能分类，最新机型排在最前",
@@ -73,6 +79,17 @@ public final class OnboardingActivity extends BaseActivity {
                     "🧩|分区级镜像|system / vendor / boot / product 等分区独立提取，按需导出 .img 镜像",
                     "🎯|提取即用|产出镜像可直接用于 DSU 动态系统更新或 GSI 刷机研究",
                     "🛡|实时进度与校验|提取进度实时展示，大文件后台稳定运行，输出镜像完整可用"},
+            {"🧬 DNA 工具箱",
+                    "🧬|DNA 打包全家桶|移植自酷安用户「相见即是缘」的 DNA 工具箱：分解 / 合成 SUPER、img-dat-br 互转、格式转换一站搞定",
+                    "📦|分解 bin / 增量包|payload.bin / OTA 增量包直接解析，勾选分区逐个提取 .img 镜像",
+                    "☁|工具链云端下载|17 个 CLI 工具（约 15M）首次使用时从 GitHub 下载，APK 减重 27M，下载后一键检测完整性",
+                    "🔌|插件扩展|支持 DNA 插件脚本：去除 vbmeta 验证、一键宽容 SELinux 等进阶玩法",
+                    "🧪|深度检测报告|ROOT 授权、工具包完整性、关键工具真实执行逐项体检，缺失影响一目了然"},
+            {"🔌 OTG 助手",
+                    "📱|本机分区浏览|ROOT 直读分区表，分区大小与类型一目了然，支持镜像导出与替换",
+                    "⚡|OTG 刷机助手|U 盘直连刷入单分区镜像 / 完整刷机包，随时随地，无需电脑",
+                    "🤖|ADB 推送通道|OTG 场景 ADB 直推安装，救砖备用通道",
+                    "🛡|操作透明可控|关键操作二次确认，日志实时滚动，每一步都看得见"},
             {"🧩 DSU 与更多能力",
                     "🔄|DSU 动态系统更新|无需解锁、不动原系统，临时启动新系统镜像，重启即回到原系统",
                     "🐧|内置 Linux 终端|完整 rootfs 环境，手机上的随身开发终端",
@@ -93,6 +110,17 @@ public final class OnboardingActivity extends BaseActivity {
                     "🧩|Partition-Level Images|Extract system / vendor / boot / product partitions independently to .img files",
                     "🎯|Ready To Use|Output images work directly with DSU or GSI flashing research",
                     "🛡|Live Progress & Verification|Extraction progress in real time, stable background runs, verified output images"},
+            {"🧬 DNA Toolbox",
+                    "🧬|Full DNA Toolkit|Ported from Coolapk user XiangJianJiShiYuan's DNA: SUPER unpack / repack, img-dat-br conversion, format conversion in one place",
+                    "📦|bin / Incremental Unpack|Parse payload.bin / OTA incremental packages directly, pick partitions and extract .img files",
+                    "☁|Cloud Toolchain|17 CLI tools (~15M) downloaded from GitHub on first use — 27M lighter APK, with one-tap integrity check",
+                    "🔌|Plugin Extensions|DNA plugin scripts: vbmeta verification removal, one-tap SELinux permissive and more",
+                    "🧪|Deep Check Report|ROOT grant, toolchain integrity and real execution checks item by item, with a clear impact summary"},
+            {"🔌 OTG Assistant",
+                    "📱|Local Partition Browser|Read the partition table with ROOT; sizes and types at a glance, export or replace partition images",
+                    "⚡|OTG Flashing Assistant|Flash single-partition images or full packages straight from a USB drive — no PC needed",
+                    "🤖|ADB Push Channel|Direct ADB push install for OTG scenarios, a brick-rescue backup path",
+                    "🛡|Transparent & Controlled|Double confirmation for critical actions, live scrolling logs — every step visible"},
             {"🧩 DSU & More",
                     "🔄|DSU Dynamic System Updates|Boot a new system image temporarily without unlocking; a reboot returns to the original system",
                     "🐧|Built-in Linux Terminal|Complete rootfs environment, a pocket dev terminal on your phone",
@@ -106,7 +134,7 @@ public final class OnboardingActivity extends BaseActivity {
     private static final int INK_SOFT = 0xff5e6c83;   // 次级文字
     private static final int ACCENT = 0xff2f6fd8;     // 强调蓝
 
-    private static final int PAGE_COUNT = 5;
+    private static final int PAGE_COUNT = 7;   // v3.41.20：5 → 7（新增 DNA 工具箱、OTG 助手两页）
 
     private int page;
     private boolean agreed;
@@ -122,8 +150,6 @@ public final class OnboardingActivity extends BaseActivity {
     private TextView verifyLabel;
     private EditText verifyInput;
     private ScrollView agreementScroll;
-    private int verifyA, verifyB, verifyC;
-    private boolean verifyPlus1, verifyPlus2;   // true = 加法，false = 减法
     private GestureDetector gestureDetector;
     private View fadeContentRoot;   // 内容根视图（就绪页→首页淡入淡出用，背景渐变常驻防黑屏）
 
@@ -148,7 +174,6 @@ public final class OnboardingActivity extends BaseActivity {
         english = languageMode == 2 || (languageMode == 0
                 && !Locale.getDefault().getLanguage().toLowerCase(Locale.ROOT).startsWith("zh"));
         agreed = prefs.getBoolean("agreement_accepted", false);
-        generateVerification();
         getWindow().setStatusBarColor(0x00000000);
         getWindow().setNavigationBarColor(0x33000000);
         // 人机验证键盘弹出时，问题框 / 输入框随键盘同步顶起（adjustResize）
@@ -187,6 +212,9 @@ public final class OnboardingActivity extends BaseActivity {
 
         // 与 ROM 查询完全同款的背景：天蓝光晕 + 蓝绿纵向渐变（液态玻璃的底色）
         rootFrame.setBackground(romBackdrop());
+        // v3.41.20：开屏动态极光背景 —— 蓝紫 / 粉紫 / 青三色光斑缓慢漂移 + 颜色呼吸过渡
+        // （18s 一个来回，对齐图三「开机引导」流光效果），垫在内容层之下透出玻璃卡片
+        rootFrame.addView(new AuroraBackdrop(this), new FrameLayout.LayoutParams(-1, -1));
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -381,6 +409,11 @@ public final class OnboardingActivity extends BaseActivity {
             item.setTextSize(12.5f);
             item.setTextColor(0xff3c4757);
             item.setLineSpacing(dp(3), 1f);
+            // 最后一条（第 8 条）蓝色加粗高亮 —— 与下方验证框中的验证句呼应
+            if (i == clauses.length - 1) {
+                item.setTextColor(ACCENT);
+                item.setTypeface(Typeface.DEFAULT_BOLD);
+            }
             LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
             itemLp.topMargin = i == 0 ? dp(10) : dp(7);
             list.addView(item, itemLp);
@@ -394,32 +427,85 @@ public final class OnboardingActivity extends BaseActivity {
         dividerLp.topMargin = dp(16);
         card.addView(divider, dividerLp);
 
-        // 人机验证（图一：「人机验证：」与算式同为深灰，算式略粗）
-        LinearLayout verifyRow = new LinearLayout(this);
-        verifyRow.setOrientation(LinearLayout.HORIZONTAL);
-        verifyRow.setGravity(Gravity.CENTER_VERTICAL);
+        // 人机验证（v3.41.22：独立验证框 + 一键复制按钮，替代长按条款选择复制）
         TextView verifyPrefix = new TextView(this);
-        verifyPrefix.setText(english ? "Human verification: " : "人机验证：");
+        verifyPrefix.setText(english ? "🤖 Human verification" : "🤖 人机验证");
         verifyPrefix.setTextSize(14);
-        verifyPrefix.setTextColor(INK_SOFT);
-        verifyRow.addView(verifyPrefix, new LinearLayout.LayoutParams(-2, -2));
+        verifyPrefix.setTypeface(Typeface.DEFAULT_BOLD);
+        verifyPrefix.setTextColor(INK);
+        LinearLayout.LayoutParams vpLp = new LinearLayout.LayoutParams(-1, -2);
+        vpLp.topMargin = dp(14);
+        card.addView(verifyPrefix, vpLp);
+
+        // 验证句独立框：句子文本（蓝） + 右侧「复制」按钮
+        LinearLayout verifyBox = new LinearLayout(this);
+        verifyBox.setOrientation(LinearLayout.HORIZONTAL);
+        verifyBox.setGravity(Gravity.CENTER_VERTICAL);
+        verifyBox.setPadding(dp(12), dp(10), dp(10), dp(10));
+        GradientDrawable vbg = new GradientDrawable();
+        vbg.setColor(0x142F6FD8);
+        vbg.setCornerRadius(dp(14));
+        vbg.setStroke(Math.max(1, dp(1)), 0x332F6FD8);
+        verifyBox.setBackground(vbg);
         verifyLabel = new TextView(this);
-        verifyLabel.setText(String.format(Locale.ROOT, "%d %s %d %s %d = ?",
-                verifyA, verifyPlus1 ? "+" : "−", verifyB, verifyPlus2 ? "+" : "−", verifyC));
-        verifyLabel.setTextSize(14.5f);
-        verifyLabel.setTextColor(0xff3c4757);
+        verifyLabel.setText(verifyClauseText());
+        verifyLabel.setTextSize(13);
         verifyLabel.setTypeface(Typeface.DEFAULT_BOLD);
-        verifyRow.addView(verifyLabel, new LinearLayout.LayoutParams(-2, -2));
-        LinearLayout.LayoutParams vrLp = new LinearLayout.LayoutParams(-1, -2);
-        vrLp.topMargin = dp(16);
-        card.addView(verifyRow, vrLp);
+        verifyLabel.setTextColor(ACCENT);
+        verifyLabel.setLineSpacing(dp(2), 1.05f);
+        LinearLayout.LayoutParams vLabelLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        verifyBox.addView(verifyLabel, vLabelLp);
+        Button copyBtn = new Button(this, null, 0);
+        copyBtn.setText(english ? "复制" : "复制");
+        copyBtn.setAllCaps(false);
+        copyBtn.setTextSize(13);
+        copyBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        copyBtn.setTextColor(Color.WHITE);
+        copyBtn.setGravity(Gravity.CENTER);
+        copyBtn.setPadding(dp(14), 0, dp(14), 0);
+        copyBtn.setMinWidth(0);
+        copyBtn.setMinHeight(0);
+        GradientDrawable cbg = new GradientDrawable();
+        cbg.setOrientation(GradientDrawable.Orientation.TL_BR);
+        cbg.setColors(new int[]{0xFF7FAAF5, 0xFF4C74DE});
+        cbg.setCornerRadius(dp(999));
+        copyBtn.setBackground(cbg);
+        copyBtn.setStateListAnimator(null);
+        copyBtn.setOnClickListener(v -> {
+            Haptics.perform(v);
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("verification", verifyClauseText()));
+            android.widget.Toast.makeText(this,
+                    english ? "Copied — long-press the box below and paste" : "已复制，长按下方输入框粘贴即可",
+                    android.widget.Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(-2, dp(34));
+        copyLp.leftMargin = dp(10);
+        verifyBox.addView(copyBtn, copyLp);
+        LinearLayout.LayoutParams vBoxLp = new LinearLayout.LayoutParams(-1, -2);
+        vBoxLp.topMargin = dp(8);
+        card.addView(verifyBox, vBoxLp);
+
+        // 操作说明
+        TextView verifyHint = new TextView(this);
+        verifyHint.setText(english
+                ? "Tap the copy button above, then long-press the input box below and paste. This confirms you are a real person reading the terms."
+                : "点上方「复制」按钮，再长按下方输入框粘贴，即完成验证。以此确认你已实际阅读条款，而非脚本自动跳过。");
+        verifyHint.setTextSize(11.5f);
+        verifyHint.setTextColor(INK_SOFT);
+        verifyHint.setLineSpacing(dp(2), 1.05f);
+        LinearLayout.LayoutParams vhLp = new LinearLayout.LayoutParams(-1, -2);
+        vhLp.topMargin = dp(6);
+        card.addView(verifyHint, vhLp);
 
         verifyInput = new EditText(this);
-        verifyInput.setHint(english ? "Enter the result" : "输入计算结果");
-        verifyInput.setTextSize(15);
+        verifyInput.setHint(english ? "Long-press here and paste" : "长按这里粘贴验证句");
+        verifyInput.setTextSize(14);
         verifyInput.setTextColor(INK);
         verifyInput.setHintTextColor(0xff9aa5b3);
-        verifyInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        // 文本输入（支持粘贴），关闭自动建议避免输入法改写粘贴内容
+        verifyInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
         verifyInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
         verifyInput.setBackground(inputBackground());
         verifyInput.setPadding(dp(14), 0, dp(14), 0);
@@ -439,7 +525,7 @@ public final class OnboardingActivity extends BaseActivity {
             }
             return false;
         });
-        // 键盘弹出 → 滚动到人机验证区域，确保算式与输入框可见
+        // 键盘弹出 → 滚动到人机验证区域，确保说明与输入框可见
         verifyInput.setOnFocusChangeListener((v, hasFocus) -> {
             if (hasFocus && agreementScroll != null) {
                 agreementScroll.postDelayed(() -> agreementScroll.fullScroll(View.FOCUS_DOWN), 150);
@@ -677,13 +763,21 @@ public final class OnboardingActivity extends BaseActivity {
         crossfadeToHome(MainActivity.class);
     }
 
-    // ---------- 图一：MIUI 白色底部授权弹窗 ----------
+    // ---------- 「环境与权限」授权弹窗（v3.41.20：图二风格居中玻璃卡片） ----------
 
     private android.app.Dialog permissionSheet;
     private LinearLayout sheetBody;
     private TextView allowNotification;
     private TextView allowAudio;
     private TextView allowMedia;
+    private TextView rootRow;          // v3.41.20：「验证 Root」行胶囊
+    private boolean rootCheckRunning;  // Root 检测进行中（防重复点击）
+    private TextView allFilesRow;      // v3.41.21：「所有文件访问」行状态圆点
+    private Button confirmButton;      // v3.41.23：底部「一键授权」大按钮（授权中显示进度）
+    /** v3.41.21：「继续」流程等待用户从系统设置开启所有文件访问（回来 onResume 自动前进） */
+    private boolean pendingAllFiles;
+    /** 当前单行授权请求对应的权限（回调里判断永久拒绝 → 引导去设置） */
+    private String[] pendingPerms;
     private TextView pendingRow;
     /** v3.8.8：底部「允许」一键授权流程进行中（系统授权弹窗回调后自动进入下一页） */
     private boolean pendingAllowAll;
@@ -691,82 +785,128 @@ public final class OnboardingActivity extends BaseActivity {
     private void showPermissionSheet() {
         FrameLayout wrap = new FrameLayout(this);
         wrap.setBackgroundColor(0x59000000);
+        // v3.41.20：重做为「环境与权限」居中玻璃卡片弹窗（对齐图二：图标 + 说明 + 选项卡片 + 底部大按钮）
         LinearLayout sheet = new LinearLayout(this);
         sheet.setOrientation(LinearLayout.VERTICAL);
-        sheet.setPadding(dp(24), dp(22), dp(24), dp(10));
-        // MIUI 底部弹窗：纯白 + 仅顶部大圆角
+        sheet.setPadding(dp(22), dp(20), dp(22), dp(14));
         GradientDrawable sheetBg = new GradientDrawable();
-        sheetBg.setColor(0xFFFFFFFF);
-        float r = dp(28);
-        sheetBg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+        sheetBg.setColor(0xF7F0F4FA);
+        sheetBg.setCornerRadius(dp(28));
+        sheetBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
         sheet.setBackground(sheetBg);
-        sheet.setElevation(dp(20));
-        wrap.addView(sheet, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
-        // 底部安全区适配
-        wrap.setOnApplyWindowInsetsListener((v, insets) -> {
-            android.graphics.Insets bars;
-            if (Build.VERSION.SDK_INT >= 30) {
-                bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
-            } else {
-                bars = android.graphics.Insets.of(0, 0, 0, insets.getSystemWindowInsetBottom());
-            }
-            sheet.setPadding(dp(24), dp(22), dp(24), Math.max(bars.bottom, dp(8)));
-            return insets;
-        });
+        sheet.setElevation(dp(18));
+        FrameLayout.LayoutParams sheetLp = new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER);
+        sheetLp.leftMargin = dp(20);
+        sheetLp.rightMargin = dp(20);
+        wrap.addView(sheet, sheetLp);
         sheetBody = sheet;
 
-        TextView heading = new TextView(this);
-        heading.setText(english ? "\u201CDsu Manager\u201D needs the following permissions"
-                : "\u201CDsu 管理器\u201D需要使用以下权限");
-        heading.setTextSize(17);
-        heading.setTypeface(Typeface.DEFAULT_BOLD);
-        heading.setTextColor(0xde000000);
-        heading.setGravity(Gravity.CENTER);
-        sheet.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+        // 顶部渐变圆底盾牌图标（居中）
+        LinearLayout iconCircle = new LinearLayout(this);
+        iconCircle.setGravity(Gravity.CENTER);
+        GradientDrawable circleBg = new GradientDrawable();
+        circleBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+        circleBg.setColors(new int[]{0xFF7FAAF5, 0xFFB98FE8, 0xFFF0A8C8});
+        circleBg.setShape(GradientDrawable.OVAL);
+        circleBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
+        iconCircle.setBackground(circleBg);
+        iconCircle.setElevation(dp(6));
+        TextView shield = new TextView(this);
+        shield.setText("🛡");
+        shield.setTextSize(26);
+        iconCircle.addView(shield, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout.LayoutParams circleLp = new LinearLayout.LayoutParams(dp(62), dp(62));
+        circleLp.gravity = Gravity.CENTER_HORIZONTAL;
+        circleLp.topMargin = dp(4);
+        sheet.addView(iconCircle, circleLp);
 
-        allowNotification = permissionRow(sheet,
-                english ? "Notifications" : "通知",
-                notificationDescription(),
-                english ? "Allow" : "允许",
-                () -> requestPermissionSet("android.permission.POST_NOTIFICATIONS", 1010, allowNotification));
-        allowAudio = permissionRow(sheet,
+        // 标题 + 副标题（图二：居中说明文字）
+        TextView heading = new TextView(this);
+        heading.setText(english ? "Environment & Permissions" : "环境与权限");
+        heading.setTextSize(18);
+        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        heading.setTextColor(INK);
+        heading.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams headingLp = new LinearLayout.LayoutParams(-1, -2);
+        headingLp.topMargin = dp(10);
+        sheet.addView(heading, headingLp);
+        TextView subtitle = new TextView(this);
+        subtitle.setText(english
+                ? "With Root granted, tap \"Grant all\" and everything completes automatically. Without Root, \"All files access\" needs to be enabled manually in app details."
+                : "已授权 Root 时，点击「一键授权」即可全部自动完成，不跳转设置；未授权 Root 时，「所有文件访问」需跳转应用详情手动开启，其余权限仍可自动授予。");
+        subtitle.setTextSize(12);
+        subtitle.setTextColor(INK_SOFT);
+        subtitle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
+        subLp.topMargin = dp(4);
+        sheet.addView(subtitle, subLp);
+
+        // 选项卡片行（整行可点击授权）
+        allowNotification = envRow(sheet, "🔔",
+                english ? "Notifications" : "通知权限", notificationDescription(),
+                () -> grantRow(allowNotification, 1010,
+                        new String[]{"android.permission.POST_NOTIFICATIONS"}, false));
+        allowAudio = envRow(sheet, "🎵",
                 english ? "Music & audio" : "音频文件",
                 english ? "Read and edit music and audio files" : "读取和编辑音乐、音频文件",
-                english ? "Allow" : "允许",
-                () -> requestPermissionSet("android.permission.READ_MEDIA_AUDIO", 1011, allowAudio));
-        allowMedia = permissionRow(sheet,
+                () -> grantRow(allowAudio, 1011,
+                        new String[]{"android.permission.READ_MEDIA_AUDIO"}, false));
+        allowMedia = envRow(sheet, "🖼️",
                 english ? "Photos and videos" : "照片和视频",
                 english ? "Read and edit photos and video files" : "读取和编辑照片、视频文件",
-                english ? "All photos and videos" : "全部照片和视频",
-                () -> requestPermissionSet("android.permission.READ_MEDIA_IMAGES,android.permission.READ_MEDIA_VIDEO",
-                        1012, allowMedia));
+                () -> grantRow(allowMedia, 1012,
+                        new String[]{"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"}, false));
+        // v3.41.21：补「所有文件访问」—— ROM 选择 / 镜像保存到公共目录的核心权限
+        // v3.41.22：ROOT 可用时直接 appops set 静默开启，不再跳系统设置页
+        allFilesRow = envRow(sheet, "📂",
+                english ? "All files access" : "所有文件访问",
+                english ? "Required for picking ROM packages and saving images to public folders. Without Root this must be enabled manually in app details."
+                        : "选择 ROM 包、保存镜像到公共目录需要此权限。未授权 Root 时需跳转应用详情手动开启",
+                () -> grantRow(allFilesRow, 1014, new String[0], true));
+        rootRow = envRow(sheet, "🧢",
+                english ? "Verify Root" : "验证 Root",
+                english ? "ROOT is required by DSU install, image extraction, DNA toolbox and OTG"
+                        : "DSU 安装、镜像提取、DNA 工具箱、OTG 助手均需要 ROOT 授权",
+                null);   // 点击行为单独接 runRootCheck
+        rootRow.setOnClickListener(v -> {
+            Haptics.perform(v);
+            runRootCheck();
+        });
+        // v3.41.23：打开即对账全部行（已授权的立即亮绿）+ 静默自检 ROOT
+        refreshAllPermissionRows();
+        runRootCheck();
 
-        // 底部操作（v3.8.8）：允许（蓝色粗体）在上、不允许（蓝色）在下 —— 「允许」一键发起全部
-        // 未授权权限的真实系统授权（此前「确定」只关弹窗不授权，导致通知权限缺失、通知栏不显示）
-        Button confirm = new Button(this, null, 0);
-        confirm.setText(english ? "Allow" : "允许");
-        confirm.setAllCaps(false);
-        confirm.setTextSize(16.5f);
-        confirm.setTypeface(Typeface.DEFAULT_BOLD);
-        confirm.setTextColor(ACCENT);
-        confirm.setStateListAnimator(null);
-        confirm.setBackground(rounded(0x00000000, 0));
-        confirm.setIncludeFontPadding(false);
-        confirm.setGravity(Gravity.CENTER);
-        confirm.setPadding(0, 0, 0, 0);
-        confirm.setOnClickListener(v -> {
+        // 底部「一键授权」大按钮（品牌渐变蓝，全宽 48dp）—— 点击后 ROOT 自动授予全部权限
+        confirmButton = new Button(this, null, 0);
+        confirmButton.setText(english ? "Grant all" : "一键授权");
+        confirmButton.setAllCaps(false);
+        confirmButton.setTextSize(15.5f);
+        confirmButton.setTypeface(Typeface.DEFAULT_BOLD);
+        confirmButton.setTextColor(Color.WHITE);
+        confirmButton.setStateListAnimator(null);
+        confirmButton.setGravity(Gravity.CENTER);
+        confirmButton.setPadding(0, 0, 0, 0);
+        GradientDrawable confirmBg = new GradientDrawable();
+        confirmBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+        confirmBg.setColors(new int[]{0xFF7FAAF5, 0xFF4C74DE, 0xFF3E63C9});
+        confirmBg.setCornerRadius(dp(22));
+        confirmBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
+        confirmButton.setBackground(confirmBg);
+        confirmButton.setElevation(dp(6));
+        confirmButton.setOnClickListener(v -> {
             Haptics.perform(v);
             requestAllThenDismiss();
         });
-        LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-1, dp(46));
-        confirmLp.topMargin = dp(10);
-        sheet.addView(confirm, confirmLp);
+        LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-1, dp(48));
+        confirmLp.topMargin = dp(14);
+        sheet.addView(confirmButton, confirmLp);
 
+        // 次级入口：暂不授权直接进入（不阻塞引导）
         Button cancel = new Button(this, null, 0);
-        cancel.setText(english ? "Don't Allow" : "不允许");
+        cancel.setText(english ? "Skip for now" : "暂不授权，直接进入");
         cancel.setAllCaps(false);
-        cancel.setTextSize(15.5f);
-        cancel.setTextColor(ACCENT);
+        cancel.setTextSize(13);
+        cancel.setTextColor(INK_SOFT);
         cancel.setStateListAnimator(null);
         cancel.setBackground(rounded(0x00000000, 0));
         cancel.setIncludeFontPadding(false);
@@ -776,7 +916,7 @@ public final class OnboardingActivity extends BaseActivity {
             Haptics.perform(v);
             dismissSheetThen();
         });
-        sheet.addView(cancel, new LinearLayout.LayoutParams(-1, dp(44)));
+        sheet.addView(cancel, new LinearLayout.LayoutParams(-1, dp(40)));
 
         permissionSheet = new android.app.Dialog(this);
         permissionSheet.setContentView(wrap);
@@ -786,19 +926,110 @@ public final class OnboardingActivity extends BaseActivity {
         permissionSheet.setCancelable(false);
         permissionSheet.show();
 
-        // MIUI 底部滑入动画
+        // 居中缩放淡入（弹性）
         wrap.setAlpha(0f);
         wrap.animate().alpha(1f).setDuration(200).start();
-        sheet.post(() -> {
-            sheet.setTranslationY(sheet.getHeight() + dp(16));
-            sheet.animate().translationY(0f)
-                    .setDuration(320)
-                    .setInterpolator(new DecelerateInterpolator(1.15f))
-                    .start();
+        sheet.setScaleX(0.92f);
+        sheet.setScaleY(0.92f);
+        sheet.animate().scaleX(1f).scaleY(1f)
+                .setDuration(340)
+                .setInterpolator(new DecelerateInterpolator(1.2f))
+                .start();
+
+        // v3.41.23：已合并入上方 refreshAllPermissionRows()（含所有文件访问与照片视频）
+    }
+
+    /** 「环境与权限」选项行：图标圆 + 标题/描述 + 右侧状态圆点（整行可点单行授权）；
+     *  v3.41.23 图一风格：空心圆 = 待授权，绿色实心 ✓ = 已授权（去掉逐项「授权/去设置」按钮） */
+    private TextView envRow(LinearLayout parent, String emoji, String title, CharSequence desc, Runnable grant) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        GradientDrawable rowBg = new GradientDrawable();
+        rowBg.setColor(0xCFFFFFFF);
+        rowBg.setCornerRadius(dp(18));
+        rowBg.setStroke(Math.max(1, dp(1)), 0x4DFFFFFF);
+        row.setBackground(rowBg);
+        row.setElevation(dp(2));
+
+        LinearLayout circle = new LinearLayout(this);
+        circle.setGravity(Gravity.CENTER);
+        GradientDrawable cb = new GradientDrawable();
+        cb.setOrientation(GradientDrawable.Orientation.TL_BR);
+        cb.setColors(new int[]{0xFFBFD4F2, 0xFF9FBFE8});
+        cb.setShape(GradientDrawable.OVAL);
+        circle.setBackground(cb);
+        TextView icon = new TextView(this);
+        icon.setText(emoji);
+        icon.setTextSize(17);
+        circle.addView(icon, new LinearLayout.LayoutParams(-2, -2));
+        row.addView(circle, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        LinearLayout tb = new LinearLayout(this);
+        tb.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new TextView(this);
+        name.setText(title);
+        name.setTextSize(14);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        name.setTextColor(INK);
+        tb.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        TextView detail = new TextView(this);
+        detail.setText(desc);
+        detail.setTextSize(11);
+        detail.setTextColor(INK_SOFT);
+        detail.setLineSpacing(dp(1), 1.05f);
+        if (desc instanceof android.text.Spanned) {
+            detail.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
+            detail.setHighlightColor(0x1a2f6fd8);
+        }
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+        detailLp.topMargin = dp(2);
+        tb.addView(detail, detailLp);
+        LinearLayout.LayoutParams tbLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        tbLp.leftMargin = dp(11);
+        row.addView(tb, tbLp);
+
+        // v3.41.23：状态圆点 —— 待授权：透明底灰描边空心圆；已授权：绿色实心 + 白 ✓
+        TextView dot = new TextView(this);
+        dot.setText("✓");
+        dot.setTextSize(12);
+        dot.setTypeface(Typeface.DEFAULT_BOLD);
+        dot.setTextColor(Color.WHITE);
+        dot.setGravity(Gravity.CENTER);
+        GradientDrawable dotBg = new GradientDrawable();
+        dotBg.setShape(GradientDrawable.OVAL);
+        dotBg.setColor(0x00000000);
+        dotBg.setStroke(Math.max(1, dp(2)), 0xFFB7C3D6);
+        dot.setBackground(dotBg);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(24), dp(24));
+        dotLp.leftMargin = dp(8);
+        row.addView(dot, dotLp);
+
+        row.setOnClickListener(v -> {
+            Haptics.perform(v);
+            if (grant != null) grant.run();
         });
 
-        refreshPermissionRow(allowNotification, "android.permission.POST_NOTIFICATIONS");
-        refreshPermissionRow(allowAudio, "android.permission.READ_MEDIA_AUDIO");
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.topMargin = dp(9);
+        parent.addView(row, rowLp);
+        return dot;
+    }
+
+    /** 「验证 Root」行：后台静默检测 su 可用性，成功则圆点亮绿（不阻塞，可重复点） */
+    private void runRootCheck() {
+        if (rootRow == null || rootCheckRunning) return;
+        rootCheckRunning = true;
+        new Thread(() -> {
+            boolean ok = false;
+            try { ok = RootShell.INSTANCE.available(); } catch (Exception ignored) { }
+            final boolean granted = ok;
+            runOnUiThread(() -> {
+                rootCheckRunning = false;
+                if (granted) markAllowed(rootRow);
+            });
+        }, "onboard-root-check").start();
     }
 
     /** 通知权限说明（图二参考，一字不差）：正文中「通知管理」为蓝色可点击，直达系统通知设置 */
@@ -829,64 +1060,13 @@ public final class OnboardingActivity extends BaseActivity {
         return span;
     }
 
-    /** MIUI 权限行（图二）：名称加粗在上，灰色描述在下，「允许」蓝色文字在描述下方左侧 */
-    private TextView permissionRow(LinearLayout sheet, String title, CharSequence desc,
-                                   String actionLabel, Runnable grant) {
-        LinearLayout block = new LinearLayout(this);
-        block.setOrientation(LinearLayout.VERTICAL);
-
-        TextView name = new TextView(this);
-        name.setText(title);
-        name.setTextSize(16);
-        name.setTypeface(Typeface.DEFAULT_BOLD);
-        name.setTextColor(0xde000000);
-        block.addView(name, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView detail = new TextView(this);
-        detail.setText(desc);
-        detail.setTextSize(13);
-        detail.setTextColor(0x8a000000);
-        detail.setLineSpacing(dp(2), 1.05f);
-        if (desc instanceof android.text.Spanned) {
-            detail.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
-            detail.setHighlightColor(0x1a2f6fd8);
-        }
-        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
-        detailLp.topMargin = dp(6);
-        block.addView(detail, detailLp);
-
-        TextView allow = new TextView(this);
-        allow.setText(actionLabel);
-        allow.setTextSize(14);
-        allow.setTextColor(ACCENT);
-        allow.setPadding(0, 0, dp(14), dp(4));   // 扩大点击热区
-        allow.setOnClickListener(v -> {
-            Haptics.perform(v);
-            grant.run();
-        });
-        LinearLayout.LayoutParams allowLp = new LinearLayout.LayoutParams(-2, -2);
-        allowLp.topMargin = dp(8);
-        block.addView(allow, allowLp);
-
-        View divider = new View(this);
-        divider.setBackground(rounded(0x0f000000, 1));
-        LinearLayout.LayoutParams dividerLp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1)));
-        dividerLp.topMargin = dp(14);
-        block.addView(divider, dividerLp);
-
-        LinearLayout.LayoutParams blockLp = new LinearLayout.LayoutParams(-1, -2);
-        blockLp.topMargin = dp(16);
-        sheet.addView(block, blockLp);
-        return allow;
-    }
-
-    /** 授权弹窗关闭 → 进入第 2 页（ROM 查询与高速下载） */
+    /** 授权弹窗关闭 → 进入第 2 页（ROM 查询与高速下载）；v3.41.20 居中卡片：缩放淡出 */
     private void dismissSheetThen() {
         if (permissionSheet != null) {
             View sheet = sheetBody;
             if (sheet != null) {
-                sheet.animate().translationY(sheet.getHeight() + dp(16))
-                        .setDuration(240)
+                sheet.animate().scaleX(0.94f).scaleY(0.94f).alpha(0f)
+                        .setDuration(220)
                         .setListener(new AnimatorListenerAdapter() {
                             @Override public void onAnimationEnd(Animator a) {
                                 if (permissionSheet != null) permissionSheet.dismiss();
@@ -926,11 +1106,97 @@ public final class OnboardingActivity extends BaseActivity {
     }
 
     /**
+     * v3.41.22：单行授权统一入口 —— ROOT 可用时直接 pm grant / appops set 静默授权
+     * （点一下立即变绿，无需系统弹窗、无需跳设置页，对齐图五「直接点击授权」体验）；
+     * 无 ROOT 才回退系统 requestPermissions / 跳设置页。
+     */
+    private void grantRow(TextView row, int reqCode, String[] perms, boolean allFiles) {
+        new Thread(() -> {
+            boolean rooted = false;
+            try { rooted = RootShell.INSTANCE.available(); } catch (Exception ignored) { }
+            if (rooted) {
+                String pkg = getPackageName();
+                for (String p : perms) {
+                    try { RootShell.INSTANCE.exec("pm grant " + pkg + " " + p, 10000L, null); } catch (Exception ignored) { }
+                }
+                if (allFiles) {
+                    try {
+                        RootShell.INSTANCE.exec("pm grant " + pkg + " android.permission.MANAGE_EXTERNAL_STORAGE", 10000L, null);
+                    } catch (Exception ignored) { }
+                    try {
+                        RootShell.INSTANCE.exec("appops set " + pkg + " MANAGE_EXTERNAL_STORAGE allow", 10000L, null);
+                    } catch (Exception ignored) { }
+                }
+                runOnUiThread(() -> {
+                    if (allFiles) refreshAllFilesRow();
+                    else if (perms.length > 0) reconcileRow(row, perms);
+                });
+            } else {
+                runOnUiThread(() -> {
+                    if (allFiles) requestAllFilesAccess();
+                    else if (perms.length > 0)
+                        requestPermissionSet(String.join(",", perms), reqCode, row);
+                });
+            }
+        }, "grant-row").start();
+    }
+
+    /**
      * v3.8.8：底部「允许」一键授权 —— 收集全部未授权权限（通知 / 音频 / 照片和视频），
      * 一次 requestPermissions 发起真实系统授权；回调到达后刷新各行状态并进入下一页。
-     * 已全部授权（或系统不支持）时直接关闭弹窗前进。
+     * v3.41.21 全自动流：运行时权限齐了以后，若 Android 11+「所有文件访问」未开启，
+     * 自动跳系统设置页，用户开启后返回（onResume）自动关闭弹窗进入下一页。
+     * v3.41.22：ROOT 可用时整组直接 pm grant + appops 一键全绿（不弹任何系统窗口）。
      */
     private void requestAllThenDismiss() {
+        // v3.41.23：按钮进入「正在授权…」状态，防止重复点击
+        if (confirmButton != null) {
+            confirmButton.setEnabled(false);
+            confirmButton.setText(english ? "Granting…" : "正在授权…");
+        }
+        new Thread(() -> {
+            boolean rooted = false;
+            try { rooted = RootShell.INSTANCE.available(); } catch (Exception ignored) { }
+            if (rooted) {
+                String pkg = getPackageName();
+                String[] runtime = {
+                        "android.permission.POST_NOTIFICATIONS",
+                        "android.permission.READ_MEDIA_AUDIO",
+                        "android.permission.READ_MEDIA_IMAGES",
+                        "android.permission.READ_MEDIA_VIDEO",
+                };
+                for (String p : runtime) {
+                    if (checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED) continue;
+                    try { RootShell.INSTANCE.exec("pm grant " + pkg + " " + p, 10000L, null); } catch (Exception ignored) { }
+                }
+                if (needAllFiles()) {
+                    try {
+                        RootShell.INSTANCE.exec("pm grant " + pkg + " android.permission.MANAGE_EXTERNAL_STORAGE", 10000L, null);
+                    } catch (Exception ignored) { }
+                    try {
+                        RootShell.INSTANCE.exec("appops set " + pkg + " MANAGE_EXTERNAL_STORAGE allow", 10000L, null);
+                    } catch (Exception ignored) { }
+                }
+                runOnUiThread(() -> {
+                    refreshAllPermissionRows();
+                    runRootCheck();
+                    dismissSheetThen();
+                });
+                return;
+            }
+            // 无 ROOT：系统弹窗流（恢复按钮可点，由回调推进）
+            runOnUiThread(() -> {
+                if (confirmButton != null) {
+                    confirmButton.setEnabled(true);
+                    confirmButton.setText(english ? "Grant all" : "一键授权");
+                }
+                requestAllThenDismissViaSystem();
+            });
+        }, "grant-all").start();
+    }
+
+    /** 无 ROOT 时的「继续」：系统弹窗批量授权 + 所有文件访问跳设置（原 v3.41.21 流程） */
+    private void requestAllThenDismissViaSystem() {
         java.util.List<String> need = new java.util.ArrayList<>();
         String[][] groups = {
                 {"android.permission.POST_NOTIFICATIONS"},
@@ -948,15 +1214,70 @@ public final class OnboardingActivity extends BaseActivity {
             if (!granted) need.addAll(java.util.Arrays.asList(group));
         }
         if (need.isEmpty()) {
-            // 已全部授权：三行立即标记「已允许」并前进
-            refreshPermissionRow(allowNotification, "android.permission.POST_NOTIFICATIONS");
-            refreshPermissionRow(allowAudio, "android.permission.READ_MEDIA_AUDIO");
-            refreshPermissionRow(allowMedia, "android.permission.READ_MEDIA_IMAGES");
+            // 运行时权限已齐：检查「所有文件访问」，未开启则引导去系统设置（返回后自动前进）
+            refreshAllPermissionRows();
+            if (needAllFiles()) {
+                pendingAllFiles = true;
+                requestAllFilesAccess();
+                return;
+            }
             dismissSheetThen();
             return;
         }
         pendingAllowAll = true;
         requestPermissions(need.toArray(new String[0]), 1013);
+    }
+
+    /** Android 11+ 是否需要开启「所有文件访问」（旧版本由 WRITE_EXTERNAL_STORAGE 覆盖） */
+    private boolean needAllFiles() {
+        if (Build.VERSION.SDK_INT < 30) return false;
+        return !android.os.Environment.isExternalStorageManager();
+    }
+
+    /** 跳系统「所有文件访问」设置页（优先直达本应用开关，失败回退到总开关列表） */
+    private void requestAllFilesAccess() {
+        if (!needAllFiles()) {
+            refreshAllFilesRow();
+            return;
+        }
+        try {
+            startActivity(new android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    android.net.Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            try {
+                startActivity(new android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            } catch (Exception ignored) { }
+        }
+    }
+
+    /** 「所有文件访问」胶囊状态：已开启 → 绿色 ✓；未开启保持「授权」可点击 */
+    private void refreshAllFilesRow() {
+        if (allFilesRow == null) return;
+        if (!needAllFiles()) {
+            markAllowed(allFilesRow);
+        }
+    }
+
+    /** 弹窗打开期间从系统设置/授权弹窗返回 → 全部行状态对账刷新（v3.41.21：解决"允许了却不变绿"） */
+    @Override protected void onResume() {
+        super.onResume();
+        if (permissionSheet != null && permissionSheet.isShowing()) {
+            refreshAllPermissionRows();
+            // 「继续」流程等待所有文件访问：开启成功 → 自动关闭弹窗进入下一页
+            if (pendingAllFiles && !needAllFiles()) {
+                pendingAllFiles = false;
+                dismissSheetThen();
+            }
+        }
+    }
+
+    private void refreshAllPermissionRows() {
+        refreshPermissionRow(allowNotification, "android.permission.POST_NOTIFICATIONS");
+        refreshPermissionRow(allowAudio, "android.permission.READ_MEDIA_AUDIO");
+        refreshPermissionRow(allowMedia, "android.permission.READ_MEDIA_IMAGES");
+        refreshAllFilesRow();
     }
 
     private void requestPermissionSet(String permissions, int requestCode, TextView row) {
@@ -973,15 +1294,30 @@ public final class OnboardingActivity extends BaseActivity {
             return;
         }
         pendingRow = row;
+        pendingPerms = list;
         requestPermissions(list, requestCode);
     }
 
     private void markAllowed(TextView row) {
         if (row == null) return;
-        row.setText(english ? "Allowed" : "已允许");
-        row.setTextColor(0xff9aa5b3);
-        row.setBackground(rounded(0x00000000, 0));
-        row.setOnClickListener(null);
+        // v3.41.23：授权后圆点 → 绿色实心 + 白 ✓
+        GradientDrawable okBg = new GradientDrawable();
+        okBg.setShape(GradientDrawable.OVAL);
+        okBg.setColor(0xFF34A853);
+        okBg.setStroke(Math.max(1, dp(1)), 0xFF1D7A4F);
+        row.setBackground(okBg);
+    }
+
+    /**
+     * v3.41.23：删除「去设置」橙色按钮 —— ROOT 路径直接 pm grant / appops 授权，
+     * 永久拒绝也能强制授予；无 ROOT 才走系统弹窗。对账失败一律保持空心圆（可再点）。
+     */
+    private void reconcileRow(TextView row, String[] perms) {
+        boolean granted = true;
+        for (String p : perms) {
+            if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) { granted = false; break; }
+        }
+        if (granted) markAllowed(row);
     }
 
     private void refreshPermissionRow(TextView row, String permission) {
@@ -994,20 +1330,35 @@ public final class OnboardingActivity extends BaseActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         // v3.8.8：底部「允许」一键授权回调 → 刷新三行状态后进入下一页（拒绝也不阻塞引导）
         if (requestCode == 1013) {
-            refreshPermissionRow(allowNotification, "android.permission.POST_NOTIFICATIONS");
-            refreshPermissionRow(allowAudio, "android.permission.READ_MEDIA_AUDIO");
-            refreshPermissionRow(allowMedia, "android.permission.READ_MEDIA_IMAGES");
+            reconcileRow(allowNotification, new String[]{"android.permission.POST_NOTIFICATIONS"});
+            reconcileRow(allowAudio, new String[]{"android.permission.READ_MEDIA_AUDIO"});
+            reconcileRow(allowMedia, new String[]{"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"});
             if (pendingAllowAll) {
                 pendingAllowAll = false;
-                dismissSheetThen();
+                // 运行时权限走完：Android 11+ 所有文件访问未开启 → 跳设置，返回后自动前进
+                if (needAllFiles()) {
+                    pendingAllFiles = true;
+                    android.widget.Toast.makeText(this,
+                            english ? "One more step: enable \"All files access\" in Settings, then return"
+                                    : "还差一步：在系统设置中开启「所有文件访问」后返回即可",
+                            android.widget.Toast.LENGTH_LONG).show();
+                    requestAllFilesAccess();
+                } else {
+                    dismissSheetThen();
+                }
             }
             pendingRow = null;
+            pendingPerms = null;
             return;
         }
-        if (pendingRow != null && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            markAllowed(pendingRow);
+        if (pendingRow != null) {
+            if (pendingPerms != null) reconcileRow(pendingRow, pendingPerms);
+            else if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                markAllowed(pendingRow);
+            }
         }
         pendingRow = null;
+        pendingPerms = null;
     }
 
     @Override public void onBackPressed() {
@@ -1024,13 +1375,25 @@ public final class OnboardingActivity extends BaseActivity {
 
     // ---------- 状态刷新 ----------
 
+    // v3.41.21：人机验证改为「长按复制第 8 条条款原文 → 粘贴」——
+    // 输入内容与条款原文归一化后一致即通过（替代旧加减算式）
     private boolean answerCorrect() {
         if (verifyInput == null) return false;
-        try {
-            return Integer.parseInt(verifyInput.getText().toString().trim()) == verificationAnswer();
-        } catch (Exception e) {
-            return false;
-        }
+        String input = normalizeClause(verifyInput.getText().toString());
+        return !input.isEmpty() && input.equals(normalizeClause(verifyClauseText()));
+    }
+
+    /** 人机验证的粘贴目标：最后一条条款（第 8 条）原文 */
+    private String verifyClauseText() {
+        String[] clauses = english ? CLAUSES_EN : CLAUSES_ZH;
+        return clauses[clauses.length - 1];
+    }
+
+    /** 粘贴内容归一化：trim + 连续空白合一 + 去尾部句号 + 忽略大小写（英文） */
+    private String normalizeClause(String s) {
+        return s == null ? "" : s.trim().replaceAll("\\s+", " ")
+                .replaceAll("[。．.]$", "")
+                .toLowerCase(Locale.ROOT);
     }
 
     private boolean agreeButtonReady() {
@@ -1105,23 +1468,6 @@ public final class OnboardingActivity extends BaseActivity {
                 v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()).start();
     }
 
-    private void generateVerification() {
-        Random random = new Random();
-        do {
-            verifyA = 20 + random.nextInt(79);   // 20-98
-            verifyB = 1 + random.nextInt(49);    // 1-49
-            verifyC = 1 + random.nextInt(29);    // 1-29
-            verifyPlus1 = random.nextBoolean();  // 第一个运算符随机：+ 或 -
-            verifyPlus2 = random.nextBoolean();  // 第二个运算符随机：+ 或 -
-        } while (verificationAnswer() <= 0);
-    }
-
-    /** 当前算式的答案（加法 / 减法混合运算，从左到右计算） */
-    private int verificationAnswer() {
-        int step = verifyPlus1 ? verifyA + verifyB : verifyA - verifyB;
-        return verifyPlus2 ? step + verifyC : step - verifyC;
-    }
-
     // ---------- 绘制工具 ----------
 
     private TextView cardTitle(String text) {
@@ -1192,5 +1538,75 @@ public final class OnboardingActivity extends BaseActivity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    // ---------- v3.41.20：开屏动态极光背景 ----------
+
+    /**
+     * 开屏「流光」背景（对齐图三开机引导的动态弥散渐变）：
+     * 三个彩色光斑（蓝紫 / 粉紫 / 青）各自沿椭圆轨迹缓慢漂移，颜色随相位呼吸过渡，
+     * 18 秒一个来回（REVERSE 往返，永不落幕）。半透明叠加在静态液态玻璃底色之上，
+     * 玻璃卡片半透明处会随光斑流动微微变色 —— 「Dsu 管理器」标题下方流光溢彩。
+     */
+    private final class AuroraBackdrop extends View {
+        private final android.animation.ValueAnimator phase;
+        // 每个光斑：中心相对位置 [x, y] 与两端呼吸色（ARGB，含透明度）
+        private final float[][] centers = {{0.22f, 0.16f}, {0.80f, 0.30f}, {0.50f, 0.88f}};
+        private final int[][] palette = {
+                {0x5A7FAAF5, 0x5AB98FE8},   // 蓝紫 → 亮紫
+                {0x5AF0A8C8, 0x5AD48BA8},   // 粉紫 → 玫瑰
+                {0x5A9FE0DC, 0x5AB8C4FF},   // 青 → 蓝白
+        };
+        private final android.graphics.Paint paint = new android.graphics.Paint();
+
+        AuroraBackdrop(android.content.Context ctx) {
+            super(ctx);
+            setLayerType(View.LAYER_TYPE_HARDWARE, null);
+            phase = android.animation.ValueAnimator.ofFloat(0f, 1f);
+            phase.setDuration(18000L);
+            phase.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            phase.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+            phase.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+            phase.addUpdateListener(a -> invalidate());
+            phase.start();
+        }
+
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            super.onDraw(canvas);
+            float p = (float) phase.getAnimatedValue();
+            int w = getWidth(), h = getHeight();
+            if (w <= 0 || h <= 0) return;
+            float span = Math.max(w, h);
+            for (int i = 0; i < centers.length; i++) {
+                float wobble = (float) Math.sin(p * Math.PI * 2f + i * 2.1f);
+                float x = (centers[i][0] + 0.09f * wobble) * w;
+                float y = (centers[i][1] + 0.05f * (float) Math.cos(p * Math.PI * 2f + i * 1.7f)) * h;
+                float t = 0.5f + 0.5f * (float) Math.sin(p * Math.PI + i * 1.3f);
+                int color = blend(palette[i][0], palette[i][1], t);
+                float radius = span * (0.40f + 0.07f * wobble);
+                paint.reset();
+                paint.setAntiAlias(true);
+                paint.setShader(new android.graphics.RadialGradient(
+                        x, y, radius, color, 0, android.graphics.Shader.TileMode.CLAMP));
+                canvas.drawCircle(x, y, radius, paint);
+            }
+        }
+
+        /** 两 ARGB 颜色按 t∈[0,1] 线性插值 */
+        private int blend(int a, int b, float t) {
+            float clamped = Math.max(0f, Math.min(1f, t));
+            int aa = (a >> 24) & 0xFF, ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
+            int ba = (b >> 24) & 0xFF, br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
+            return Color.argb(
+                    Math.round(aa + (ba - aa) * clamped),
+                    Math.round(ar + (br - ar) * clamped),
+                    Math.round(ag + (bg - ag) * clamped),
+                    Math.round(ab + (bb - ab) * clamped));
+        }
+
+        @Override protected void onDetachedFromWindow() {
+            phase.cancel();
+            super.onDetachedFromWindow();
+        }
     }
 }
