@@ -790,10 +790,7 @@ public final class OnboardingActivity extends BaseActivity {
         FrameLayout wrap = new FrameLayout(this);
         wrap.setBackgroundColor(0x59000000);
         // v3.41.20：重做为「环境与权限」居中玻璃卡片弹窗（对齐图二：图标 + 说明 + 选项卡片 + 底部大按钮）
-        // v3.42.13：权限行增至 6 行后弹窗高度超出屏幕、底部按钮被截断 ——
-        // sheet 限制最大高度（屏高 86%），权限行区域改为可滚动，头部与底部按钮固定
-        LinearLayout sheet = new MaxHeightLinearLayout(this,
-                (int) (getResources().getDisplayMetrics().heightPixels * 0.86f));
+        LinearLayout sheet = new LinearLayout(this);
         sheet.setOrientation(LinearLayout.VERTICAL);
         sheet.setPadding(dp(22), dp(20), dp(22), dp(14));
         GradientDrawable sheetBg = new GradientDrawable();
@@ -848,9 +845,14 @@ public final class OnboardingActivity extends BaseActivity {
         subLp.topMargin = dp(4);
         sheet.addView(subtitle, subLp);
 
-        // v3.42.13：权限行放进可滚动容器 —— 行数多时中间区域滚动，
-        // 头部与底部「一键授权」按钮固定，不再被屏幕截断
-        ScrollView rowsScroll = new ScrollView(this);
+        // v3.42.14：权限行放进可滚动容器。修复 v3.42.13 的错误修复 ——
+        // 弹窗在 AT_MOST 测量模式下 LinearLayout 不会收缩 wrap_content 的 ScrollView，
+        // 内容超出直接把底部按钮裁掉（按钮整个消失）。改为直接限制滚动区自身高度：
+        // 头部（图标/标题/说明 ≈160dp）+ 底部按钮区（≈136dp）+ 弹窗内边距（34dp）固定约 320dp，
+        // 滚动区上限 = 屏高 86% − 320dp（下限 200dp）—— 内容少时弹窗随内容自适应，
+        // 内容多时中间滚动，按钮永远完整可见。
+        ScrollView rowsScroll = new MaxHeightScrollView(this, Math.max(dp(200),
+                (int) (getResources().getDisplayMetrics().heightPixels * 0.86f) - dp(320)));
         rowsScroll.setVerticalScrollBarEnabled(false);
         rowsScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         LinearLayout rowsContainer = new LinearLayout(this);
@@ -1044,14 +1046,16 @@ public final class OnboardingActivity extends BaseActivity {
     }
 
     /**
-     * v3.42.13：限制最大高度的 LinearLayout —— 权限行增至 6 行后弹窗高度超出屏幕、
-     * 底部「一键授权」按钮被截断的修复。超出最大高度时收缩到上限，
-     * 由内部的权限行 ScrollView 滚动展示剩余内容，头部与底部按钮始终保持可见。
+     * v3.42.14：限制最大高度的 ScrollView —— 权限行区域的滚动容器。
+     * ScrollView 的 FrameLayout.onMeasure 在 AT_MOST 下天然 resolveSize 收缩（该语义 100% 可靠），
+     * 因此把高度上限施加在滚动区自身而不是外层弹窗：
+     * 内容不足上限时弹窗随内容自适应；超过时中间滚动，头部与底部「一键授权」
+     * /「暂不授权」按钮固定在弹窗内不被裁剪。
      */
-    private static final class MaxHeightLinearLayout extends LinearLayout {
+    private static final class MaxHeightScrollView extends ScrollView {
         private final int maxHeightPx;
 
-        MaxHeightLinearLayout(Context context, int maxHeightPx) {
+        MaxHeightScrollView(Context context, int maxHeightPx) {
             super(context);
             this.maxHeightPx = maxHeightPx;
         }
