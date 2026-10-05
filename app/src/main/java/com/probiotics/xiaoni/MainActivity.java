@@ -5965,7 +5965,7 @@ public class MainActivity extends BaseActivity {
         }
     }
     /**
-     * v3.41.27：动态计算本机可分配的 DSU userdata 最大容量（GB）—— 不再固定 128GB。
+     * v3.42.10：动态计算本机可分配的 DSU userdata 最大容量（GB）—— 不再固定 128GB。
      * 对齐 DSU-Sideloader 源码：预留剩余空间的 40%（与 5GB 取大者）作为主系统
      * 安全水位 —— DSU userdata 与主系统共享 /data 分区，预留不足会把主系统挤到没容量。
      * 检测失败回退旧上限 128GB。

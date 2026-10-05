@@ -24,7 +24,7 @@ object DnaTools {
         "mkfs.f2fs", "payload_extract", "resize2fs", "sload_f2fs", "zstd",
     )
 
-    // v3.41.25：工具包改用独立固定 Release（tag: dna-tools）—— 与 APP 版本 Release 彻底解耦，
+    // v3.42.10：工具包改用独立固定 Release（tag: dna-tools）—— 与 APP 版本 Release 彻底解耦，
     // 以后工具链更新只需替换该 Release 里的 dna-tools*.zip 附件，APP 发版不必再跟着上传工具包；
     // 这里经 GitHub API（镜像优先）按固定 tag 解析 assets 拿到 browser_download_url。
     private val TOOLS_API_URLS = arrayOf(
@@ -39,7 +39,7 @@ object DnaTools {
     private const val MIN_TOOLS_ZIP_BYTES = 14L * 1024 * 1024
 
     /**
-     * v3.41.25：经 GitHub API 按固定 tag（dna-tools）解析独立 Release 里工具包附件的真实下载地址
+     * v3.42.10：经 GitHub API 按固定 tag（dna-tools）解析独立 Release 里工具包附件的真实下载地址
      * （镜像优先回退）。与 UpdateCenter.fetchLatest 同套路：HttpURLConnection + JSON 解析 assets。
      * @return browser_download_url；Release 没传附件返回 null（区别于网络失败抛异常）
      */
@@ -451,7 +451,7 @@ object DnaTools {
         "GitHub 工具链独立 Release（tag: dna-tools）未上传 dna-tools-v1.zip，请到该 Release 页面手动上传后重试"
 
     /**
-     * v3.41.25：从 GitHub 独立固定 Release（tag: dna-tools）下载工具包（dna-tools-v1.zip ≈ 15M）
+     * v3.42.10：从 GitHub 独立固定 Release（tag: dna-tools）下载工具包（dna-tools-v1.zip ≈ 15M）
      * 并部署到 filesDir/dna-tools/。对齐 APP 更新逻辑（UpdateCenter）：先经 API（镜像优先）
      * 按固定 tag 解析附件地址，再 aria2c 多线程 + 镜像线路逐个兜底下载
      * （gh-proxy → ghfast → ghproxy → 直连）。

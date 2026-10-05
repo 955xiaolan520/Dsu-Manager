@@ -509,10 +509,10 @@ public final class UpdateCenter {
         }, "app-update-download").start();
     }
 
-    // ---------- 安装（v3.41.25：ROOT 静默优先 + PackageInstaller 回退） ----------
+    // ---------- 安装（v3.42.10：ROOT 静默优先 + PackageInstaller 回退） ----------
 
     /**
-     * v3.41.25 三级安装策略（修复「下载完成 · 正在自动安装...」卡住不动）：
+     * v3.42.10 三级安装策略（修复「下载完成 · 正在自动安装...」卡住不动）：
      *  ① ROOT 可用 → appops 静默开启「安装未知应用」+ cat | pm install -r - 流式安装，
      *     全程无任何系统弹窗 / 确认页（应用商店级真静默，ROOT 授权页除外）；
      *  ② 无 ROOT / pm install 失败 → PackageInstaller 会话式（Android 12+ 静默尽力而为，
