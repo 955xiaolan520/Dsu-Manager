@@ -5,6 +5,7 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.ObjectAnimator;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
@@ -789,7 +790,10 @@ public final class OnboardingActivity extends BaseActivity {
         FrameLayout wrap = new FrameLayout(this);
         wrap.setBackgroundColor(0x59000000);
         // v3.41.20：重做为「环境与权限」居中玻璃卡片弹窗（对齐图二：图标 + 说明 + 选项卡片 + 底部大按钮）
-        LinearLayout sheet = new LinearLayout(this);
+        // v3.42.13：权限行增至 6 行后弹窗高度超出屏幕、底部按钮被截断 ——
+        // sheet 限制最大高度（屏高 86%），权限行区域改为可滚动，头部与底部按钮固定
+        LinearLayout sheet = new MaxHeightLinearLayout(this,
+                (int) (getResources().getDisplayMetrics().heightPixels * 0.86f));
         sheet.setOrientation(LinearLayout.VERTICAL);
         sheet.setPadding(dp(22), dp(20), dp(22), dp(14));
         GradientDrawable sheetBg = new GradientDrawable();
@@ -844,36 +848,48 @@ public final class OnboardingActivity extends BaseActivity {
         subLp.topMargin = dp(4);
         sheet.addView(subtitle, subLp);
 
+        // v3.42.13：权限行放进可滚动容器 —— 行数多时中间区域滚动，
+        // 头部与底部「一键授权」按钮固定，不再被屏幕截断
+        ScrollView rowsScroll = new ScrollView(this);
+        rowsScroll.setVerticalScrollBarEnabled(false);
+        rowsScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        LinearLayout rowsContainer = new LinearLayout(this);
+        rowsContainer.setOrientation(LinearLayout.VERTICAL);
+        rowsScroll.addView(rowsContainer, new FrameLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, -2);
+        scrollLp.topMargin = dp(10);
+        sheet.addView(rowsScroll, scrollLp);
+
         // 选项卡片行（整行可点击授权）
-        allowNotification = envRow(sheet, "🔔",
+        allowNotification = envRow(rowsContainer, "🔔",
                 english ? "Notifications" : "通知权限", notificationDescription(),
                 () -> grantRow(allowNotification, 1010,
                         new String[]{"android.permission.POST_NOTIFICATIONS"}, false));
-        allowAudio = envRow(sheet, "🎵",
+        allowAudio = envRow(rowsContainer, "🎵",
                 english ? "Music & audio" : "音频文件",
                 english ? "Read and edit music and audio files" : "读取和编辑音乐、音频文件",
                 () -> grantRow(allowAudio, 1011,
                         new String[]{"android.permission.READ_MEDIA_AUDIO"}, false));
-        allowMedia = envRow(sheet, "🖼️",
+        allowMedia = envRow(rowsContainer, "🖼️",
                 english ? "Photos and videos" : "照片和视频",
                 english ? "Read and edit photos and video files" : "读取和编辑照片、视频文件",
                 () -> grantRow(allowMedia, 1012,
                         new String[]{"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"}, false));
         // v3.41.21：补「所有文件访问」—— ROM 选择 / 镜像保存到公共目录的核心权限
         // v3.41.22：ROOT 可用时直接 appops set 静默开启，不再跳系统设置页
-        allFilesRow = envRow(sheet, "📂",
+        allFilesRow = envRow(rowsContainer, "📂",
                 english ? "All files access" : "所有文件访问",
                 english ? "Required for picking ROM packages and saving images to public folders. Without Root this must be enabled manually in app details."
                         : "选择 ROM 包、保存镜像到公共目录需要此权限。未授权 Root 时需跳转应用详情手动开启",
                 () -> grantRow(allFilesRow, 1014, new String[0], true));
         // v3.42.10：新增「安装未知应用」—— 应用内自动更新安装的核心权限
         // ROOT 时 appops 静默开启；无 ROOT 时跳应用详情手动开启（开启后应用内更新即静默安装）
-        installUnknownRow = envRow(sheet, "📦",
+        installUnknownRow = envRow(rowsContainer, "📦",
                 english ? "Install unknown apps" : "安装未知应用",
                 english ? "Required for in-app self-update. Enabled automatically with Root; otherwise enable it in app details"
                         : "应用内检查更新并自动安装新版本需要此权限。已授权 Root 时自动开启；未授权时需跳转应用详情手动开启",
                 () -> grantInstallUnknown());
-        rootRow = envRow(sheet, "🧢",
+        rootRow = envRow(rowsContainer, "🧢",
                 english ? "Verify Root" : "验证 Root",
                 english ? "ROOT is required by DSU install, image extraction, DNA toolbox and OTG"
                         : "DSU 安装、镜像提取、DNA 工具箱、OTG 助手均需要 ROOT 授权",
@@ -1025,6 +1041,32 @@ public final class OnboardingActivity extends BaseActivity {
         rowLp.topMargin = dp(9);
         parent.addView(row, rowLp);
         return dot;
+    }
+
+    /**
+     * v3.42.13：限制最大高度的 LinearLayout —— 权限行增至 6 行后弹窗高度超出屏幕、
+     * 底部「一键授权」按钮被截断的修复。超出最大高度时收缩到上限，
+     * 由内部的权限行 ScrollView 滚动展示剩余内容，头部与底部按钮始终保持可见。
+     */
+    private static final class MaxHeightLinearLayout extends LinearLayout {
+        private final int maxHeightPx;
+
+        MaxHeightLinearLayout(Context context, int maxHeightPx) {
+            super(context);
+            this.maxHeightPx = maxHeightPx;
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int mode = MeasureSpec.getMode(heightMeasureSpec);
+            int size = MeasureSpec.getSize(heightMeasureSpec);
+            if (maxHeightPx > 0 && (mode == MeasureSpec.UNSPECIFIED || size > maxHeightPx)) {
+                heightMeasureSpec = MeasureSpec.makeMeasureSpec(
+                        Math.min(size, maxHeightPx),
+                        mode == MeasureSpec.EXACTLY ? MeasureSpec.EXACTLY : MeasureSpec.AT_MOST);
+            }
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        }
     }
 
     /** 「验证 Root」行：后台静默检测 su 可用性，成功则圆点亮绿（不阻塞，可重复点） */
