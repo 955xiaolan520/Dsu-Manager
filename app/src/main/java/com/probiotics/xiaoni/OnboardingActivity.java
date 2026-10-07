@@ -21,6 +21,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
@@ -285,15 +286,21 @@ public final class OnboardingActivity extends BaseActivity {
                 finish();
                 return;
             }
-            splash.animate().alpha(0f).setDuration(420L).withEndAction(() -> {
-                buildUi();
-                showPage(0, false);
-                if (fadeContentRoot != null) {
-                    fadeContentRoot.setAlpha(0f);
-                    fadeContentRoot.animate().alpha(1f).setDuration(520L)
-                            .setInterpolator(new DecelerateInterpolator(1.2f)).start();
-                }
-            }).start();
+            // 先构建下一页，再把开屏作为顶层覆盖层淡出；不再先把旧窗口淡成透明，
+            // 因此不会露出系统白色窗口背景，也能稳定看到「开屏 → 引导页」的交叉淡入淡出。
+            buildUi();
+            showPage(0, false);
+            if (fadeContentRoot != null && fadeContentRoot.getParent() instanceof FrameLayout) {
+                FrameLayout host = (FrameLayout) fadeContentRoot.getParent();
+                fadeContentRoot.setAlpha(0f);
+                splash.setAlpha(1f);
+                host.addView(splash, new FrameLayout.LayoutParams(-1, -1));
+                fadeContentRoot.animate().alpha(1f).setDuration(520L)
+                        .setInterpolator(new DecelerateInterpolator(1.2f)).start();
+                splash.animate().alpha(0f).setDuration(520L)
+                        .setInterpolator(new AccelerateDecelerateInterpolator())
+                        .withEndAction(() -> host.removeView(splash)).start();
+            }
         }, homeAfterSplash ? 650L : 2050L);
     }
 

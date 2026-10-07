@@ -642,11 +642,8 @@ public class MainActivity extends BaseActivity {
           root.post(() -> applySystemInsets(root, root.getRootWindowInsets()));
          contentRoot = root;   // 供引导页淡入转场使用
          setContentView(root);
-         // 新首页使用 launch 上游的设备环境检测；DSU 保留为第二个底部页面。
-         if (currentTab == 0 && !getIntent().getBooleanExtra("skip_launch_home", false)) {
-             root.post(() -> startActivity(new Intent(this, com.probiotics.xiaoni.launch.LaunchActivity.class)));
-             currentTab = 1;
-         }
+         // launch 检测页只在用户点击「检测」后打开，避免 Native 检测器初始化失败
+         // 时阻断主 APP 的启动链路。
          // v3.41.20：buildUi 重建后恢复状态卡 —— 此前语言切换触发重建时 rootStatus 永远
          // 停在「ROOT 检测中」、gsiStatus 停在「正在读取动态系统状态...」，看起来像 GSI 检测失败。
          // rootStatus 先按已知状态落文案，GSI 状态立即发起一次真实刷新。
