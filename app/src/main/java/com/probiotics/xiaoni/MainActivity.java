@@ -5341,6 +5341,17 @@ public class MainActivity extends BaseActivity {
                  () -> startActivity(new Intent(this, LinuxTerminalActivity.class))));
          page.addView(moreActionCard(android.R.drawable.ic_menu_upload, "本地安装 rootfs", "导入 .tar.gz 或 .tar.xz 压缩包作为本地终端环境", 0xff7651b5,
                  this::pickMoreRootfs));
+         boolean terminalFound = false;
+         for (LinuxImages.Image image : LinuxImages.ALL) {
+             if (!LinuxImages.hasUsableShell(LinuxImages.environment(this, image))) continue;
+             terminalFound = true;
+             page.addView(moreEnvironmentCard(image));
+         }
+         TextView terminalHint = text(terminalFound
+                 ? "已安装环境可以直接进入终端，也可以在这里清理系统数据、下载包和用户安装包。"
+                 : "云端镜像下载完成后，已安装的 Linux 环境会显示在这里。", 13, 0xff5d6b84);
+         terminalHint.setPadding(dp(8), dp(12), dp(8), dp(12));
+         page.addView(terminalHint, new LinearLayout.LayoutParams(-1, -2));
          return page;
       }
 
