@@ -1,0 +1,807 @@
+<resources>
+<color name="md_theme_light_primary">#4F46E5</color>
+    
+<color name="md_theme_light_onPrimary">#FFFFFF</color>
+    
+<color name="md_theme_light_primaryContainer">#E8E0FF</color>
+    
+<color name="md_theme_light_onPrimaryContainer">#1B0261</color>
+
+    
+    
+<color name="md_theme_light_secondary">#605B71</color>
+    
+<color name="md_theme_light_onSecondary">#FFFFFF</color>
+    
+<color name="md_theme_light_secondaryContainer">#E8DEF8</color>
+    
+<color name="md_theme_light_onSecondaryContainer">#1D192B</color>
+
+    
+    
+<color name="md_theme_light_tertiary">#7D5260</color>
+    
+<color name="md_theme_light_onTertiary">#FFFFFF</color>
+    
+<color name="md_theme_light_tertiaryContainer">#FFD8E4</color>
+    
+<color name="md_theme_light_onTertiaryContainer">#31111D</color>
+
+    
+    
+<color name="md_theme_light_error">#BA1A1A</color>
+    
+<color name="md_theme_light_onError">#FFFFFF</color>
+    
+<color name="md_theme_light_errorContainer">#FFDAD6</color>
+    
+<color name="md_theme_light_onErrorContainer">#410002</color>
+
+    
+    
+<color name="md_theme_light_surface">#FFFBFF</color>
+    
+<color name="md_theme_light_onSurface">#1C1B1F</color>
+    
+<color name="md_theme_light_surfaceVariant">#E7E0EC</color>
+    
+<color name="md_theme_light_onSurfaceVariant">#49454F</color>
+    
+<color name="md_theme_light_surfaceContainerLowest">#FFFFFF</color>
+    
+<color name="md_theme_light_surfaceContainerLow">#F7F2FA</color>
+    
+<color name="md_theme_light_surfaceContainer">#F1ECF4</color>
+    
+<color name="md_theme_light_surfaceContainerHigh">#ECE6F0</color>
+    
+<color name="md_theme_light_surfaceContainerHighest">#E6E0E9</color>
+
+    
+    
+<color name="md_theme_light_outline">#79747E</color>
+    
+<color name="md_theme_light_outlineVariant">#CAC4D0</color>
+
+    
+    
+<color name="md_theme_light_background">#FFFBFF</color>
+    
+<color name="md_theme_light_onBackground">#1C1B1F</color>
+
+    
+    
+<color name="md_theme_light_inverseSurface">#313033</color>
+    
+<color name="md_theme_light_inverseOnSurface">#F4EFF4</color>
+    
+<color name="md_theme_light_inversePrimary">#C9BFFF</color>
+
+    
+    
+    
+
+    
+    
+<color name="md_theme_dark_primary">#C9BFFF</color>
+    
+<color name="md_theme_dark_onPrimary">#2100A3</color>
+    
+<color name="md_theme_dark_primaryContainer">#3A2FC4</color>
+    
+<color name="md_theme_dark_onPrimaryContainer">#E8E0FF</color>
+
+    
+    
+<color name="md_theme_dark_secondary">#CCC2DC</color>
+    
+<color name="md_theme_dark_onSecondary">#332D41</color>
+    
+<color name="md_theme_dark_secondaryContainer">#4A4458</color>
+    
+<color name="md_theme_dark_onSecondaryContainer">#E8DEF8</color>
+
+    
+    
+<color name="md_theme_dark_tertiary">#EFB8C8</color>
+    
+<color name="md_theme_dark_onTertiary">#492532</color>
+    
+<color name="md_theme_dark_tertiaryContainer">#633B48</color>
+    
+<color name="md_theme_dark_onTertiaryContainer">#FFD8E4</color>
+
+    
+    
+<color name="md_theme_dark_error">#FFB4AB</color>
+    
+<color name="md_theme_dark_onError">#690005</color>
+    
+<color name="md_theme_dark_errorContainer">#93000A</color>
+    
+<color name="md_theme_dark_onErrorContainer">#FFDAD6</color>
+
+    
+    
+<color name="md_theme_dark_surface">#1C1B1F</color>
+    
+<color name="md_theme_dark_onSurface">#E6E1E5</color>
+    
+<color name="md_theme_dark_surfaceVariant">#49454F</color>
+    
+<color name="md_theme_dark_onSurfaceVariant">#CAC4D0</color>
+    
+<color name="md_theme_dark_surfaceContainerLowest">#100F13</color>
+    
+<color name="md_theme_dark_surfaceContainerLow">#211F26</color>
+    
+<color name="md_theme_dark_surfaceContainer">#252329</color>
+    
+<color name="md_theme_dark_surfaceContainerHigh">#2B2930</color>
+    
+<color name="md_theme_dark_surfaceContainerHighest">#36343B</color>
+
+    
+    
+<color name="md_theme_dark_outline">#938F99</color>
+    
+<color name="md_theme_dark_outlineVariant">#49454F</color>
+
+    
+    
+<color name="md_theme_dark_background">#1C1B1F</color>
+    
+<color name="md_theme_dark_onBackground">#E6E1E5</color>
+
+    
+    
+<color name="md_theme_dark_inverseSurface">#E6E1E5</color>
+    
+<color name="md_theme_dark_inverseOnSurface">#313033</color>
+    
+<color name="md_theme_dark_inversePrimary">#4F46E5</color>
+
+    
+    
+    
+
+    
+    
+<color name="status_safe">#1B8D3E</color>
+    
+<color name="status_safe_container">#B8F5C5</color>
+    
+<color name="status_safe_on_container">#00390E</color>
+
+    
+    
+<color name="status_risk">#BA1A1A</color>
+    
+<color name="status_risk_container">#FFDAD6</color>
+    
+<color name="status_risk_on_container">#410002</color>
+
+    
+    
+<color name="status_warning">#8B5000</color>
+    
+<color name="status_warning_container">#FFDDB5</color>
+    
+<color name="status_warning_on_container">#2C1600</color>
+
+    
+    
+<color name="status_unknown">#79747E</color>
+    
+<color name="status_unknown_container">#E7E0EC</color>
+    
+<color name="status_unknown_on_container">#1C1B1F</color>
+
+    
+    
+    
+    
+<color name="primary">#4F46E5</color>
+    
+<color name="primary_dark">#3A2FC4</color>
+    
+<color name="primary_light">#E8E0FF</color>
+    
+<color name="accent">#605B71</color>
+    
+<color name="background">#FFFBFF</color>
+    
+<color name="card_background">#F7F2FA</color>
+    
+<color name="surface">#FFFBFF</color>
+    
+<color name="text_primary">#1C1B1F</color>
+    
+<color name="text_secondary">#49454F</color>
+    
+<color name="text_hint">#79747E</color>
+    
+<color name="text_on_primary">#FFFFFF</color>
+    
+<color name="divider">#CAC4D0</color>
+    
+<color name="status_safe_light">#B8F5C5</color>
+    
+<color name="status_risk_light">#FFDAD6</color>
+    
+<color name="status_warning_light">#FFDDB5</color>
+    
+<color name="status_unknown_light">#E7E0EC</color>
+    
+<color name="white">#FFFFFFFF</color>
+    
+<color name="black">#FF000000</color>
+
+<string name="app_name">Launch</string>
+    
+    
+<string name="author_name">在座的各位所有大佬</string>
+    
+<string name="author_wechat">xx1193776794</string>
+    
+<string name="app_description">收集全网特征检测，欢迎各位大佬提供，本app无混淆加密，可以查看各种检测点进行对抗</string>
+
+    
+    
+<string name="nav_environment">环境检测</string>
+    
+<string name="nav_fingerprint">指纹信息</string>
+    
+<string name="nav_device_info">机型信息</string>
+    
+<string name="nav_about">关于</string>
+
+    
+    
+<string name="status_detected">已检测到</string>
+    
+<string name="status_not_detected">未检测到</string>
+    
+<string name="status_normal">正常</string>
+    
+<string name="status_abnormal">异常</string>
+
+    
+    
+<string name="refresh">刷新检测</string>
+    
+<string name="refreshing">正在检测...</string>
+    
+<string name="refresh_complete">检测完成</string>
+    
+<string name="refresh_failed">检测失败，请重试</string>
+    
+<string name="last_check_time">上次检测: %s</string>
+
+    
+    
+<string name="environment_title">设备环境检测</string>
+    
+<string name="detection_overview">检测状态总览</string>
+    
+<string name="overall_score">综合评分</string>
+    
+<string name="score_format">%d/100</string>
+
+    
+    
+<string name="category_root">Root 检测</string>
+    
+<string name="category_hook">Hook 检测</string>
+    
+<string name="category_emulator">模拟器检测</string>
+    
+<string name="category_debug">调试检测</string>
+    
+<string name="category_integrity">完整性检测</string>
+    
+<string name="category_network">网络检测</string>
+    
+<string name="category_side_channel">运行时完整性</string>
+    
+<string name="category_readlink">符号链接检测</string>
+    
+<string name="category_zygote">Zygote 注入</string>
+    
+<string name="category_tamper">改机/云控</string>
+    
+<string name="category_bootloader">Bootloader 解锁</string>
+    
+<string name="category_authenticity">设备真实度</string>
+    
+<string name="category_multi_instance">多开/沙箱</string>
+    
+<string name="category_device_consistency">机型一致性</string>
+    
+<string name="category_system_service">系统服务/框架</string>
+    
+<string name="category_device_spoof">改机/新机检测</string>
+
+    
+    
+<string name="detect_zygisk">Zygisk 注入</string>
+    
+<string name="detect_riru">Riru 注入</string>
+    
+<string name="detect_native_bridge">Native Bridge</string>
+    
+<string name="detect_selinux_context">SELinux 上下文</string>
+    
+<string name="detect_memory_maps">内存映射检测</string>
+    
+<string name="detect_app_process">app_process 检测</string>
+    
+<string name="detect_zygote_modules">Zygote 模块</string>
+    
+<string name="detect_memory_integrity">内存完整性</string>
+    
+<string name="detect_anon_memory">匿名内存检测</string>
+    
+<string name="detect_library_hooks">库函数钩子</string>
+
+    
+    
+<string name="detect_proc_exe">进程可执行路径</string>
+    
+<string name="detect_proc_maps">内存映射检测</string>
+    
+<string name="detect_proc_mounts">挂载信息检测</string>
+    
+<string name="detect_proc_root">进程根目录</string>
+    
+<string name="detect_proc_cwd">工作目录检测</string>
+    
+<string name="detect_proc_fd">文件描述符</string>
+    
+<string name="detect_su_symlinks">SU 符号链接</string>
+    
+<string name="detect_system_binaries">系统二进制文件</string>
+    
+<string name="detect_app_path">应用路径检测</string>
+    
+<string name="detect_mount_namespace">挂载命名空间</string>
+
+    
+    
+<string name="detect_spectre">Spectre 漏洞</string>
+    
+<string name="detect_meltdown">Meltdown 漏洞</string>
+    
+<string name="detect_kpti">KPTI 内核隔离</string>
+    
+<string name="detect_spectre_mitigation">Spectre 缓解措施</string>
+    
+<string name="detect_kaslr">KASLR 地址随机化</string>
+    
+<string name="detect_perf_paranoid">性能计数器访问</string>
+    
+<string name="detect_kallsyms">内核符号表</string>
+    
+<string name="detect_selinux">SELinux 状态</string>
+    
+<string name="detect_cache_timing">缓存时序攻击</string>
+    
+<string name="detect_mem_disclosure">内存泄露风险</string>
+
+    
+    
+<string name="detect_magisk">Magisk 检测</string>
+    
+<string name="detect_su_files">SU 文件检测</string>
+    
+<string name="detect_kernelsu">KernelSU 检测</string>
+    
+<string name="detect_apatch">APatch 检测</string>
+    
+<string name="detect_sukisu">SukiSU 检测</string>
+    
+<string name="detect_root_manager">Root 管理器</string>
+    
+<string name="detect_root_cloaking">Root 隐藏模块</string>
+
+    
+    
+<string name="detect_xposed">Xposed 框架</string>
+    
+<string name="detect_frida">Frida 检测</string>
+    
+<string name="detect_lsposed">LSPosed 检测</string>
+    
+<string name="detect_edxposed">EdXposed 检测</string>
+
+    
+    
+<string name="detect_emulator_env">模拟器环境</string>
+    
+<string name="detect_virtual_machine">虚拟机特征</string>
+    
+<string name="detect_multi_open">多开检测</string>
+    
+<string name="detect_cloud_phone">云手机检测</string>
+
+    
+    
+<string name="detect_usb_debug">USB 调试</string>
+    
+<string name="detect_debugger">调试器连接</string>
+    
+<string name="detect_jdwp">JDWP 检测</string>
+    
+<string name="detect_ptrace">Ptrace 检测</string>
+
+    
+    
+<string name="fingerprint_title">设备指纹信息</string>
+    
+<string name="fingerprint_overview">设备指纹概览</string>
+    
+<string name="device_id">综合设备指纹</string>
+    
+<string name="trust_level">可信度</string>
+    
+<string name="no_tampering">未检测到篡改</string>
+    
+<string name="tampering_detected">检测到篡改</string>
+
+    
+    
+<string name="android_id">ANDROID_ID</string>
+    
+<string name="serial_number">设备序列号</string>
+    
+<string name="mac_address">MAC 地址</string>
+    
+<string name="imei">IMEI</string>
+    
+<string name="build_fingerprint">Build 指纹</string>
+    
+<string name="hardware_fingerprint">硬件指纹 Hash</string>
+    
+<string name="software_fingerprint">软件指纹 Hash</string>
+    
+<string name="cpu_freq_pattern">CPU 频率指纹</string>
+    
+<string name="hosts_hash">Hosts Hash</string>
+    
+<string name="selinux_state">SELinux 状态</string>
+    
+<string name="process_name">进程包名</string>
+    
+<string name="persistent_token">持久化 Token</string>
+    
+<string name="persistent_status_new">新设备</string>
+    
+<string name="persistent_status_same">设备未变更</string>
+    
+<string name="persistent_status_changed">设备已变更</string>
+
+    
+    
+<string name="boot_id">Boot ID</string>
+    
+<string name="random_uuid">Random UUID</string>
+    
+<string name="kernel_ver">内核版本</string>
+    
+<string name="hostname">主机名</string>
+
+    
+    
+<string name="cpu_serial">CPU 序列号</string>
+    
+<string name="cpu_hardware">CPU 硬件</string>
+    
+<string name="soc_serial">SoC 序列号</string>
+    
+<string name="soc_id">SoC ID</string>
+
+    
+    
+<string name="boot_serial">Boot 序列号</string>
+    
+<string name="boot_hardware">Boot 硬件</string>
+    
+<string name="boot_device">Boot Device</string>
+
+    
+    
+<string name="vbmeta_digest">VBMeta 摘要</string>
+    
+<string name="build_id_label">Build ID</string>
+    
+<string name="display_id">Display ID</string>
+    
+<string name="bootloader_ver">Bootloader</string>
+    
+<string name="baseband_ver">基带版本</string>
+
+    
+    
+<string name="multi_source_compare">多源比对结果</string>
+    
+<string name="layer_java">Java</string>
+    
+<string name="layer_native">Native</string>
+    
+<string name="layer_syscall">Syscall</string>
+    
+<string name="consistent">一致</string>
+    
+<string name="inconsistent">不一致</string>
+
+    
+    
+<string name="device_info_title">设备机型信息</string>
+    
+<string name="device_legitimacy">机型合法性检测</string>
+    
+<string name="device_score">机型评分</string>
+    
+<string name="build_consistency">Build一致性</string>
+    
+<string name="rom_match">ROM匹配</string>
+    
+<string name="service_match">服务匹配</string>
+    
+<string name="hardware_consistency">硬件一致</string>
+    
+<string name="fingerprint_format">指纹格式</string>
+
+    
+    
+<string name="basic_info">基础信息</string>
+    
+<string name="brand">品牌</string>
+    
+<string name="model">型号</string>
+    
+<string name="manufacturer">制造商</string>
+    
+<string name="device_code">设备代号</string>
+    
+<string name="board">主板</string>
+
+    
+    
+<string name="system_info">系统信息</string>
+    
+<string name="android_version">Android 版本</string>
+    
+<string name="api_level">API Level</string>
+    
+<string name="rom_version">ROM 版本</string>
+    
+<string name="security_patch">安全补丁</string>
+    
+<string name="kernel_version">内核版本</string>
+
+    
+    
+<string name="hardware_info">硬件信息</string>
+    
+<string name="cpu">CPU</string>
+    
+<string name="gpu">GPU</string>
+    
+<string name="memory">内存</string>
+    
+<string name="storage">存储</string>
+    
+<string name="screen">屏幕</string>
+    
+<string name="camera">摄像头</string>
+    
+<string name="sensors">传感器</string>
+
+    
+    
+<string name="network_info">网络信息</string>
+    
+<string name="network_type">网络类型</string>
+    
+<string name="wifi_ssid">WiFi SSID</string>
+    
+<string name="ip_address">IP 地址</string>
+    
+<string name="carrier">运营商</string>
+
+    
+    
+<string name="vendor_services">厂商服务检测</string>
+    
+<string name="rom_features">ROM 特征验证</string>
+    
+<string name="installed">已安装</string>
+    
+<string name="not_installed">未安装</string>
+
+    
+    
+<string name="about_title">关于</string>
+    
+<string name="version_format">版本 %s</string>
+    
+<string name="author_info">作者信息</string>
+    
+<string name="about_author">作者</string>
+    
+<string name="about_wechat">微信</string>
+    
+<string name="app_slogan">设备环境检测</string>
+    
+<string name="copyright">Copyright 2025 在座的各位所有大佬</string>
+    
+<string name="device_identifiers">设备标识符</string>
+    
+<string name="fingerprint_hashes">指纹哈希</string>
+    
+<string name="app_version">v1.1.4</string>
+    
+<string name="feature_intro">功能介绍</string>
+    
+<string name="feature_1">设备环境安全检测 (Root/Hook/模拟器/调试)</string>
+    
+<string name="feature_2">设备指纹采集与篡改检测</string>
+    
+<string name="feature_3">机型合法性验证</string>
+    
+<string name="feature_4">多层检测架构 (Java/Native/Syscall)</string>
+    
+<string name="check_update">检查更新</string>
+    
+<string name="feedback">反馈问题</string>
+    
+<string name="rate">评分</string>
+
+    
+    
+<string name="copy">复制</string>
+    
+<string name="copied">已复制到剪贴板</string>
+    
+<string name="expand">展开</string>
+    
+<string name="collapse">收起</string>
+    
+<string name="permission_required">需要权限</string>
+    
+<string name="request_permission">申请权限</string>
+    
+<string name="real_device">真实设备</string>
+    
+<string name="enabled">已开启</string>
+    
+<string name="disabled">已关闭</string>
+    
+<string name="connected">已连接</string>
+    
+<string name="not_connected">未连接</string>
+    
+<string name="not_set">未设置</string>
+
+<style xmlns:ns0="http://schemas.android.com/tools" name="Theme.Launch" parent="Theme.Material3.DayNight.NoActionBar">
+        
+        <item name="colorPrimary">@color/md_theme_light_primary</item>
+        <item name="colorOnPrimary">@color/md_theme_light_onPrimary</item>
+        <item name="colorPrimaryContainer">@color/md_theme_light_primaryContainer</item>
+        <item name="colorOnPrimaryContainer">@color/md_theme_light_onPrimaryContainer</item>
+
+        
+        <item name="colorSecondary">@color/md_theme_light_secondary</item>
+        <item name="colorOnSecondary">@color/md_theme_light_onSecondary</item>
+        <item name="colorSecondaryContainer">@color/md_theme_light_secondaryContainer</item>
+        <item name="colorOnSecondaryContainer">@color/md_theme_light_onSecondaryContainer</item>
+
+        
+        <item name="colorTertiary">@color/md_theme_light_tertiary</item>
+        <item name="colorOnTertiary">@color/md_theme_light_onTertiary</item>
+        <item name="colorTertiaryContainer">@color/md_theme_light_tertiaryContainer</item>
+        <item name="colorOnTertiaryContainer">@color/md_theme_light_onTertiaryContainer</item>
+
+        
+        <item name="colorError">@color/md_theme_light_error</item>
+        <item name="colorOnError">@color/md_theme_light_onError</item>
+        <item name="colorErrorContainer">@color/md_theme_light_errorContainer</item>
+        <item name="colorOnErrorContainer">@color/md_theme_light_onErrorContainer</item>
+
+        
+        <item name="colorSurface">@color/md_theme_light_surface</item>
+        <item name="colorOnSurface">@color/md_theme_light_onSurface</item>
+        <item name="colorSurfaceVariant">@color/md_theme_light_surfaceVariant</item>
+        <item name="colorOnSurfaceVariant">@color/md_theme_light_onSurfaceVariant</item>
+        <item name="colorSurfaceContainerLowest">@color/md_theme_light_surfaceContainerLowest</item>
+        <item name="colorSurfaceContainerLow">@color/md_theme_light_surfaceContainerLow</item>
+        <item name="colorSurfaceContainer">@color/md_theme_light_surfaceContainer</item>
+        <item name="colorSurfaceContainerHigh">@color/md_theme_light_surfaceContainerHigh</item>
+        <item name="colorSurfaceContainerHighest">@color/md_theme_light_surfaceContainerHighest</item>
+
+        
+        <item name="colorOutline">@color/md_theme_light_outline</item>
+        <item name="colorOutlineVariant">@color/md_theme_light_outlineVariant</item>
+
+        
+        <item name="android:colorBackground">@color/md_theme_light_background</item>
+        <item name="colorOnBackground">@color/md_theme_light_onBackground</item>
+
+        
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/md_theme_light_surfaceContainer</item>
+        <item name="android:windowLightNavigationBar" ns0:targetApi="o_mr1">true</item>
+
+        
+        <item name="android:windowBackground">@color/md_theme_light_background</item>
+
+        
+        <item name="shapeAppearanceSmallComponent">@style/ShapeAppearance.Launch.SmallComponent</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Launch.MediumComponent</item>
+        <item name="shapeAppearanceLargeComponent">@style/ShapeAppearance.Launch.LargeComponent</item>
+    </style>
+
+    
+    
+<style name="ShapeAppearance.Launch.SmallComponent" parent="ShapeAppearance.Material3.SmallComponent">
+        <item name="cornerSize">12dp</item>
+    </style>
+
+    
+<style name="ShapeAppearance.Launch.MediumComponent" parent="ShapeAppearance.Material3.MediumComponent">
+        <item name="cornerSize">16dp</item>
+    </style>
+
+    
+<style name="ShapeAppearance.Launch.LargeComponent" parent="ShapeAppearance.Material3.LargeComponent">
+        <item name="cornerSize">20dp</item>
+    </style>
+
+    
+    
+<style name="Widget.Launch.CardView" parent="Widget.Material3.CardView.Filled">
+        <item name="cardBackgroundColor">@color/md_theme_light_surfaceContainerLow</item>
+        <item name="cardCornerRadius">16dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="contentPadding">16dp</item>
+    </style>
+
+    
+    
+<style name="Widget.Launch.CardView.Elevated" parent="Widget.Material3.CardView.Elevated">
+        <item name="cardCornerRadius">16dp</item>
+        <item name="cardElevation">1dp</item>
+        <item name="contentPadding">16dp</item>
+    </style>
+
+
+    
+    
+<style name="Theme.Launch.BottomNavigation" parent="Widget.Material3.BottomNavigationView">
+        <item name="backgroundTint">@color/md_theme_light_surfaceContainer</item>
+        <item name="itemActiveIndicatorStyle">@style/Widget.Launch.BottomNavigation.ActiveIndicator</item>
+        <item name="labelVisibilityMode">labeled</item>
+    </style>
+
+    
+<style name="Widget.Launch.BottomNavigation.ActiveIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="color">@color/md_theme_light_primaryContainer</item>
+    </style>
+
+    
+    
+<style name="Theme.Launch.Toolbar" parent="">
+        <item name="android:background">@android:color/transparent</item>
+    </style>
+
+    
+<style name="Theme.Launch.Card" parent="Widget.Launch.CardView" />
+
+
+    <string name="status_safe">安全</string>
+    <string name="status_risk">风险</string>
+    <string name="status_warning">警告</string>
+    <string name="status_unknown">未知</string>
+</resources>

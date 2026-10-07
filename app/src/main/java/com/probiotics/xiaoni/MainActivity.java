@@ -642,6 +642,11 @@ public class MainActivity extends BaseActivity {
           root.post(() -> applySystemInsets(root, root.getRootWindowInsets()));
          contentRoot = root;   // 供引导页淡入转场使用
          setContentView(root);
+         // 新首页使用 launch 上游的设备环境检测；DSU 保留为第二个底部页面。
+         if (currentTab == 0 && !getIntent().getBooleanExtra("skip_launch_home", false)) {
+             root.post(() -> startActivity(new Intent(this, com.probiotics.xiaoni.launch.LaunchActivity.class)));
+             currentTab = 1;
+         }
          // v3.41.20：buildUi 重建后恢复状态卡 —— 此前语言切换触发重建时 rootStatus 永远
          // 停在「ROOT 检测中」、gsiStatus 停在「正在读取动态系统状态...」，看起来像 GSI 检测失败。
          // rootStatus 先按已知状态落文案，GSI 状态立即发起一次真实刷新。
@@ -758,12 +763,12 @@ public class MainActivity extends BaseActivity {
          items.setClipToPadding(false);
           navigation.addView(items, new FrameLayout.LayoutParams(-1, -1));
           bottomNavigationItems = items;
-          addNavigationItem(items, t("首页", "Home"), 0, v -> selectTab(0));
+          addNavigationItem(items, t("检测", "Check"), 0, v -> selectTab(0));
          // v3.10.0：底部导航「设置」换成「DNA」工具箱，设置入口移至 DNA 页标题栏（与 ROM 页下载管理同款胶囊按钮）
-         addNavigationItem(items, t("DNA", "DNA"), 1, v -> selectTab(1));
-           addNavigationItem(items, t("ROM", "ROM"), 2, v -> selectTab(2));
-           addNavigationItem(items, t("OTG", "OTG"), 3, v -> selectTab(3));
-           addNavigationItem(items, t("终端", "Terminal"), 4, v -> selectTab(4));
+         addNavigationItem(items, t("DSU", "DSU"), 1, v -> selectTab(1));
+           addNavigationItem(items, t("DNA", "DNA"), 2, v -> selectTab(2));
+           addNavigationItem(items, t("ROM", "ROM"), 3, v -> selectTab(3));
+           addNavigationItem(items, t("OTG", "OTG"), 4, v -> selectTab(4));
           liquidIndicator = new LiquidGlassIndicator(this);
           liquidIndicator.setElevation(dp(4));
           navigation.addView(liquidIndicator, new FrameLayout.LayoutParams(dp(62), dp(48)));
@@ -1016,11 +1021,15 @@ public class MainActivity extends BaseActivity {
      }
 
         private void selectTab(int tab) {
+             if (tab == 0) {
+                 Haptics.perform(getWindow().getDecorView());
+                 startActivity(new Intent(this, com.probiotics.xiaoni.launch.LaunchActivity.class));
+                 return;
+             }
              if (tab == currentTab) {
-                 if (tab == 0) scrollToTop();
-                 if (tab == 4) refreshMorePage();
+                 if (tab == 1) scrollToTop();
                 // v3.10.0：DNA 页内嵌设置模式时，再点 DNA 标签返回 DNA 主页
-                 if (tab == 1 && dnaSettingsMode) {
+                 if (tab == 2 && dnaSettingsMode) {
                      dnaSettingsMode = false;
                      swapTabOne();
                      return;
@@ -1029,7 +1038,7 @@ public class MainActivity extends BaseActivity {
             }
             dnaSettingsMode = false;
             View next;
-            if (tab == 3) {
+            if (tab == 4) {
                 // OTG 页：内容可滚动 + FAB 悬浮在视口右下角（不随内容滚动）
                 FrameLayout otgRoot = new FrameLayout(this);
                 ScrollView pageScroll = new ScrollView(this);
@@ -1047,8 +1056,8 @@ public class MainActivity extends BaseActivity {
 
                 next = otgRoot;
             } else {
-                next = tab == 0 ? homeScroll : tab == 1 ? buildDnaPage() : tab == 2 ? buildRomPage() : buildMorePage();
-                if (tab != 0) {
+                next = tab == 1 ? homeScroll : tab == 2 ? buildDnaPage() : tab == 3 ? buildRomPage() : buildMorePage();
+                if (tab != 1) {
                     ScrollView pageScroll = new ScrollView(this);
                     pageScroll.setFillViewport(true);
                     pageScroll.addView(next);
@@ -1060,8 +1069,8 @@ public class MainActivity extends BaseActivity {
            pageHost.addView(next, nextParams);
           // 每个页面不同的神级炸裂动画效果
           next.setAlpha(0f);
-          if (tab == 0) {
-              // 首页：从左侧滑入 + 3D翻转
+          if (tab == 1) {
+              // DSU 页：从左侧滑入 + 3D翻转
               next.setTranslationX(-dp(300));
               next.setRotationY(90f);
               next.animate()
@@ -1071,8 +1080,8 @@ public class MainActivity extends BaseActivity {
                   .setDuration(450)
                   .setInterpolator(new android.view.animation.DecelerateInterpolator(1.8f))
                   .start();
-          } else if (tab == 1) {
-              // 设置页：从上方落下 + Z轴旋转
+          } else if (tab == 2) {
+              // DNA 页：从上方落下 + Z轴旋转
               next.setTranslationY(-dp(400));
               next.setRotation(180f);
               next.setScaleX(0.3f);
@@ -1086,7 +1095,7 @@ public class MainActivity extends BaseActivity {
                   .setDuration(500)
                   .setInterpolator(new android.view.animation.OvershootInterpolator(1.2f))
                   .start();
-          } else if (tab == 2) {
+          } else if (tab == 3) {
               // ROM页：从中心爆炸放大 + Y轴翻转
               next.setScaleX(0.1f);
               next.setScaleY(0.1f);
@@ -1099,7 +1108,7 @@ public class MainActivity extends BaseActivity {
                   .setDuration(480)
                   .setInterpolator(new android.view.animation.DecelerateInterpolator(2.2f))
                   .start();
-          } else if (tab == 3) {
+          } else if (tab == 4) {
               // OTG页：从底部弹起 + 弹性缩放
               next.setTranslationY(dp(400));
               next.setScaleX(0.7f);
@@ -5323,6 +5332,15 @@ public class MainActivity extends BaseActivity {
           version.setPadding(dp(14), 0, dp(14), 0);
            version.setBackgroundResource(R.drawable.liquid_glass_panel);
           page.addView(version, new LinearLayout.LayoutParams(-1, dp(46)));
+         // 终端从底部导航移入设置：保留原有 Linux 环境管理与 rootfs 导入能力。
+         TextView terminalTitle = text(t("终端", "Terminal"), 16, Color.rgb(20, 29, 55));
+         terminalTitle.setTypeface(null, 1);
+         terminalTitle.setPadding(dp(4), dp(14), dp(4), dp(6));
+         page.addView(terminalTitle, new LinearLayout.LayoutParams(-1, dp(48)));
+         page.addView(moreActionCard(android.R.drawable.ic_menu_manage, "ARM64 Linux 终端", "在线云端下载，支持 ROOT chroot 运行", 0xff198a9b,
+                 () -> startActivity(new Intent(this, LinuxTerminalActivity.class))));
+         page.addView(moreActionCard(android.R.drawable.ic_menu_upload, "本地安装 rootfs", "导入 .tar.gz 或 .tar.xz 压缩包作为本地终端环境", 0xff7651b5,
+                 this::pickMoreRootfs));
          return page;
       }
 

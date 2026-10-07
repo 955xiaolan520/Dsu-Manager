@@ -1,0 +1,511 @@
+package com.probiotics.xiaoni.launch.detector;
+
+/**
+ * Native detector interface for multi-layer detection
+ * Provides access to Native (libc) and Syscall layer detection methods
+ */
+public class NativeDetector {
+
+    static {
+        System.loadLibrary("launch");
+    }
+
+    // ===================== Root Detection =====================
+
+    public native boolean checkSuFilesNative();
+    public native boolean checkSuFilesSyscall();
+
+    public native boolean checkMagiskNative();
+    public native boolean checkMagiskSyscall();
+
+    public native boolean checkKernelSUNative();
+    public native boolean checkKernelSUSyscall();
+
+    public native boolean checkAPatchNative();
+    public native boolean checkAPatchSyscall();
+
+    public native boolean checkSukiSUNative();
+    public native boolean checkSukiSUSyscall();
+
+    public native boolean checkRootHidingNative();
+    public native boolean checkRootHidingSyscall();
+
+    public native boolean checkSuspiciousMountsNative();
+    public native boolean checkSuspiciousMountsSyscall();
+
+    public native boolean checkMountInfoNative();
+    public native boolean checkMountInfoSyscall();
+
+    // ===================== Hook Detection =====================
+
+    public native boolean checkXposedNative();
+    public native boolean checkXposedSyscall();
+
+    public native boolean checkFridaNative();
+    public native boolean checkFridaSyscall();
+
+    public native boolean checkLSPosedNative();
+    public native boolean checkLSPosedSyscall();
+    public native String getLSPosedDetails();
+
+    // [XFF] 自读内存字节扫 Xposed/LSPosed 类名串(DetectEvilFrameworks 技术)
+    public native boolean checkXposedMemoryStringsNative();
+    public native String getXposedMemStringsDetails();
+
+    // [XFF-T2/T3] 模块注入痕迹:/proc/self/maps 外来 apk/dex 映射 + /proc/self/fd 外来 fd。
+    // hostPkg=宿主包名, hostApkDir=宿主 base.apk 路径,用于排除自身与系统 framework。
+    // 返回多行 MAPS_FOREIGN=/MAPS_MEMDEX=/FD_FOREIGN=...,无命中返回 "CLEAN"。
+    public native String getModuleInjectionReport(String hostPkg, String hostApkDir);
+
+    // [XFF-T5] Hook 引擎 .so dlopen(RTLD_NOLOAD) 探测。返回多行 LIB_LOADED=...,无命中 "CLEAN"。
+    public native String getArtHookLibReport();
+
+    // [XFF-T5b] 真·ClassLinker::VisitClassLoaders 旁支枚举(自校准偏移 + 每线程 SIGSEGV 守护)。
+    // 返回 VCL_TOTAL=/VCL_INMEMORY=/VCL_FRAMEWORK=... 或 "UNSUPPORTED:<原因>"(此时回退 T4/T5)。
+    public native String getVisitClassLoadersReport();
+
+    // [XFF-T6] LSPlant/Frida hook 点检测:敏感方法的 ArtMethod entrypoint 是否落在匿名可执行区。
+    // 返回多行 "类.方法 [ACC_NATIVE] [entry=0x...]",无命中 "CLEAN"。
+    public native String getHookedMethodReport();
+
+    // [XFF-A] 函数级 inline-hook 检测:内存字节 vs 磁盘 ELF 字节比对 + 具名 hook 框架 anon 区。
+    // 返回多行 FUNC_HOOK=.../NAMED_HOOK=...,无命中 "CLEAN"。
+    public native String getFunctionHookReport();
+
+    // [XFF-B1] SMC 自修改代码执行探针(反 Frida/QBDI/DBI)。0=正常 1=异常 -1=无法测试。
+    public native int smcExecProbe();
+
+    // [XFF-B2] 内存写入 CNTVCT 计时基准(反模拟器/反单步)。返回每轮周期数,-1=失败。
+    public native long memWriteTimingCycles();
+
+    // [XFF-B3] mincore demand-paging 一致性(反模拟器/反 replay)。0=正常 1=异常 -1=无法测试。
+    public native int demandPagingAnomaly();
+
+    // Additional LSPosed detection methods
+    public native boolean checkLSPosedMemoryNative();
+    public native boolean checkLSPosedMemorySyscall();
+    public native boolean checkRiruZygiskNative();
+    public native boolean checkRiruZygiskSyscall();
+    public native boolean checkLSPosedSystemWide();
+    public native boolean checkAnonymousExecutableMemory();
+
+    public native boolean checkMemoryHooksNative();
+    public native boolean checkMemoryHooksSyscall();
+
+    // SMAPS Integrity Check - 高级内存取证技术
+    public native boolean checkSmapsIntegrity();
+
+    // Zygisk detection (通用检测: Magisk Zygisk, ReZygisk, Zygisk Next)
+    public native boolean checkZygiskNative();
+    public native boolean checkZygiskSyscall();
+
+    // ===================== Emulator Detection =====================
+
+    public native boolean checkEmulatorNative();
+    public native boolean checkEmulatorSyscall();
+
+    public native boolean checkQemuNative();
+    public native boolean checkQemuSyscall();
+
+    // ===================== Debug Detection =====================
+
+    public native boolean checkDebuggerNative();
+    public native boolean checkDebuggerSyscall();
+
+    public native boolean checkPtraceNative();
+
+    public native int getTracerPid();
+
+    /**
+     * JDWP 多指标聚合检测（native 走 syscall_open + syscall_read，绕 libc/Java 反射 hook）。
+     * 返回多行 KEY=VALUE：
+     *   ADBCONN=0|1            libadbconnection.so 是否在 /proc/self/maps
+     *   JVMTI=0|1              libopenjdkjvmti.so / libjdwp.so 是否加载
+     *   JDWP_SOCK=N            /proc/net/unix 中 @jdwp 抽象 socket 数量
+     *   JDWP_THREADS=tid:comm|tid:comm   JDWP / ADB-JDWP / AdbConnection 线程列表，无则空串
+     */
+    public native String getJdwpDetectionReport();
+
+    /**
+     * 深层 native 网络检测报告（getifaddrs + netlink RTM_GETROUTE + syscall /proc/net/dev）。
+     * 用于 cross-check Java NetworkInterface 是否被 hook 隐藏 VPN。多行 KEY=VALUE。
+     *  字段见 cpp/detector/network_detector.h
+     */
+    public native String getNetworkNativeReport();
+
+    // ===================== File Operations =====================
+
+    public native boolean fileExistsNative(String path);
+    public native boolean fileExistsSyscall(String path);
+    public native String readFileSyscall(String path);
+
+    // ===================== Readlink Detection (Syscall-based) =====================
+
+    /** Read symbolic link target using libc readlink */
+    public native String readlinkNative(String path);
+
+    /** Read symbolic link target using direct syscall */
+    public native String readlinkSyscall(String path);
+
+    /** Check if path is a symbolic link using libc lstat */
+    public native boolean isSymlinkNative(String path);
+
+    /** Check if path is a symbolic link using direct syscall */
+    public native boolean isSymlinkSyscall(String path);
+
+    /** Get real/canonical path using libc realpath */
+    public native String realpathNative(String path);
+
+    /** Get real/canonical path using syscalls only */
+    public native String realpathSyscall(String path);
+
+    /** Check proc file accessibility via syscall */
+    public native String checkProcFileSyscall(String path);
+
+    /** Check for hidden memory mappings via syscall */
+    public native boolean checkHiddenMapsSyscall();
+
+    /** Check for suspicious file descriptors via native */
+    public native int checkSuspiciousFdsNative();
+
+    /** Check for suspicious file descriptors via syscall */
+    public native int checkSuspiciousFdsSyscall();
+
+    /** Check mount namespace manipulation via native */
+    public native boolean checkMountNamespaceNative();
+
+    /** Check mount namespace manipulation via syscall */
+    public native boolean checkMountNamespaceSyscall();
+
+    // ===================== Zygote Injection Detection =====================
+    // (Zygisk detection methods are now defined earlier in the file at lines 66-67)
+
+    /** Check for Riru injection via native */
+    public native boolean checkRiruNative();
+
+    /** Check for Riru injection via syscall */
+    public native boolean checkRiruSyscall();
+
+    /** Get SELinux context via native */
+    public native String getSELinuxContextNative();
+
+    /** 取文件的 SELinux 标签 (lgetxattr security.selinux)，检测 Magisk 改文件的 context 异常 */
+    public native String getFileSelinuxContextNative(String path);
+
+    /** Check suspicious memory maps via native */
+    public native int checkSuspiciousMapsNative();
+
+    /** Check suspicious memory maps via syscall */
+    public native int checkSuspiciousMapsSyscall();
+
+    /** Check app_process integrity via native */
+    public native boolean checkAppProcessNative();
+
+    /** Check app_process integrity via syscall */
+    public native boolean checkAppProcessSyscall();
+
+    /** Check file integrity via syscall */
+    public native boolean checkFileIntegritySyscall(String path);
+
+    /** Count Zygisk modules via syscall */
+    public native int countZygiskModulesSyscall();
+
+    /** Check memory integrity (PLT/GOT) via native */
+    public native boolean checkMemoryIntegrityNative();
+
+    /** Check memory integrity (PLT/GOT) via syscall */
+    public native boolean checkMemoryIntegritySyscall();
+
+    // ===================== System Library Integrity Detection =====================
+
+    /** Check libc.so integrity - detects hooks in critical functions */
+    public native boolean checkLibcIntegrity();
+
+    /** Check libart.so integrity - detects ART runtime hooks */
+    public native boolean checkLibartIntegrity();
+
+    /** Check libandroid_runtime.so integrity */
+    public native boolean checkAndroidRuntimeIntegrity();
+
+    /** Check all system libraries integrity - returns JSON report */
+    public native String checkAllSystemLibrariesIntegrity();
+
+    /** Check specific library integrity */
+    public native boolean checkLibraryIntegrity(String libName);
+
+    /** Check specific function for inline hooks */
+    public native boolean checkFunctionHook(String libName, String funcName);
+
+    /** Check for inline hooks via syscall */
+    public native boolean checkInlineHooksSyscall();
+
+    /** Check for suspicious anonymous memory via syscall */
+    public native boolean checkSuspiciousAnonMemorySyscall();
+
+    /** Check libc hooks via syscall */
+    public native boolean checkLibcHooksSyscall();
+
+    /** Check libart hooks via syscall */
+    public native boolean checkArtHooksSyscall();
+
+    /** Check library hooks via native */
+    public native boolean checkLibraryHooksNative();
+
+    // ===================== Kernel File Reading =====================
+
+    /** Read kernel/proc file using native libc */
+    public native String readKernelFile(String path);
+
+    /** Get CPU serial from /proc/cpuinfo */
+    public native String getCpuSerial();
+    public native String getCpuSerialSyscall();
+
+    /** Get CPU hardware from /proc/cpuinfo */
+    public native String getCpuHardware();
+    public native String getCpuHardwareSyscall();
+
+    /** Get boot parameter from /proc/cmdline */
+    public native String getBootParam(String paramName);
+    public native String getBootParamSyscall(String paramName);
+
+    // ===================== System Properties =====================
+
+    public native String getSystemProperty(String key);
+    public native String getBuildPropertyNative(String propName);
+    public native String getBuildPropertySyscall(String propName);
+
+    /**
+     * 通过 {@code __system_property_foreach} 遍历整个属性区取出 {@code name} 的值
+     * （对照 JD field 10-3 cmd=10）。与 {@code __system_property_get(name)} 是不同的 libc 入口，
+     * hook 单点查询对它无效 → 用作属性类指纹的"枚举全量"交叉校验路。
+     */
+    public native String getPropForeachNative(String name);
+
+    /**
+     * 全量遍历 {@code ro.*} 只读属性，排序后拼成 "k=v\n" 原始串（Java 侧统一 djb2）。
+     * 对标 JD field 10-3 的 getprop 全量 dump，作为构建级软件指纹（开机后稳定）。
+     */
+    public native String getRoPropDumpNative();
+
+    // ===================== Zygote Process Detection =====================
+
+    /**
+     * Check if zygote process has abnormal parent
+     * Normal: zygote's parent should be init (PID 1)
+     * Abnormal: zygote's parent is not init -> possible Zygisk injection
+     * @return true if abnormal parent detected
+     */
+    public native boolean checkZygoteParentNative();
+
+    /**
+     * Get zygote process info
+     * @return "zygote_pid:parent_pid" or "not_found"
+     */
+    public native String getZygoteInfo();
+
+    // ===================== Anonymous Executable Memory Detection =====================
+
+    /**
+     * Count anonymous rwxp memory regions (no file backing)
+     * These are suspicious and could indicate code injection
+     * @return Number of anonymous rwxp regions found
+     */
+    public native int countAnonymousRwxMemory();
+
+    /**
+     * Get detailed information about anonymous rwxp regions
+     * @return JSON string with address ranges
+     */
+    public native String getAnonymousRwxDetails();
+
+    // ===================== Timing-based Hook Detection =====================
+
+    /**
+     * Benchmark openat() direct syscall timing
+     * @param iterations Number of iterations (recommended: 10000+)
+     * @return Average time per call in nanoseconds
+     */
+    public native long benchmarkSyscallOpenat(int iterations);
+
+    /**
+     * Benchmark openat() via libc timing (can be hooked)
+     * @param iterations Number of iterations
+     * @return Average time per call in nanoseconds
+     */
+    public native long benchmarkLibcOpenat(int iterations);
+
+    /**
+     * Benchmark access() direct syscall timing
+     * @param iterations Number of iterations
+     * @return Average time per call in nanoseconds
+     */
+    public native long benchmarkSyscallAccess(int iterations);
+
+    /**
+     * Benchmark access() via libc timing (can be hooked)
+     * @param iterations Number of iterations
+     * @return Average time per call in nanoseconds
+     */
+    public native long benchmarkLibcAccess(int iterations);
+
+    /**
+     * Benchmark stat() direct syscall timing
+     * @param iterations Number of iterations
+     * @return Average time per call in nanoseconds
+     */
+    public native long benchmarkSyscallStat(int iterations);
+
+    /**
+     * Benchmark stat() via libc timing (can be hooked)
+     * @param iterations Number of iterations
+     * @return Average time per call in nanoseconds
+     */
+    public native long benchmarkLibcStat(int iterations);
+
+    /**
+     * Detect timing anomaly between syscall and libc
+     * @param syscallTime Average syscall time in nanoseconds
+     * @param libcTime Average libc time in nanoseconds
+     * @param threshold Multiplier threshold (e.g., 3.0)
+     * @return true if anomaly detected (likely hooked)
+     */
+    public native boolean detectTimingAnomaly(long syscallTime, long libcTime, float threshold);
+
+    // ===================== Extended Fingerprint Collection =====================
+
+    /** Get MAC address via native libc (wlan0/eth0) */
+    public native String getMacAddressNative();
+    /** Get MAC address via syscall (wlan0/eth0) */
+    public native String getMacAddressSyscall();
+
+    /** Get total RAM in MB via native sysconf */
+    public native String getTotalRamNative();
+    /** Get total RAM in MB via syscall reading /proc/meminfo */
+    public native String getTotalRamSyscall();
+
+    /** Get screen virtual size via native libc */
+    public native String getScreenInfoNative();
+    /** Get screen virtual size via syscall */
+    public native String getScreenInfoSyscall();
+
+    /** Get CPU ABI via native __system_property_get */
+    public native String getCpuAbiNative();
+    /** Get CPU ABI via syscall reading build.prop */
+    public native String getCpuAbiSyscall();
+
+    /** Get sensor list from /sys/class/sensors via native opendir */
+    public native String getSensorListNative();
+    /** Get sensor list from /sys/class/sensors via syscall getdents64 */
+    public native String getSensorListSyscall();
+
+    /** Get hash of library names from /proc/self/maps via native */
+    public native String getMapsHashNative();
+    /** Get hash of library names from /proc/self/maps via syscall */
+    public native String getMapsHashSyscall();
+
+    /** Get uname info (sysname release machine) via native uname() */
+    public native String getUnameInfoNative();
+    /** Get uname info via direct SYS_uname syscall */
+    public native String getUnameInfoSyscall();
+
+    /** Get total storage in GB via native statfs on /data */
+    public native String getTotalStorageNative();
+    /** Get total storage in GB via SYS_statfs syscall on /data */
+    public native String getTotalStorageSyscall();
+
+    /** Get device-tree serial from /proc/device-tree/serial-number via native */
+    public native String getDeviceTreeSerialNative();
+    /** Get device-tree serial from /proc/device-tree/serial-number via syscall */
+    public native String getDeviceTreeSerialSyscall();
+
+    // ===================== SVC Fingerprint: Runtime Verification =====================
+
+    /** Get CPU max frequency pattern (e.g. "1800000,1800000,2400000") via native fopen */
+    public native String getCpuFreqPatternNative();
+    /** Get CPU max frequency pattern via syscall */
+    public native String getCpuFreqPatternSyscall();
+
+    /** Get /etc/hosts file hash via native fopen */
+    public native String getHostsHashNative();
+    /** Get /etc/hosts file hash via syscall */
+    public native String getHostsHashSyscall();
+
+    /** Get SELinux state "Enforcing|u:r:untrusted_app" via native */
+    public native String getSELinuxFingerprintNative();
+    /** Get SELinux state via syscall */
+    public native String getSELinuxFingerprintSyscall();
+
+    /** Get process cmdline (package name) via native fopen */
+    public native String getCmdlineNative();
+    /** Get process cmdline via syscall */
+    public native String getCmdlineSyscall();
+
+    /** Vulkan 硬件指纹: vendorID|deviceID|driverVersion|deviceUUID|driverUUID (deviceUUID 跨重启稳定) */
+    public native String getVulkanFingerprintNative();
+
+    /**
+     * Widevine DRM deviceUniqueId（native 侧 JNI 反射 MediaDrm 直取，绕过 Java 层 hook）。
+     * 与 Java 侧 {@code MediaDrm.getPropertyByteArray("deviceUniqueId")} 同源，
+     * 用于跨层交叉校验：两路不一致 → 暴露 Java 层 MediaDrm hook。
+     * @return 32 字节硬件 ID 的小写 hex（64 字符），失败返回空串。
+     */
+    public native String getDrmDeviceIdNative();
+
+    /**
+     * Wi-Fi 接入信息（native 侧 JNI 反射 WifiManager.getConnectionInfo 直取，绕过 Java 层 hook）。
+     * 对照 JD field 7-2(native cmd=27) vs 7-3(Java)：两路 BSSID 不一致 → 暴露 Java 层 WifiInfo hook。
+     * 需 ACCESS_WIFI_STATE + ACCESS_FINE_LOCATION 权限，否则返空。
+     * @param ctx Application Context
+     * @return "BSSID|SSID"，失败/无权限返回空串。
+     */
+    public native String getWifiInfoNative(android.content.Context ctx);
+
+    // ===================== Runtime Integrity Indicators =====================
+
+    /** Read system property via direct mmap of build.prop files (bypasses __system_property_get) */
+    public native String getPropertyMmap(String propName);
+
+    /**
+     * Read system property via direct mmap of /dev/__properties__ binary area.
+     * Bypasses both Java SystemProperties hooks AND libc __system_property_get inline hooks.
+     * Uses syscall_open + mmap to access bionic property area at the kernel boundary.
+     */
+    public native String readDevPropertyMmap(String propName);
+
+    /**
+     * Read property from a specific SELinux context file:
+     *   /dev/__properties__/u:object_r:&lt;contextName&gt;:s0
+     * 用于精准命中 debug_prop / usb_prop / adbd_prop 这类承载 ADB / 调试开关的 context 文件。
+     */
+    public native String readPropertyFromContext(String key, String contextName);
+
+    /**
+     * Diagnostic probe: try openat() on /dev/__properties__ and every known context file.
+     * Returns multi-line text listing each path with either "ok size=N" or "err ERRNAME(N)".
+     */
+    public native String probeDevPropertyAccess();
+
+    /** Compare mmap vs __system_property_get for 5 key properties, returns mismatch count */
+    public native int checkPropertyMmapConsistency();
+
+    /** Read 16 bytes from /dev/urandom via native fopen, returns hex string */
+    public native String readUrandomNative();
+    /** Read 16 bytes from /dev/urandom via syscall, returns hex string */
+    public native String readUrandomSyscall();
+    /** Check if urandom returns all zeros or fixed pattern, returns true if anomaly */
+    public native boolean checkUrandomIntegrity();
+
+    // Singleton instance
+    private static NativeDetector instance;
+
+    public static synchronized NativeDetector getInstance() {
+        if (instance == null) {
+            instance = new NativeDetector();
+        }
+        return instance;
+    }
+
+    private NativeDetector() {
+        // Private constructor for singleton
+    }
+}

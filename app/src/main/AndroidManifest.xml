@@ -24,6 +24,7 @@
         </intent>
     </queries>
     <application android:theme="@style/AppTheme" android:label="Dsu 管理器" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true" android:requestLegacyExternalStorage="true" android:extractNativeLibs="true" android:enableOnBackInvokedCallback="false">
+        <activity android:name=".launch.LaunchActivity" android:exported="false" android:theme="@style/Theme.Launch" />
         <activity android:name=".OnboardingActivity" android:screenOrientation="portrait" android:exported="true" android:theme="@style/AppTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" />

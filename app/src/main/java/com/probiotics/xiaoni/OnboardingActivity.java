@@ -158,29 +158,20 @@ public final class OnboardingActivity extends BaseActivity {
         super.onCreate(savedInstanceState);
         // 已完成引导 + 已同意协议 → 直接进入主界面（首页仍带淡入），不再重复展示引导页
         android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
-        if (prefs.getBoolean("onboarding_done", false) && prefs.getBoolean("agreement_accepted", false)) {
-            Intent direct = new Intent(this, MainActivity.class);
-            direct.putExtra("crossfade_entry", true);
-            startActivity(direct);
-            if (Build.VERSION.SDK_INT >= 34) {
-                overrideActivityTransition(OVERRIDE_TRANSITION_OPEN,
-                        R.anim.fade_in, R.anim.fade_out);
-            } else {
-                overridePendingTransition(R.anim.fade_in, R.anim.fade_out);
-            }
-            finish();
-            return;
-        }
         int languageMode = prefs.getInt("language_mode", 0);
         english = languageMode == 2 || (languageMode == 0
                 && !Locale.getDefault().getLanguage().toLowerCase(Locale.ROOT).startsWith("zh"));
+        if (prefs.getBoolean("onboarding_done", false) && prefs.getBoolean("agreement_accepted", false)) {
+            // 已完成引导：每次重新打开 APP 仍展示开机式启动页，再淡入首页。
+            showSplashThenBuild(true);
+            return;
+        }
         agreed = prefs.getBoolean("agreement_accepted", false);
         getWindow().setStatusBarColor(0x00000000);
         getWindow().setNavigationBarColor(0x33000000);
         // 人机验证键盘弹出时，问题框 / 输入框随键盘同步顶起（adjustResize）
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        buildUi();
         gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
                 if (e1 == null || e2 == null) return false;
@@ -197,11 +188,117 @@ public final class OnboardingActivity extends BaseActivity {
                 return false;
             }
         });
-        showPage(0, false);
+        showSplashThenBuild(false);
+    }
+
+    /**
+     * 开机式首屏：动态极光、应用徽章、品牌标题和呼吸箭头完成后，柔和切入正式引导。
+     * 只在首次引导流程显示；已完成引导的用户仍直接进入首页。
+     */
+    private void showSplashThenBuild(boolean homeAfterSplash) {
+        FrameLayout splash = new FrameLayout(this);
+        // 开屏淡出期间保持同一套 Aurora 底色，避免旧窗口背景被露出成白光。
+        getWindow().setBackgroundDrawable(romBackdrop());
+        splash.setBackground(romBackdrop());
+
+        LinearLayout veil = new LinearLayout(this);
+        veil.setOrientation(LinearLayout.VERTICAL);
+        veil.setGravity(Gravity.CENTER_HORIZONTAL);
+        veil.setPadding(dp(24), dp(48), dp(24), dp(36));
+
+        android.widget.ImageView mark = new android.widget.ImageView(this);
+        mark.setImageResource(R.drawable.app_icon);
+        mark.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+        mark.setClipToOutline(true);
+        mark.setOutlineProvider(new ViewOutlineProvider() {
+            @Override public void getOutline(View view, android.graphics.Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(27));
+            }
+        });
+        mark.setElevation(dp(18));
+        LinearLayout.LayoutParams markLp = new LinearLayout.LayoutParams(dp(104), dp(104));
+        markLp.topMargin = dp(86);
+        veil.addView(mark, markLp);
+
+        TextView brand = new TextView(this);
+        brand.setText("DSU  MANAGER");
+        brand.setTextSize(29);
+        brand.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        brand.setLetterSpacing(0.12f);
+        brand.setTextColor(Color.WHITE);
+        brand.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams brandLp = new LinearLayout.LayoutParams(-1, -2);
+        brandLp.topMargin = dp(22);
+        veil.addView(brand, brandLp);
+
+        TextView motto = new TextView(this);
+        motto.setText(english ? "ROOT · DNA · OTG · DSU" : "ROOT · DNA · OTG · DSU");
+        motto.setTextSize(12.5f);
+        motto.setLetterSpacing(0.16f);
+        motto.setTextColor(0xE6FFFFFF);
+        motto.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams mottoLp = new LinearLayout.LayoutParams(-1, -2);
+        mottoLp.topMargin = dp(9);
+        veil.addView(motto, mottoLp);
+
+        TextView welcome = new TextView(this);
+        welcome.setText(english ? "Your device toolkit, beautifully ready" : "你的设备工具箱，正在帅气启动");
+        welcome.setTextSize(13);
+        welcome.setTextColor(0xCCFFFFFF);
+        welcome.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams welcomeLp = new LinearLayout.LayoutParams(-1, -2);
+        welcomeLp.topMargin = dp(8);
+        veil.addView(welcome, welcomeLp);
+
+        veil.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1.6f));
+
+        splash.addView(veil, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(splash);
+
+        // 只有首次引导播放开屏内部动画；已完成引导的再次启动直接显示最终画面。
+        if (!homeAfterSplash) {
+            mark.setAlpha(0f);
+            mark.setScaleX(0.72f);
+            mark.setScaleY(0.72f);
+            brand.setAlpha(0f);
+            motto.setAlpha(0f);
+            welcome.setAlpha(0f);
+            mark.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(620)
+                    .setInterpolator(new DecelerateInterpolator(1.5f)).start();
+            brand.animate().alpha(1f).setStartDelay(220).setDuration(520).start();
+            motto.animate().alpha(1f).setStartDelay(360).setDuration(520).start();
+            welcome.animate().alpha(1f).setStartDelay(520).setDuration(520).start();
+        }
+
+        splash.postDelayed(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (homeAfterSplash) {
+                // 静态启动页保持不透明，直接交给首页的内容层淡入，避免透明化时露出白色窗口底。
+                Intent intent = new Intent(this, MainActivity.class);
+                intent.putExtra("crossfade_entry", true);
+                startActivity(intent);
+                if (Build.VERSION.SDK_INT >= 34) {
+                    overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, R.anim.fade_in, R.anim.fade_out);
+                } else {
+                    overridePendingTransition(R.anim.fade_in, R.anim.fade_out);
+                }
+                finish();
+                return;
+            }
+            splash.animate().alpha(0f).setDuration(420L).withEndAction(() -> {
+                buildUi();
+                showPage(0, false);
+                if (fadeContentRoot != null) {
+                    fadeContentRoot.setAlpha(0f);
+                    fadeContentRoot.animate().alpha(1f).setDuration(520L)
+                            .setInterpolator(new DecelerateInterpolator(1.2f)).start();
+                }
+            }).start();
+        }, homeAfterSplash ? 650L : 2050L);
     }
 
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
-        gestureDetector.onTouchEvent(event);
+        if (gestureDetector != null) gestureDetector.onTouchEvent(event);
         Haptics.onTouch(getWindow().getDecorView(), event);
         return super.dispatchTouchEvent(event);
     }
@@ -668,10 +765,11 @@ public final class OnboardingActivity extends BaseActivity {
         startBg.setStroke(Math.max(1, dp(2)), 0xFFFFFFFF);
         start.setBackground(startBg);
         start.setElevation(dp(11));
+        animateGradientButton(start,
+                new int[]{0xFF7FAAF5, 0xFFB98FE8, 0xFFF0A8C8}, 2600L);
         start.setOnClickListener(v -> {
             Haptics.perform(v);
-            pressFx(v);
-            finishOnboarding();
+            animateStartAndFinish(v);
         });
         int startWidth = (int) (getResources().getDisplayMetrics().widthPixels * 0.64f);
         center.addView(start, new LinearLayout.LayoutParams(startWidth, dp(56)));
@@ -834,8 +932,8 @@ public final class OnboardingActivity extends BaseActivity {
         sheet.addView(heading, headingLp);
         TextView subtitle = new TextView(this);
         subtitle.setText(english
-                ? "With Root granted, tap \"Grant all\" and everything completes automatically. Without Root, \"All files access\" needs to be enabled manually in app details."
-                : "已授权 Root 时，点击「一键授权」即可全部自动完成，不跳转设置；未授权 Root 时，「所有文件访问」需跳转应用详情手动开启，其余权限仍可自动授予。");
+                ? "With Root granted, tap \"Continue\" and everything completes automatically. Without Root, \"All files access\" needs to be enabled manually in app details."
+                : "已授权 Root 时，点击「继续」即可全部自动完成，不跳转设置；未授权 Root 时，「所有文件访问」需跳转应用详情手动开启，其余权限仍可自动授予。");
         subtitle.setTextSize(12);
         subtitle.setTextColor(INK_SOFT);
         subtitle.setGravity(Gravity.CENTER);
@@ -884,9 +982,9 @@ public final class OnboardingActivity extends BaseActivity {
         refreshAllPermissionRows();
         runRootCheck();
 
-        // 底部「一键授权」大按钮（品牌渐变蓝，全宽 48dp）—— 点击后 ROOT 自动授予全部权限
+        // 底部单一「继续」按钮：沿用上游完整授权链，交互对齐参考图
         confirmButton = new Button(this, null, 0);
-        confirmButton.setText(english ? "Grant all" : "一键授权");
+        confirmButton.setText(english ? "Continue" : "继续");
         confirmButton.setAllCaps(false);
         confirmButton.setTextSize(15.5f);
         confirmButton.setTypeface(Typeface.DEFAULT_BOLD);
@@ -908,23 +1006,6 @@ public final class OnboardingActivity extends BaseActivity {
         LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-1, dp(48));
         confirmLp.topMargin = dp(14);
         sheet.addView(confirmButton, confirmLp);
-
-        // 次级入口：暂不授权直接进入（不阻塞引导）
-        Button cancel = new Button(this, null, 0);
-        cancel.setText(english ? "Skip for now" : "暂不授权，直接进入");
-        cancel.setAllCaps(false);
-        cancel.setTextSize(13);
-        cancel.setTextColor(INK_SOFT);
-        cancel.setStateListAnimator(null);
-        cancel.setBackground(rounded(0x00000000, 0));
-        cancel.setIncludeFontPadding(false);
-        cancel.setGravity(Gravity.CENTER);
-        cancel.setPadding(0, 0, 0, 0);
-        cancel.setOnClickListener(v -> {
-            Haptics.perform(v);
-            dismissSheetThen();
-        });
-        sheet.addView(cancel, new LinearLayout.LayoutParams(-1, dp(40)));
 
         permissionSheet = new android.app.Dialog(this);
         permissionSheet.setContentView(wrap);
@@ -1123,8 +1204,10 @@ public final class OnboardingActivity extends BaseActivity {
     private void crossfadeToHome(Class<?> next) {
         // 淡出内容根视图（而非 decor）：渐变背景始终保留 → 任何 ROM 都不会露黑屏
         View target = fadeContentRoot != null ? fadeContentRoot : getWindow().getDecorView();
+        target.animate().cancel();
+        target.setAlpha(1f);
         target.animate().alpha(0f)
-                .setDuration(340)
+                .setDuration(520)
                 .setInterpolator(new android.view.animation.AccelerateInterpolator(1.1f))
                 .withEndAction(() -> {
                     Intent intent = new Intent(this, next);
@@ -1329,7 +1412,7 @@ public final class OnboardingActivity extends BaseActivity {
             runOnUiThread(() -> {
                 if (confirmButton != null) {
                     confirmButton.setEnabled(true);
-                    confirmButton.setText(english ? "Grant all" : "一键授权");
+                    confirmButton.setText(english ? "Continue" : "继续");
                 }
                 requestAllThenDismissViaSystem();
             });
@@ -1637,6 +1720,41 @@ public final class OnboardingActivity extends BaseActivity {
     private void pressFx(View v) {
         v.animate().scaleX(0.95f).scaleY(0.95f).setDuration(90).withEndAction(() ->
                 v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()).start();
+    }
+    /** 点击「开始使用」先完成按压反馈，再把当前引导页完整淡出并交给首页淡入。 */
+    private void animateStartAndFinish(View v) {
+        v.animate().scaleX(0.95f).scaleY(0.95f).setDuration(110).withEndAction(() ->
+                v.animate().scaleX(1f).scaleY(1f).setDuration(150)
+                        .withEndAction(this::finishOnboarding).start()).start();
+    }
+    /** 让就绪页主按钮的液态玻璃渐变持续流动，避免静态蓝色块。 */
+    private void animateGradientButton(Button button, int[] colors, long duration) {
+        if (button == null || colors == null || colors.length < 2) return;
+        android.animation.ValueAnimator animator = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        animator.setDuration(duration);
+        animator.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        animator.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+        animator.addUpdateListener(a -> {
+            float t = (float) a.getAnimatedValue();
+            int[] frame = new int[colors.length];
+            for (int i = 0; i < colors.length; i++) {
+                int next = (i + 1) % colors.length;
+                frame[i] = blendColor(colors[i], colors[next], t * 0.42f);
+            }
+            GradientDrawable bg = new GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR, frame);
+            bg.setCornerRadius(dp(28));
+            bg.setStroke(Math.max(1, dp(2)), 0xFFFFFFFF);
+            button.setBackground(bg);
+        });
+        animator.start();
+    }
+    private int blendColor(int a, int b, float ratio) {
+        float t = Math.max(0f, Math.min(1f, ratio));
+        int aa = (a >>> 24) & 0xff, ar = (a >>> 16) & 0xff, ag = (a >>> 8) & 0xff, ab = a & 0xff;
+        int ba = (b >>> 24) & 0xff, br = (b >>> 16) & 0xff, bg = (b >>> 8) & 0xff, bb = b & 0xff;
+        return Color.argb(Math.round(aa + (ba - aa) * t), Math.round(ar + (br - ar) * t),
+                Math.round(ag + (bg - ag) * t), Math.round(ab + (bb - ab) * t));
     }
 
     // ---------- 绘制工具 ----------
