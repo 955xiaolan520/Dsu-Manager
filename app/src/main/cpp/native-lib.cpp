@@ -84,139 +84,139 @@ extern "C" {
 // ===================== Root Detection =====================
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuFilesNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuFilesNative(JNIEnv *env, jobject thiz) {
     return RootDetector::checkSuFilesNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuFilesSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuFilesSyscall(JNIEnv *env, jobject thiz) {
     return RootDetector::checkSuFilesSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMagiskNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMagiskNative(JNIEnv *env, jobject thiz) {
     return RootDetector::checkMagiskNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMagiskSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMagiskSyscall(JNIEnv *env, jobject thiz) {
     return RootDetector::checkMagiskSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkKernelSUNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkKernelSUNative(JNIEnv *env, jobject thiz) {
     return RootDetector::checkKernelSUNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkKernelSUSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkKernelSUSyscall(JNIEnv *env, jobject thiz) {
     return RootDetector::checkKernelSUSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkAPatchNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkAPatchNative(JNIEnv *env, jobject thiz) {
     return RootDetector::checkAPatchNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkAPatchSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkAPatchSyscall(JNIEnv *env, jobject thiz) {
     return RootDetector::checkAPatchSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSukiSUNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSukiSUNative(JNIEnv *env, jobject thiz) {
     return RootDetector::checkSukiSUNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSukiSUSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSukiSUSyscall(JNIEnv *env, jobject thiz) {
     return RootDetector::checkSukiSUSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkRootHidingNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkRootHidingNative(JNIEnv *env, jobject thiz) {
     return RootDetector::checkRootHidingNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkRootHidingSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkRootHidingSyscall(JNIEnv *env, jobject thiz) {
     return RootDetector::checkRootHidingSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuspiciousMountsNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuspiciousMountsNative(JNIEnv *env, jobject thiz) {
     return RootDetector::checkSuspiciousMountsNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuspiciousMountsSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuspiciousMountsSyscall(JNIEnv *env, jobject thiz) {
     return RootDetector::checkSuspiciousMountsSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMountInfoNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMountInfoNative(JNIEnv *env, jobject thiz) {
     return RootDetector::checkMountInfoNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMountInfoSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMountInfoSyscall(JNIEnv *env, jobject thiz) {
     return RootDetector::checkMountInfoSyscall();
 }
 
 // ===================== Hook Detection =====================
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkXposedNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkXposedNative(JNIEnv *env, jobject thiz) {
     return HookDetector::checkXposedNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkXposedSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkXposedSyscall(JNIEnv *env, jobject thiz) {
     return HookDetector::checkXposedSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkFridaNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkFridaNative(JNIEnv *env, jobject thiz) {
     return HookDetector::checkFridaNative() || HookDetector::checkFridaPortsNative() ||
            HookDetector::checkFridaMemoryNative() || HookDetector::checkFridaThreads();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkFridaSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkFridaSyscall(JNIEnv *env, jobject thiz) {
     return HookDetector::checkFridaSyscall() || HookDetector::checkFridaMemorySyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLSPosedNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLSPosedNative(JNIEnv *env, jobject thiz) {
     return HookDetector::checkLSPosedNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLSPosedSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLSPosedSyscall(JNIEnv *env, jobject thiz) {
     return HookDetector::checkLSPosedSyscall();
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getLSPosedDetails(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getLSPosedDetails(JNIEnv *env, jobject thiz) {
     std::string details = HookDetector::getLSPosedDetails();
     return env->NewStringUTF(details.c_str());
 }
 
 // [XFF] 自读内存字节扫 Xposed 类名串(DetectEvilFrameworks 技术)
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkXposedMemoryStringsNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkXposedMemoryStringsNative(JNIEnv *env, jobject thiz) {
     return HookDetector::checkXposedMemoryStrings();
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getXposedMemStringsDetails(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getXposedMemStringsDetails(JNIEnv *env, jobject thiz) {
     std::string details = HookDetector::getXposedMemStringsDetails();
     return env->NewStringUTF(details.c_str());
 }
 
 // [XFF-T2/T3] 模块注入痕迹:外来 dex/apk 映射 + 外来 fd 报告
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getModuleInjectionReport(JNIEnv *env, jobject thiz,
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getModuleInjectionReport(JNIEnv *env, jobject thiz,
                                                                      jstring hostPkg, jstring hostApkDir) {
     const char *pkg = hostPkg ? env->GetStringUTFChars(hostPkg, nullptr) : nullptr;
     const char *dir = hostApkDir ? env->GetStringUTFChars(hostApkDir, nullptr) : nullptr;
@@ -228,7 +228,7 @@ Java_com_xff_launch_detector_NativeDetector_getModuleInjectionReport(JNIEnv *env
 
 // [XFF-T5] Hook 引擎 .so dlopen(RTLD_NOLOAD) 探测报告
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getArtHookLibReport(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getArtHookLibReport(JNIEnv *env, jobject thiz) {
     std::string r = HookDetector::getArtHookLibReport();
     return env->NewStringUTF(r.c_str());
 }
@@ -313,7 +313,7 @@ static bool xffMethodHooked(const std::vector<XffHookRegion> &regs, jmethodID mi
 // 现代 LSPosed 框架 loader 不进 class_loaders_(枚举抓不到),但它把 hook 打在**已注册的框架/app
 // 方法**上 → 这些方法的 ArtMethod 就在类表里,entrypoint 被换 → 这是"hooks installed"绕不过的痕迹。
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getHookedMethodReport(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getHookedMethodReport(JNIEnv *env, jobject thiz) {
     std::vector<XffHookRegion> regs = xffParseSelfMaps();
     std::string report;
 
@@ -726,7 +726,7 @@ static const char *xffPatchKind(const uint8_t *mem) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getFunctionHookReport(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getFunctionHookReport(JNIEnv *env, jobject thiz) {
     std::vector<XffHookRegion> regs = xffParseSelfMaps();
     std::string report;
 
@@ -806,7 +806,7 @@ Java_com_xff_launch_detector_NativeDetector_getFunctionHookReport(JNIEnv *env, j
 // Frida Stalker/QBDI 等 DBI 缓存翻译代码,对"运行期新写入的自修改代码"跟不进/执行旧缓存 → 返回值发散。
 // 返回:0=正常, 1=命中异常(DBI/SMC 不一致), -1=无法测试(mprotect 被 SELinux 拒,execmem)。
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_smcExecProbe(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_smcExecProbe(JNIEnv *env, jobject thiz) {
 #if defined(__aarch64__)
     long pg = sysconf(_SC_PAGESIZE);
     if (pg <= 0) pg = 4096;
@@ -840,7 +840,7 @@ Java_com_xff_launch_detector_NativeDetector_smcExecProbe(JNIEnv *env, jobject th
 // B2. 内存写入计时基准(借鉴 libtiny key24,反模拟器/反单步)。CNTVCT_EL0 计 100 轮打散写 10240 页
 // 的周期数。模拟器软件 MMU / DBI 逐指令拦截 → 周期暴涨。返回每轮周期数(信息性指纹,Java 侧判阈值)。
 JNIEXPORT jlong JNICALL
-Java_com_xff_launch_detector_NativeDetector_memWriteTimingCycles(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_memWriteTimingCycles(JNIEnv *env, jobject thiz) {
     const size_t total = 40u * 1024 * 1024;   // 40MB
     long pg = sysconf(_SC_PAGESIZE);
     if (pg <= 0) pg = 4096;
@@ -877,7 +877,7 @@ Java_com_xff_launch_detector_NativeDetector_memWriteTimingCycles(JNIEnv *env, jo
 // 刚 mmap 的匿名页在真机是 demand-paging:触碰前应"未驻留";若触碰前就已驻留 = 异常内存语义。
 // 返回:0=正常, 1=异常(触碰前已驻留), -1=无法测试。
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_demandPagingAnomaly(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_demandPagingAnomaly(JNIEnv *env, jobject thiz) {
     long pg = sysconf(_SC_PAGESIZE);
     if (pg <= 0) pg = 4096;
     void *m = mmap(nullptr, (size_t) pg, PROT_READ | PROT_WRITE,
@@ -971,7 +971,7 @@ static std::string xffVclChildRun(void *runtime) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getVisitClassLoadersReport(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getVisitClassLoadersReport(JNIEnv *env, jobject thiz) {
     // Android 10+ libart 在 ART APEX 独立 namespace,dlopen 看不到 → 从 maps+磁盘 ELF 解析符号
     uintptr_t artBase = 0;
     std::string artPath;
@@ -1074,112 +1074,112 @@ Java_com_xff_launch_detector_NativeDetector_getVisitClassLoadersReport(JNIEnv *e
 
 // Additional LSPosed detection JNI methods
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLSPosedMemoryNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLSPosedMemoryNative(JNIEnv *env, jobject thiz) {
     return HookDetector::checkLSPosedMemoryNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLSPosedMemorySyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLSPosedMemorySyscall(JNIEnv *env, jobject thiz) {
     return HookDetector::checkLSPosedMemorySyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkRiruZygiskNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkRiruZygiskNative(JNIEnv *env, jobject thiz) {
     return HookDetector::checkRiruZygiskNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkRiruZygiskSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkRiruZygiskSyscall(JNIEnv *env, jobject thiz) {
     return HookDetector::checkRiruZygiskSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLSPosedSystemWide(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLSPosedSystemWide(JNIEnv *env, jobject thiz) {
     return HookDetector::checkLSPosedSystemWide();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkAnonymousExecutableMemory(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkAnonymousExecutableMemory(JNIEnv *env, jobject thiz) {
     return HookDetector::checkAnonymousExecutableMemory();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMemoryHooksNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMemoryHooksNative(JNIEnv *env, jobject thiz) {
     return HookDetector::checkMapsForHooks();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMemoryHooksSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMemoryHooksSyscall(JNIEnv *env, jobject thiz) {
     return HookDetector::checkMapsForHooksSyscall();
 }
 
 // SMAPS Integrity Check - 高级内存取证技术
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSmapsIntegrity(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSmapsIntegrity(JNIEnv *env, jobject thiz) {
     return HookDetector::checkSmapsIntegrity();
 }
 
 // Zygisk detection (通用检测: Magisk Zygisk, ReZygisk, Zygisk Next)
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkZygiskNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkZygiskNative(JNIEnv *env, jobject thiz) {
     return HookDetector::checkZygiskNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkZygiskSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkZygiskSyscall(JNIEnv *env, jobject thiz) {
     return HookDetector::checkZygiskSyscall();
 }
 
 // ===================== Emulator Detection =====================
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkEmulatorNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkEmulatorNative(JNIEnv *env, jobject thiz) {
     return EmulatorDetector::checkEmulatorFilesNative() || EmulatorDetector::checkQemuNative() ||
            EmulatorDetector::checkGenyMotionNative() || EmulatorDetector::checkNoxNative() ||
            EmulatorDetector::checkLdPlayerNative() || EmulatorDetector::checkMemuNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkEmulatorSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkEmulatorSyscall(JNIEnv *env, jobject thiz) {
     return EmulatorDetector::checkEmulatorFilesSyscall() || EmulatorDetector::checkQemuSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkQemuNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkQemuNative(JNIEnv *env, jobject thiz) {
     return EmulatorDetector::checkQemuNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkQemuSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkQemuSyscall(JNIEnv *env, jobject thiz) {
     return EmulatorDetector::checkQemuSyscall();
 }
 
 // ===================== Debug Detection =====================
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkDebuggerNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkDebuggerNative(JNIEnv *env, jobject thiz) {
     return DebugDetector::checkTracerPidNative() || DebugDetector::checkDebuggerNative();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkDebuggerSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkDebuggerSyscall(JNIEnv *env, jobject thiz) {
     return DebugDetector::checkTracerPidSyscall();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkPtraceNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkPtraceNative(JNIEnv *env, jobject thiz) {
     return DebugDetector::checkPtraceNative();
 }
 
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_getTracerPid(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getTracerPid(JNIEnv *env, jobject thiz) {
     return DebugDetector::getTracerPid();
 }
 
 // ===================== JDWP-specific Detection =====================
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getJdwpDetectionReport(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getJdwpDetectionReport(JNIEnv *env, jobject thiz) {
     std::string report = DebugDetector::getJdwpDetectionReport();
     return env->NewStringUTF(report.c_str());
 }
@@ -1188,7 +1188,7 @@ Java_com_xff_launch_detector_NativeDetector_getJdwpDetectionReport(JNIEnv *env, 
 // getifaddrs + netlink RTM_GETROUTE + syscall /proc/net/dev 三路融合，
 // 用于交叉验证 Java NetworkInterface 是否被 hook
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getNetworkNativeReport(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getNetworkNativeReport(JNIEnv *env, jobject thiz) {
     std::string report = NetworkDetector::getNetworkNativeReport();
     return env->NewStringUTF(report.c_str());
 }
@@ -1196,7 +1196,7 @@ Java_com_xff_launch_detector_NativeDetector_getNetworkNativeReport(JNIEnv *env, 
 // ===================== File Operations via Syscall =====================
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_fileExistsNative(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_fileExistsNative(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
     bool exists = access(pathStr, F_OK) == 0;
     env->ReleaseStringUTFChars(path, pathStr);
@@ -1204,7 +1204,7 @@ Java_com_xff_launch_detector_NativeDetector_fileExistsNative(JNIEnv *env, jobjec
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_fileExistsSyscall(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_fileExistsSyscall(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
     bool exists = syscall_file_exists(pathStr);
     env->ReleaseStringUTFChars(path, pathStr);
@@ -1212,7 +1212,7 @@ Java_com_xff_launch_detector_NativeDetector_fileExistsSyscall(JNIEnv *env, jobje
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_readFileSyscall(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_readFileSyscall(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
     std::string content = syscall_read_file(pathStr, 8192);
     env->ReleaseStringUTFChars(path, pathStr);
@@ -1246,7 +1246,7 @@ static bool contains_suspicious(const std::string& path) {
 
 // Read symlink using libc readlink
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_readlinkNative(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_readlinkNative(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
 
     char buffer[PATH_MAX] = {0};
@@ -1263,7 +1263,7 @@ Java_com_xff_launch_detector_NativeDetector_readlinkNative(JNIEnv *env, jobject 
 
 // Read symlink using direct syscall
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_readlinkSyscall(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_readlinkSyscall(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
 
     char buffer[PATH_MAX] = {0};
@@ -1280,7 +1280,7 @@ Java_com_xff_launch_detector_NativeDetector_readlinkSyscall(JNIEnv *env, jobject
 
 // Check if path is symlink using libc lstat
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_isSymlinkNative(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_isSymlinkNative(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
 
     struct stat st;
@@ -1296,7 +1296,7 @@ Java_com_xff_launch_detector_NativeDetector_isSymlinkNative(JNIEnv *env, jobject
 
 // Check if path is symlink using direct syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_isSymlinkSyscall(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_isSymlinkSyscall(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
 
     struct stat st;
@@ -1312,7 +1312,7 @@ Java_com_xff_launch_detector_NativeDetector_isSymlinkSyscall(JNIEnv *env, jobjec
 
 // Get realpath using libc
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_realpathNative(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_realpathNative(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
 
     char resolved[PATH_MAX] = {0};
@@ -1328,7 +1328,7 @@ Java_com_xff_launch_detector_NativeDetector_realpathNative(JNIEnv *env, jobject 
 
 // Get realpath using syscalls only (manual symlink resolution)
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_realpathSyscall(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_realpathSyscall(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
 
     std::string current = pathStr;
@@ -1377,7 +1377,7 @@ Java_com_xff_launch_detector_NativeDetector_realpathSyscall(JNIEnv *env, jobject
 
 // Check proc file accessibility via syscall
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkProcFileSyscall(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkProcFileSyscall(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
 
     // Try to open and read the file via syscall
@@ -1400,7 +1400,7 @@ Java_com_xff_launch_detector_NativeDetector_checkProcFileSyscall(JNIEnv *env, jo
 
 // Check for hidden memory mappings
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkHiddenMapsSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkHiddenMapsSyscall(JNIEnv *env, jobject thiz) {
     // Read /proc/self/maps via syscall
     std::string maps = syscall_read_file("/proc/self/maps", 65536);
 
@@ -1424,7 +1424,7 @@ Java_com_xff_launch_detector_NativeDetector_checkHiddenMapsSyscall(JNIEnv *env, 
 
 // Check suspicious file descriptors via native
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuspiciousFdsNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuspiciousFdsNative(JNIEnv *env, jobject thiz) {
     int suspiciousCount = 0;
     char linkPath[64];
     char targetPath[PATH_MAX];
@@ -1454,7 +1454,7 @@ Java_com_xff_launch_detector_NativeDetector_checkSuspiciousFdsNative(JNIEnv *env
 
 // Check suspicious file descriptors via syscall
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuspiciousFdsSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuspiciousFdsSyscall(JNIEnv *env, jobject thiz) {
     int suspiciousCount = 0;
     char linkPath[64];
     char targetPath[PATH_MAX];
@@ -1496,7 +1496,7 @@ Java_com_xff_launch_detector_NativeDetector_checkSuspiciousFdsSyscall(JNIEnv *en
 
 // Check mount namespace via native
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMountNamespaceNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMountNamespaceNative(JNIEnv *env, jobject thiz) {
     // Read our mount namespace
     char selfNs[PATH_MAX] = {0};
     char initNs[PATH_MAX] = {0};
@@ -1532,7 +1532,7 @@ Java_com_xff_launch_detector_NativeDetector_checkMountNamespaceNative(JNIEnv *en
 
 // Check mount namespace via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMountNamespaceSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMountNamespaceSyscall(JNIEnv *env, jobject thiz) {
     char selfNs[PATH_MAX] = {0};
     char initNs[PATH_MAX] = {0};
 
@@ -1613,7 +1613,7 @@ static int check_maps_for_zygote(const std::string& maps) {
 
 // Check for Riru via native
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkRiruNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkRiruNative(JNIEnv *env, jobject thiz) {
     std::string maps = read_file_native("/proc/self/maps", 65536);
     std::string mapsLower = maps;
     for (char& c : mapsLower) c = tolower(c);
@@ -1633,7 +1633,7 @@ Java_com_xff_launch_detector_NativeDetector_checkRiruNative(JNIEnv *env, jobject
 
 // Check for Riru via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkRiruSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkRiruSyscall(JNIEnv *env, jobject thiz) {
     std::string maps = syscall_read_file("/proc/self/maps", 65536);
     std::string mapsLower = maps;
     for (char& c : mapsLower) c = tolower(c);
@@ -1651,7 +1651,7 @@ Java_com_xff_launch_detector_NativeDetector_checkRiruSyscall(JNIEnv *env, jobjec
 
 // Get SELinux context via native
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getSELinuxContextNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getSELinuxContextNative(JNIEnv *env, jobject thiz) {
     std::string context = read_file_native("/proc/self/attr/prev", 256);
     if (context.empty()) {
         context = read_file_native("/proc/self/attr/current", 256);
@@ -1662,7 +1662,7 @@ Java_com_xff_launch_detector_NativeDetector_getSELinuxContextNative(JNIEnv *env,
 // 取文件的 SELinux 标签：lgetxattr(path, "security.selinux")。
 // 用于检测 Magisk 改过的文件 context 异常（如 magisk_file / su_exec）。
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getFileSelinuxContextNative(JNIEnv *env, jobject thiz, jstring jpath) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getFileSelinuxContextNative(JNIEnv *env, jobject thiz, jstring jpath) {
     (void) thiz;
     if (!jpath) return env->NewStringUTF("");
     const char* path = env->GetStringUTFChars(jpath, nullptr);
@@ -1682,21 +1682,21 @@ Java_com_xff_launch_detector_NativeDetector_getFileSelinuxContextNative(JNIEnv *
 
 // Check suspicious maps via native
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuspiciousMapsNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuspiciousMapsNative(JNIEnv *env, jobject thiz) {
     std::string maps = read_file_native("/proc/self/maps", 65536);
     return check_maps_for_zygote(maps);
 }
 
 // Check suspicious maps via syscall
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuspiciousMapsSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuspiciousMapsSyscall(JNIEnv *env, jobject thiz) {
     std::string maps = syscall_read_file("/proc/self/maps", 65536);
     return check_maps_for_zygote(maps);
 }
 
 // Check app_process integrity via native
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkAppProcessNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkAppProcessNative(JNIEnv *env, jobject thiz) {
     // /system/bin/app_process is NORMALLY a symlink to app_process32 or app_process64
     // This is the standard Android design, NOT an anomaly!
 
@@ -1752,7 +1752,7 @@ Java_com_xff_launch_detector_NativeDetector_checkAppProcessNative(JNIEnv *env, j
 
 // Check app_process integrity via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkAppProcessSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkAppProcessSyscall(JNIEnv *env, jobject thiz) {
     // Same logic as above, but using syscalls
 
     const char* main_process = "/system/bin/app_process";
@@ -1802,7 +1802,7 @@ Java_com_xff_launch_detector_NativeDetector_checkAppProcessSyscall(JNIEnv *env, 
 
 // Check file integrity via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkFileIntegritySyscall(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkFileIntegritySyscall(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
 
     struct stat st;
@@ -1821,7 +1821,7 @@ Java_com_xff_launch_detector_NativeDetector_checkFileIntegritySyscall(JNIEnv *en
 
 // Count Zygisk modules via syscall
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_countZygiskModulesSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_countZygiskModulesSyscall(JNIEnv *env, jobject thiz) {
     int count = 0;
 
     // Open modules directory
@@ -1857,7 +1857,7 @@ Java_com_xff_launch_detector_NativeDetector_countZygiskModulesSyscall(JNIEnv *en
 
 // Check memory integrity (PLT/GOT) via native
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMemoryIntegrityNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMemoryIntegrityNative(JNIEnv *env, jobject thiz) {
     // Read maps and check for suspicious writeable sections
     std::string maps = read_file_native("/proc/self/maps", 65536);
 
@@ -1876,7 +1876,7 @@ Java_com_xff_launch_detector_NativeDetector_checkMemoryIntegrityNative(JNIEnv *e
 
 // Check memory integrity via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkMemoryIntegritySyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkMemoryIntegritySyscall(JNIEnv *env, jobject thiz) {
     std::string maps = syscall_read_file("/proc/self/maps", 65536);
 
     bool suspicious = false;
@@ -1890,7 +1890,7 @@ Java_com_xff_launch_detector_NativeDetector_checkMemoryIntegritySyscall(JNIEnv *
 
 // Check for inline hooks via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkInlineHooksSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkInlineHooksSyscall(JNIEnv *env, jobject thiz) {
     // Check /proc/self/smaps for suspicious private dirty pages in system libraries
     std::string smaps = syscall_read_file("/proc/self/smaps", 131072);
 
@@ -1938,7 +1938,7 @@ Java_com_xff_launch_detector_NativeDetector_checkInlineHooksSyscall(JNIEnv *env,
 
 // Check for suspicious anonymous memory via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkSuspiciousAnonMemorySyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkSuspiciousAnonMemorySyscall(JNIEnv *env, jobject thiz) {
     std::string maps = syscall_read_file("/proc/self/maps", 65536);
 
     // Look for anonymous executable memory (potential code injection)
@@ -1980,7 +1980,7 @@ Java_com_xff_launch_detector_NativeDetector_checkSuspiciousAnonMemorySyscall(JNI
 
 // Check libc hooks via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLibcHooksSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLibcHooksSyscall(JNIEnv *env, jobject thiz) {
     std::string maps = syscall_read_file("/proc/self/maps", 65536);
 
     // Check if libc.so has suspicious modifications
@@ -2006,7 +2006,7 @@ Java_com_xff_launch_detector_NativeDetector_checkLibcHooksSyscall(JNIEnv *env, j
 
 // Check libart hooks via syscall
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkArtHooksSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkArtHooksSyscall(JNIEnv *env, jobject thiz) {
     std::string maps = syscall_read_file("/proc/self/maps", 65536);
 
     bool suspicious = false;
@@ -2024,7 +2024,7 @@ Java_com_xff_launch_detector_NativeDetector_checkArtHooksSyscall(JNIEnv *env, jo
 
 // Check library hooks via native
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLibraryHooksNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLibraryHooksNative(JNIEnv *env, jobject thiz) {
     std::string maps = read_file_native("/proc/self/maps", 65536);
 
     bool suspicious = false;
@@ -2110,7 +2110,7 @@ static int get_parent_pid(int pid) {
  * Abnormal: zygote's parent is not init -> Zygisk injection
  */
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkZygoteParentNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkZygoteParentNative(JNIEnv *env, jobject thiz) {
     int zygote_pid = find_zygote_pid();
     if (zygote_pid <= 0) {
         return false;  // Zygote not found, no risk
@@ -2128,7 +2128,7 @@ Java_com_xff_launch_detector_NativeDetector_checkZygoteParentNative(JNIEnv *env,
  * Returns: "zygote_pid:parent_pid" or "not_found"
  */
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getZygoteInfo(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getZygoteInfo(JNIEnv *env, jobject thiz) {
     int zygote_pid = find_zygote_pid();
     if (zygote_pid <= 0) {
         return env->NewStringUTF("not_found");
@@ -2150,7 +2150,7 @@ Java_com_xff_launch_detector_NativeDetector_getZygoteInfo(JNIEnv *env, jobject t
  * @return Number of anonymous rwxp regions found
  */
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_countAnonymousRwxMemory(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_countAnonymousRwxMemory(JNIEnv *env, jobject thiz) {
     std::string maps = syscall_read_file("/proc/self/maps", 131072);  // 128KB buffer
     if (maps.empty()) return 0;
 
@@ -2213,7 +2213,7 @@ Java_com_xff_launch_detector_NativeDetector_countAnonymousRwxMemory(JNIEnv *env,
  * Returns JSON-like string with details
  */
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getAnonymousRwxDetails(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getAnonymousRwxDetails(JNIEnv *env, jobject thiz) {
     std::string maps = syscall_read_file("/proc/self/maps", 131072);
     if (maps.empty()) return env->NewStringUTF("[]");
 
@@ -2263,7 +2263,7 @@ Java_com_xff_launch_detector_NativeDetector_getAnonymousRwxDetails(JNIEnv *env, 
  * @return Average time per call in nanoseconds
  */
 JNIEXPORT jlong JNICALL
-Java_com_xff_launch_detector_NativeDetector_benchmarkSyscallOpenat(JNIEnv *env, jobject thiz, jint iterations) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_benchmarkSyscallOpenat(JNIEnv *env, jobject thiz, jint iterations) {
     return (jlong)benchmark_syscall_openat(iterations);
 }
 
@@ -2271,7 +2271,7 @@ Java_com_xff_launch_detector_NativeDetector_benchmarkSyscallOpenat(JNIEnv *env, 
  * Benchmark openat() libc timing
  */
 JNIEXPORT jlong JNICALL
-Java_com_xff_launch_detector_NativeDetector_benchmarkLibcOpenat(JNIEnv *env, jobject thiz, jint iterations) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_benchmarkLibcOpenat(JNIEnv *env, jobject thiz, jint iterations) {
     return (jlong)benchmark_libc_openat(iterations);
 }
 
@@ -2279,7 +2279,7 @@ Java_com_xff_launch_detector_NativeDetector_benchmarkLibcOpenat(JNIEnv *env, job
  * Benchmark access() syscall timing
  */
 JNIEXPORT jlong JNICALL
-Java_com_xff_launch_detector_NativeDetector_benchmarkSyscallAccess(JNIEnv *env, jobject thiz, jint iterations) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_benchmarkSyscallAccess(JNIEnv *env, jobject thiz, jint iterations) {
     return (jlong)benchmark_syscall_access(iterations);
 }
 
@@ -2287,7 +2287,7 @@ Java_com_xff_launch_detector_NativeDetector_benchmarkSyscallAccess(JNIEnv *env, 
  * Benchmark access() libc timing
  */
 JNIEXPORT jlong JNICALL
-Java_com_xff_launch_detector_NativeDetector_benchmarkLibcAccess(JNIEnv *env, jobject thiz, jint iterations) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_benchmarkLibcAccess(JNIEnv *env, jobject thiz, jint iterations) {
     return (jlong)benchmark_libc_access(iterations);
 }
 
@@ -2295,7 +2295,7 @@ Java_com_xff_launch_detector_NativeDetector_benchmarkLibcAccess(JNIEnv *env, job
  * Benchmark stat() syscall timing
  */
 JNIEXPORT jlong JNICALL
-Java_com_xff_launch_detector_NativeDetector_benchmarkSyscallStat(JNIEnv *env, jobject thiz, jint iterations) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_benchmarkSyscallStat(JNIEnv *env, jobject thiz, jint iterations) {
     return (jlong)benchmark_syscall_stat(iterations);
 }
 
@@ -2303,7 +2303,7 @@ Java_com_xff_launch_detector_NativeDetector_benchmarkSyscallStat(JNIEnv *env, jo
  * Benchmark stat() libc timing
  */
 JNIEXPORT jlong JNICALL
-Java_com_xff_launch_detector_NativeDetector_benchmarkLibcStat(JNIEnv *env, jobject thiz, jint iterations) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_benchmarkLibcStat(JNIEnv *env, jobject thiz, jint iterations) {
     return (jlong)benchmark_libc_stat(iterations);
 }
 
@@ -2315,7 +2315,7 @@ Java_com_xff_launch_detector_NativeDetector_benchmarkLibcStat(JNIEnv *env, jobje
  * @return true if anomaly detected
  */
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_detectTimingAnomaly(JNIEnv *env, jobject thiz,
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_detectTimingAnomaly(JNIEnv *env, jobject thiz,
                                                                  jlong syscallTime, jlong libcTime,
                                                                  jfloat threshold) {
     return (jboolean)detect_timing_anomaly(syscallTime, libcTime, threshold);
@@ -2324,7 +2324,7 @@ Java_com_xff_launch_detector_NativeDetector_detectTimingAnomaly(JNIEnv *env, job
 // ===================== System Property =====================
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getSystemProperty(JNIEnv *env, jobject thiz, jstring key) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getSystemProperty(JNIEnv *env, jobject thiz, jstring key) {
     const char* keyStr = env->GetStringUTFChars(key, nullptr);
 
     char value[256] = {0};
@@ -2337,7 +2337,7 @@ Java_com_xff_launch_detector_NativeDetector_getSystemProperty(JNIEnv *env, jobje
 // ===================== Fingerprint =====================
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getBuildPropertyNative(JNIEnv *env, jobject thiz, jstring propName) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getBuildPropertyNative(JNIEnv *env, jobject thiz, jstring propName) {
     const char* propStr = env->GetStringUTFChars(propName, nullptr);
 
     char value[256] = {0};
@@ -2348,7 +2348,7 @@ Java_com_xff_launch_detector_NativeDetector_getBuildPropertyNative(JNIEnv *env, 
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getBuildPropertySyscall(JNIEnv *env, jobject thiz, jstring propName) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getBuildPropertySyscall(JNIEnv *env, jobject thiz, jstring propName) {
     const char* propStr = env->GetStringUTFChars(propName, nullptr);
 
     // Read from /system/build.prop using syscall
@@ -2399,7 +2399,7 @@ static void prop_match_foreach_cb(const prop_info* pi, void* cookie) {
 
 // 遍历全部属性，取出 name 对应的值（绕过 __system_property_get 单点 hook）
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getPropForeachNative(JNIEnv *env, jobject thiz, jstring propName) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getPropForeachNative(JNIEnv *env, jobject thiz, jstring propName) {
     (void) thiz;
     const char* propStr = env->GetStringUTFChars(propName, nullptr);
     PropMatchCtx ctx{ propStr, "", false };
@@ -2426,7 +2426,7 @@ static void prop_dump_foreach_cb(const prop_info* pi, void* cookie) {
 
 // 全量遍历 ro.* 属性，排序后拼成 "k=v\n" 原始串（Java 侧统一做 djb2，避免重复实现哈希）
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getRoPropDumpNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getRoPropDumpNative(JNIEnv *env, jobject thiz) {
     (void) thiz;
     PropDumpCtx ctx;
     __system_property_foreach(prop_dump_foreach_cb, &ctx);
@@ -2510,7 +2510,7 @@ static std::string extract_boot_param(const std::string& cmdline, const std::str
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_readKernelFile(JNIEnv *env, jobject thiz, jstring path) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_readKernelFile(JNIEnv *env, jobject thiz, jstring path) {
     const char* pathStr = env->GetStringUTFChars(path, nullptr);
     std::string content = read_file_native(pathStr);
     env->ReleaseStringUTFChars(path, pathStr);
@@ -2518,35 +2518,35 @@ Java_com_xff_launch_detector_NativeDetector_readKernelFile(JNIEnv *env, jobject 
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCpuSerial(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCpuSerial(JNIEnv *env, jobject thiz) {
     std::string cpuinfo = read_file_native("/proc/cpuinfo", 8192);
     std::string serial = extract_value(cpuinfo, "Serial", ':');
     return env->NewStringUTF(serial.c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCpuSerialSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCpuSerialSyscall(JNIEnv *env, jobject thiz) {
     std::string cpuinfo = syscall_read_file("/proc/cpuinfo", 8192);
     std::string serial = extract_value(cpuinfo, "Serial", ':');
     return env->NewStringUTF(serial.c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCpuHardware(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCpuHardware(JNIEnv *env, jobject thiz) {
     std::string cpuinfo = read_file_native("/proc/cpuinfo", 8192);
     std::string hardware = extract_value(cpuinfo, "Hardware", ':');
     return env->NewStringUTF(hardware.c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCpuHardwareSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCpuHardwareSyscall(JNIEnv *env, jobject thiz) {
     std::string cpuinfo = syscall_read_file("/proc/cpuinfo", 8192);
     std::string hardware = extract_value(cpuinfo, "Hardware", ':');
     return env->NewStringUTF(hardware.c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getBootParam(JNIEnv *env, jobject thiz, jstring paramName) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getBootParam(JNIEnv *env, jobject thiz, jstring paramName) {
     const char* paramStr = env->GetStringUTFChars(paramName, nullptr);
     std::string cmdline = read_file_native("/proc/cmdline", 4096);
     std::string value = extract_boot_param(cmdline, paramStr);
@@ -2555,7 +2555,7 @@ Java_com_xff_launch_detector_NativeDetector_getBootParam(JNIEnv *env, jobject th
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getBootParamSyscall(JNIEnv *env, jobject thiz, jstring paramName) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getBootParamSyscall(JNIEnv *env, jobject thiz, jstring paramName) {
     const char* paramStr = env->GetStringUTFChars(paramName, nullptr);
     std::string cmdline = syscall_read_file("/proc/cmdline", 4096);
     std::string value = extract_boot_param(cmdline, paramStr);
@@ -2568,7 +2568,7 @@ Java_com_xff_launch_detector_NativeDetector_getBootParamSyscall(JNIEnv *env, job
 // --- 1. MAC Address ---
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getMacAddressNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getMacAddressNative(JNIEnv *env, jobject thiz) {
     // Try wlan0 first, then eth0
     const char* paths[] = {
         "/sys/class/net/wlan0/address",
@@ -2584,7 +2584,7 @@ Java_com_xff_launch_detector_NativeDetector_getMacAddressNative(JNIEnv *env, job
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getMacAddressSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getMacAddressSyscall(JNIEnv *env, jobject thiz) {
     const char* paths[] = {
         "/sys/class/net/wlan0/address",
         "/sys/class/net/eth0/address"
@@ -2605,7 +2605,7 @@ Java_com_xff_launch_detector_NativeDetector_getMacAddressSyscall(JNIEnv *env, jo
 // --- 2. Total RAM ---
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getTotalRamNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getTotalRamNative(JNIEnv *env, jobject thiz) {
     long pages = sysconf(_SC_PHYS_PAGES);
     long pageSize = sysconf(_SC_PAGE_SIZE);
     if (pages > 0 && pageSize > 0) {
@@ -2617,7 +2617,7 @@ Java_com_xff_launch_detector_NativeDetector_getTotalRamNative(JNIEnv *env, jobje
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getTotalRamSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getTotalRamSyscall(JNIEnv *env, jobject thiz) {
     std::string meminfo = syscall_read_file("/proc/meminfo", 4096);
     // Parse "MemTotal:       XXXXX kB"
     std::string memTotal = extract_value(meminfo, "MemTotal", ':');
@@ -2643,13 +2643,13 @@ Java_com_xff_launch_detector_NativeDetector_getTotalRamSyscall(JNIEnv *env, jobj
 // --- 3. Screen Info ---
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getScreenInfoNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getScreenInfoNative(JNIEnv *env, jobject thiz) {
     std::string info = read_file_native("/sys/class/graphics/fb0/virtual_size", 64);
     return env->NewStringUTF(info.c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getScreenInfoSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getScreenInfoSyscall(JNIEnv *env, jobject thiz) {
     std::string info = syscall_read_file("/sys/class/graphics/fb0/virtual_size", 64);
     // Trim
     while (!info.empty() && (info.back() == '\n' || info.back() == '\r' || info.back() == ' ')) {
@@ -2661,14 +2661,14 @@ Java_com_xff_launch_detector_NativeDetector_getScreenInfoSyscall(JNIEnv *env, jo
 // --- 4. CPU ABI ---
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCpuAbiNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCpuAbiNative(JNIEnv *env, jobject thiz) {
     char value[256] = {0};
     __system_property_get("ro.product.cpu.abi", value);
     return env->NewStringUTF(value);
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCpuAbiSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCpuAbiSyscall(JNIEnv *env, jobject thiz) {
     // Try /system/build.prop first, then /vendor/build.prop
     const char* propFiles[] = {
         "/system/build.prop",
@@ -2699,7 +2699,7 @@ Java_com_xff_launch_detector_NativeDetector_getCpuAbiSyscall(JNIEnv *env, jobjec
 // --- 5. Sensor List ---
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getSensorListNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getSensorListNative(JNIEnv *env, jobject thiz) {
     std::string result;
     // Try /sys/class/sensors/ directory
     DIR* dir = opendir("/sys/class/sensors");
@@ -2741,7 +2741,7 @@ Java_com_xff_launch_detector_NativeDetector_getSensorListNative(JNIEnv *env, job
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getSensorListSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getSensorListSyscall(JNIEnv *env, jobject thiz) {
     std::string result;
     // Use syscall to open and enumerate /sys/class/sensors/
     const char* sensorDirs[] = {"/sys/class/sensors", "/sys/bus/iio/devices"};
@@ -2784,7 +2784,7 @@ static uint32_t simple_hash(const std::string& str) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getMapsHashNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getMapsHashNative(JNIEnv *env, jobject thiz) {
     FILE* fp = fopen("/proc/self/maps", "r");
     if (!fp) return env->NewStringUTF("");
 
@@ -2819,7 +2819,7 @@ Java_com_xff_launch_detector_NativeDetector_getMapsHashNative(JNIEnv *env, jobje
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getMapsHashSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getMapsHashSyscall(JNIEnv *env, jobject thiz) {
     // [修正·FP] 必须整读:/proc/self/maps 是 seq_file,单次 read() 只回一页/部分 →
     // 与 libc fopen+循环读到的全量不一致 → 每个 app 都假报"maps 跨层不一致"。用 _full 循环读全量。
     std::string maps = syscall_read_file_full("/proc/self/maps");
@@ -2860,7 +2860,7 @@ Java_com_xff_launch_detector_NativeDetector_getMapsHashSyscall(JNIEnv *env, jobj
 // --- 7. uname info ---
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getUnameInfoNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getUnameInfoNative(JNIEnv *env, jobject thiz) {
     struct utsname info;
     if (uname(&info) == 0) {
         // Format: "machine sysname" to match Java's os.arch + os.name
@@ -2872,7 +2872,7 @@ Java_com_xff_launch_detector_NativeDetector_getUnameInfoNative(JNIEnv *env, jobj
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getUnameInfoSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getUnameInfoSyscall(JNIEnv *env, jobject thiz) {
     struct utsname info;
     memset(&info, 0, sizeof(info));
     long ret = syscall(__NR_uname, &info);
@@ -2888,7 +2888,7 @@ Java_com_xff_launch_detector_NativeDetector_getUnameInfoSyscall(JNIEnv *env, job
 // --- 8. Total Storage ---
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getTotalStorageNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getTotalStorageNative(JNIEnv *env, jobject thiz) {
     struct statfs sf;
     if (statfs("/data", &sf) == 0) {
         long long totalBytes = (long long)sf.f_blocks * (long long)sf.f_bsize;
@@ -2900,7 +2900,7 @@ Java_com_xff_launch_detector_NativeDetector_getTotalStorageNative(JNIEnv *env, j
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getTotalStorageSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getTotalStorageSyscall(JNIEnv *env, jobject thiz) {
     struct statfs sf;
     memset(&sf, 0, sizeof(sf));
     long ret = syscall(__NR_statfs, "/data", &sf);
@@ -2916,7 +2916,7 @@ Java_com_xff_launch_detector_NativeDetector_getTotalStorageSyscall(JNIEnv *env, 
 // --- 9. Device-tree Serial ---
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getDeviceTreeSerialNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getDeviceTreeSerialNative(JNIEnv *env, jobject thiz) {
     std::string serial = read_file_native("/proc/device-tree/serial-number", 256);
     // Remove null bytes that may exist in device-tree strings
     serial.erase(std::remove(serial.begin(), serial.end(), '\0'), serial.end());
@@ -2924,7 +2924,7 @@ Java_com_xff_launch_detector_NativeDetector_getDeviceTreeSerialNative(JNIEnv *en
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getDeviceTreeSerialSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getDeviceTreeSerialSyscall(JNIEnv *env, jobject thiz) {
     std::string serial = syscall_read_file("/proc/device-tree/serial-number", 256);
     // Trim trailing whitespace/nulls
     while (!serial.empty() && (serial.back() == '\n' || serial.back() == '\r' ||
@@ -2958,12 +2958,12 @@ static std::string collect_cpu_freq(bool use_syscall) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCpuFreqPatternNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCpuFreqPatternNative(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(collect_cpu_freq(false).c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCpuFreqPatternSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCpuFreqPatternSyscall(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(collect_cpu_freq(true).c_str());
 }
 
@@ -2991,12 +2991,12 @@ static std::string compute_hosts_hash(bool use_syscall) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getHostsHashNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getHostsHashNative(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(compute_hosts_hash(false).c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getHostsHashSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getHostsHashSyscall(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(compute_hosts_hash(true).c_str());
 }
 
@@ -3041,12 +3041,12 @@ static std::string collect_selinux_fp(bool use_syscall) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getSELinuxFingerprintNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getSELinuxFingerprintNative(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(collect_selinux_fp(false).c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getSELinuxFingerprintSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getSELinuxFingerprintSyscall(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(collect_selinux_fp(true).c_str());
 }
 
@@ -3068,12 +3068,12 @@ static std::string read_cmdline(bool use_syscall) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCmdlineNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCmdlineNative(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(read_cmdline(false).c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getCmdlineSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getCmdlineSyscall(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(read_cmdline(true).c_str());
 }
 
@@ -3127,7 +3127,7 @@ static std::string mmap_read_property(const char* prop_name) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getPropertyMmap(JNIEnv *env, jobject thiz, jstring propName) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getPropertyMmap(JNIEnv *env, jobject thiz, jstring propName) {
     const char* name = env->GetStringUTFChars(propName, nullptr);
     std::string val = mmap_read_property(name);
     env->ReleaseStringUTFChars(propName, name);
@@ -3135,7 +3135,7 @@ Java_com_xff_launch_detector_NativeDetector_getPropertyMmap(JNIEnv *env, jobject
 }
 
 JNIEXPORT jint JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkPropertyMmapConsistency(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkPropertyMmapConsistency(JNIEnv *env, jobject thiz) {
     const char* keys[] = {
         "ro.serialno",
         "ro.product.model",
@@ -3308,7 +3308,7 @@ static std::string read_dev_property_mmap(const std::string& key) {
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_readDevPropertyMmap(
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_readDevPropertyMmap(
         JNIEnv* env, jobject /*thiz*/, jstring propName) {
     if (propName == nullptr) return env->NewStringUTF("");
     const char* name = env->GetStringUTFChars(propName, nullptr);
@@ -3344,7 +3344,7 @@ static std::string read_property_from_context(const std::string& key, const std:
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_readPropertyFromContext(
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_readPropertyFromContext(
         JNIEnv* env, jobject /*thiz*/, jstring jKey, jstring jContext) {
     if (jKey == nullptr || jContext == nullptr) return env->NewStringUTF("");
     const char* key = env->GetStringUTFChars(jKey, nullptr);
@@ -3362,7 +3362,7 @@ Java_com_xff_launch_detector_NativeDetector_readPropertyFromContext(
 // 返回每条路径的状态（ok / errno 名）。让用户看清楚到底是没文件还是被 SELinux 拒。
 // 注意：ARM64 的 syscall_open 用 inline svc，不写 libc errno，需要直接读 syscall_raw 返回值。
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_probeDevPropertyAccess(
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_probeDevPropertyAccess(
         JNIEnv* env, jobject /*thiz*/) {
     std::string out;
     auto errno_name = [](int e) -> const char* {
@@ -3437,17 +3437,17 @@ static std::string read_urandom_hex(bool use_syscall) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_readUrandomNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_readUrandomNative(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(read_urandom_hex(false).c_str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_readUrandomSyscall(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_readUrandomSyscall(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(read_urandom_hex(true).c_str());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkUrandomIntegrity(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkUrandomIntegrity(JNIEnv *env, jobject thiz) {
     std::string r1 = read_urandom_hex(true);
     std::string r2 = read_urandom_hex(true);
     std::string r3 = read_urandom_hex(true);
@@ -3461,17 +3461,17 @@ Java_com_xff_launch_detector_NativeDetector_checkUrandomIntegrity(JNIEnv *env, j
 // ===================== System Library Integrity Detection =====================
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLibcIntegrity(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLibcIntegrity(JNIEnv *env, jobject thiz) {
     return IntegrityDetector::checkLibcIntegrity();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLibartIntegrity(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLibartIntegrity(JNIEnv *env, jobject thiz) {
     return IntegrityDetector::checkLibartIntegrity();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkAndroidRuntimeIntegrity(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkAndroidRuntimeIntegrity(JNIEnv *env, jobject thiz) {
     return IntegrityDetector::checkAndroidRuntimeIntegrity();
 }
 
@@ -3535,14 +3535,14 @@ static void xff_dump_method_entries(JNIEnv *env) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkAllSystemLibrariesIntegrity(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkAllSystemLibrariesIntegrity(JNIEnv *env, jobject thiz) {
     xff_dump_method_entries(env);
     std::string report = IntegrityDetector::getIntegrityReport();
     return env->NewStringUTF(report.c_str());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkLibraryIntegrity(JNIEnv *env, jobject thiz, jstring libName) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkLibraryIntegrity(JNIEnv *env, jobject thiz, jstring libName) {
     const char* lib_str = env->GetStringUTFChars(libName, nullptr);
     bool result = IntegrityDetector::checkLibraryIntegrity(lib_str);
     env->ReleaseStringUTFChars(libName, lib_str);
@@ -3550,7 +3550,7 @@ Java_com_xff_launch_detector_NativeDetector_checkLibraryIntegrity(JNIEnv *env, j
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_xff_launch_detector_NativeDetector_checkFunctionHook(JNIEnv *env, jobject thiz,
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_checkFunctionHook(JNIEnv *env, jobject thiz,
                                                                jstring libName, jstring funcName) {
     const char* lib_str = env->GetStringUTFChars(libName, nullptr);
     const char* func_str = env->GetStringUTFChars(funcName, nullptr);
@@ -3565,7 +3565,7 @@ Java_com_xff_launch_detector_NativeDetector_checkFunctionHook(JNIEnv *env, jobje
 // VkPhysicalDeviceIDProperties.deviceUUID。deviceUUID 规范保证跨重启/进程/驱动版本不变。
 // 输出: "vendorID|deviceID|driverVersion|deviceUUID|driverUUID"
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getVulkanFingerprintNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getVulkanFingerprintNative(JNIEnv *env, jobject thiz) {
     (void) thiz;
     void* lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
     if (!lib) return env->NewStringUTF("");
@@ -3628,7 +3628,7 @@ Java_com_xff_launch_detector_NativeDetector_getVulkanFingerprintNative(JNIEnv *e
 // 绕过 Java 层对 MediaDrm 的 hook。与 Java 侧 drm_id 同源，服务端/本地交叉校验：
 // 两路 hex 不一致 → 暴露 Java 层 MediaDrm hook。
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getDrmDeviceIdNative(JNIEnv *env, jobject thiz) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getDrmDeviceIdNative(JNIEnv *env, jobject thiz) {
     (void) thiz;
     // 任一步抛异常即清理并返回空串
     #define DRM_FAIL() do { if (env->ExceptionCheck()) env->ExceptionClear(); return env->NewStringUTF(""); } while (0)
@@ -3699,7 +3699,7 @@ Java_com_xff_launch_detector_NativeDetector_getDrmDeviceIdNative(JNIEnv *env, jo
 // 绕过 Java 层对 android.net.wifi.WifiInfo 的 hook。对照 JD field 7-2(native) vs 7-3(Java)：
 // 两路 BSSID 不一致 → 暴露 Java 层 WifiInfo hook。返回 "BSSID|SSID"。
 JNIEXPORT jstring JNICALL
-Java_com_xff_launch_detector_NativeDetector_getWifiInfoNative(JNIEnv *env, jobject thiz, jobject ctx) {
+Java_com_probiotics_xiaoni_launch_detector_NativeDetector_getWifiInfoNative(JNIEnv *env, jobject thiz, jobject ctx) {
     (void) thiz;
     #define WIFI_FAIL() do { if (env->ExceptionCheck()) env->ExceptionClear(); return env->NewStringUTF(""); } while (0)
     if (!ctx) return env->NewStringUTF("");
