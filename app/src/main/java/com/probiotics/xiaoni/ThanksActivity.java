@@ -21,32 +21,28 @@ public final class ThanksActivity extends BaseActivity {
 
     /** 鸣谢条目：图标 / 标题 / 描述 / 链接（空 = 无） */
     private static final String[][] CREDITS = {
-            {"🧩", "「kr-scripts」Github：helloklf | 酷安：嘟嘟斯基",
-                    "本软件基于「kr-scripts」框架制作，原软件名：「PIO」", "https://github.com/helloklf/kr-scripts"},
-            {"💬", "TIK工具箱官方群",
-                    "感谢群里群友的测试与帮助，就不一一列举了", ""},
             {"🛠", "TIK工具箱",
                     "部分代码来自于TIK2源码，在此感谢", "https://gitee.com/yeliqin666/TIK"},
             {"🎭", "magiskboot",
                     "镜像解包/打包核心工具", "https://github.com/topjohnwu/Magisk"},
-            {"🧱", "sdat2img and img2sdat",
+            {"🔄", "sdat2img and img2sdat",
                     "transfer.list 数据转换工具", "https://github.com/xpirt"},
             {"🗜", "erofs-extract",
                     "EROFS 镜像提取工具", "https://github.com/sekaiacg/erofs-extract"},
             {"🧬", "DNA",
                     "使用了@温柔的慈悲大佬的DNA工具箱名字，向大佬致敬！", "https://gitee.com/sharpeter/DNA"},
-            // ↓ v3.40.10：酷安 @相见即是缘 —— 一直维护的 DNA 工具（本应用 DNA 打包功能移植自其 20260530 版本）
-            {"⚡", "酷安：@相见即是缘",
+            {"⚡", "DNA-Android | 酷安：tao1996",
+                    "最开始构建 DNA 软件的佬", "https://www.coolapk.com/u/1128537"},
+            {"🔧", "酷安：@相见即是缘",
                     "感谢大佬一直维护的 DNA 工具，DNA 打包功能移植自其 20260530 版本", "https://www.coolapk.com/u/1614257"},
             {"📱", "搞机助手",
                     "搞机助手原作者@情非得已c，提取了搞机助手部分代码文件使用！", ""},
             {"🐍", "affggh",
                     "改用@affggh大佬的fspatch.py修补权限文件以及github开源的工具", "https://github.com/affggh/fspatch"},
-            // ↓ v3.30.23：原「关于 Dsu 管理器」页鸣谢并入
             {"📦", "DSU-Sideloader",
                     "本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案", "https://github.com/VegaBobo/DSU-Sideloader"},
             {"🌟", "yangFenTuoZi",
-                    "感谢开发 Dsu 功能 img 无损替换功能", ""},
+                    "感谢开发 Dsu 功能 img 无损替换功能", "https://www.coolapk.com/u/15035178"},
             {"👤", "作者：小你可兰",
                     "Dsu GSI 管理器 v" + BuildConfig.VERSION_NAME, ""},
     };

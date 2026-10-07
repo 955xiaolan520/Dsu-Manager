@@ -8,6 +8,7 @@ import android.content.*;
 import android.database.Cursor;
 import android.provider.OpenableColumns;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.ClipDrawable;
@@ -44,7 +45,7 @@ public class MainActivity extends BaseActivity {
         return super.dispatchTouchEvent(event);
     }
     private TextView rootStatus, gsiStatus, detailText;
-    private LinearLayout logoCard;
+    private FrameLayout logoCard;
     private static final int PICK_IMAGE = 10;
     private static final int PICK_ZIP = 20;
     private static final int PICK_REPLACEMENT = 30;
@@ -94,6 +95,8 @@ public class MainActivity extends BaseActivity {
     // v3.28.2：DNA 主页工具链状态 / 当前工程视图
     private TextView dnaStatusView;
     private TextView dnaProjectView;
+    // v3.50.11：DNA 工具链文件下载状态（右上角显示）
+    private TextView dnaToolsDownloadStatus;
     // v3.41.11：工具链云端下载防重入（下载中禁点）
     private final java.util.concurrent.atomic.AtomicBoolean dnaDownloading = new java.util.concurrent.atomic.AtomicBoolean(false);
     private LinearLayout imageManagementPanel;
@@ -327,61 +330,70 @@ public class MainActivity extends BaseActivity {
          LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(-1, dp(58));
          content.addView(bar, barLp);
 
-        logoCard = new LinearLayout(this);
-        logoCard.setOrientation(LinearLayout.VERTICAL);
-        logoCard.setPadding(dp(28), dp(22), dp(28), dp(20));
-         logoCard.setBackgroundResource(R.drawable.logo_glass_bg);
+        // Logo 卡片：纯图片背景，不显示任何文字
+        logoCard = new FrameLayout(this);
         logoCard.setClipToOutline(true);
         logoCard.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View view, android.graphics.Outline outline) {
                 outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(28));
             }
         });
-         logoCard.setOnTouchListener((view, event) -> {
-             if (event.getAction() != MotionEvent.ACTION_UP) return true;
-             Haptics.perform(view);
-             if (pendingLogoClick != null) {
-                 mainHandler.removeCallbacks(pendingLogoClick);
-                 pendingLogoClick = null;
-                   logoCard.setBackgroundResource(R.drawable.logo_glass_bg);
-                  toast(t("已恢复默认背景图", "Default background restored"));
-             } else {
-                 pendingLogoClick = () -> { pendingLogoClick = null; chooseImage(); };
-                 mainHandler.postDelayed(pendingLogoClick, 280);
-             }
-             return true;
-         });
-         gsiStatus = text(rootAuthorized ? t("正在读取动态系统状态...", "Reading Dynamic System status...")
-                  : t("需要 ROOT 权限", "ROOT access required"), 21, Color.WHITE);
-         gsiStatus.setTypeface(null, 1);
-         logoCard.addView(gsiStatus, new LinearLayout.LayoutParams(-1, dp(52)));
-         TextView hint = text(t("点击卡片更换背景图片", "Tap to change background image"), 12, 0xB8FFFFFF);
-         logoCard.addView(hint);
-         FrameLayout logoMark = new FrameLayout(this);
-         TextView logoDepth = text("小你", 32, 0x66101A44);
-         logoDepth.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-         logoDepth.setTypeface(null, 1);
-         logoDepth.setTranslationX(dp(4));
-         logoDepth.setTranslationY(dp(5));
-         logoMark.addView(logoDepth, new FrameLayout.LayoutParams(-1, dp(50)));
-         TextView logoExtrusion = text("小你", 32, 0xFF183B91);
-         logoExtrusion.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-         logoExtrusion.setTypeface(null, 1);
-         logoExtrusion.setTranslationX(dp(2));
-         logoExtrusion.setTranslationY(dp(2));
-         logoMark.addView(logoExtrusion, new FrameLayout.LayoutParams(-1, dp(50)));
-         TextView logoFace = text("小你", 32, Color.WHITE);
-         logoFace.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-         logoFace.setTypeface(null, 1);
-         logoFace.setShadowLayer(dp(2), 0, dp(1), 0xCC07142E);
-         logoMark.addView(logoFace, new FrameLayout.LayoutParams(-1, dp(50)));
-         LinearLayout.LayoutParams logoMarkLp = new LinearLayout.LayoutParams(-1, dp(50));
-         logoMarkLp.gravity = Gravity.RIGHT;
-         logoCard.addView(logoMark, logoMarkLp);
+        
+        // 背景图片：完整显示
+        final ImageView bgImage = new ImageView(this);
+        bgImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        bgImage.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+        try {
+            Bitmap defaultBg = android.graphics.BitmapFactory.decodeResource(getResources(), R.drawable.logo_bg);
+            if (defaultBg != null) {
+                bgImage.setImageBitmap(defaultBg);
+            } else {
+                bgImage.setImageResource(R.drawable.logo_glass_bg);
+            }
+        } catch (Exception e) {
+            bgImage.setImageResource(R.drawable.logo_glass_bg);
+        }
+        logoCard.addView(bgImage);
+        
+        // 4. 点击事件：双击恢复默认，单击选择图片
+        final ImageView finalBgImage = bgImage;
+        logoCard.setOnTouchListener((view, event) -> {
+            if (event.getAction() != MotionEvent.ACTION_UP) return true;
+            Haptics.perform(view);
+            if (pendingLogoClick != null) {
+                mainHandler.removeCallbacks(pendingLogoClick);
+                pendingLogoClick = null;
+                // 双击：恢复默认背景
+                try {
+                    Bitmap defaultBg = android.graphics.BitmapFactory.decodeResource(getResources(), R.drawable.logo_bg);
+                    if (defaultBg != null) {
+                        finalBgImage.setImageBitmap(defaultBg);
+                    } else {
+                        finalBgImage.setImageResource(R.drawable.logo_glass_bg);
+                    }
+                } catch (Exception e) {
+                    finalBgImage.setImageResource(R.drawable.logo_glass_bg);
+                }
+                toast(t("已恢复默认背景图", "Default background restored"));
+            } else {
+                // 单击：选择图片
+                pendingLogoClick = () -> { pendingLogoClick = null; chooseImage(finalBgImage); };
+                mainHandler.postDelayed(pendingLogoClick, 280);
+            }
+            return true;
+        });
+         // Logo 卡片：纯图片，不显示任何状态
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, dp(170));
-        cardLp.setMargins(0, dp(14), 0, dp(16));
+        cardLp.setMargins(0, dp(14), 0, 0);
         cardLp.gravity = Gravity.CENTER_HORIZONTAL;
         content.addView(logoCard, cardLp);
+        
+        // 提示文字：点击卡片更换背景图片（右下角显示）
+        TextView changeBgHint = text(t("点击卡片更换背景图片", "Tap card to change background"), 11, 0xFF94A3B8);
+        changeBgHint.setGravity(Gravity.END);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+        hintLp.setMargins(0, dp(6), dp(14), dp(10));
+        content.addView(changeBgHint, hintLp);
 
          LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -425,14 +437,28 @@ public class MainActivity extends BaseActivity {
              }
          }
          updateActionButtons();
+          
+          // 状态显示框：显示 GSI 状态和操作结果
+          LinearLayout statusPanel = new LinearLayout(this);
+          statusPanel.setOrientation(LinearLayout.VERTICAL);
+          statusPanel.setPadding(dp(14), dp(10), dp(14), dp(10));
+          statusPanel.setBackgroundResource(R.drawable.liquid_glass_panel);
+          
+          gsiStatus = text(rootAuthorized ? t("正在读取动态系统状态...", "Reading Dynamic System status...")
+                   : t("需要 ROOT 权限", "ROOT access required"), 14, Color.rgb(77, 87, 105));
+          gsiStatus.setTypeface(null, Typeface.BOLD);
+          statusPanel.addView(gsiStatus, new LinearLayout.LayoutParams(-1, -2));
+          
           detailText = text(t("点击操作后，结果会显示在这里。", "Results will appear here after an action."), 13, Color.rgb(77, 87, 105));
           detailText.setGravity(Gravity.TOP);
-          detailText.setPadding(dp(14), dp(10), dp(14), dp(10));
-          detailText.setMinHeight(dp(72));
-          detailText.setBackgroundResource(R.drawable.liquid_glass_panel);
-           LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
-          detailLp.setMargins(0, 0, 0, dp(4));
-         content.addView(detailText, detailLp);
+          detailText.setMinHeight(dp(50));
+          LinearLayout.LayoutParams detailLp2 = new LinearLayout.LayoutParams(-1, -2);
+          detailLp2.topMargin = dp(8);
+          statusPanel.addView(detailText, detailLp2);
+          
+          LinearLayout.LayoutParams statusPanelLp = new LinearLayout.LayoutParams(-1, -2);
+          statusPanelLp.setMargins(0, 0, 0, dp(4));
+          content.addView(statusPanel, statusPanelLp);
          installOptionsPanel = new LinearLayout(this);
          installOptionsPanel.setOrientation(LinearLayout.VERTICAL);
          installOptionsPanel.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -1208,8 +1234,7 @@ public class MainActivity extends BaseActivity {
 
           // 工具链状态卡（对齐原版「ROM工具未就绪 + 检测」）
           LinearLayout statusCard = new LinearLayout(this);
-          statusCard.setOrientation(LinearLayout.HORIZONTAL);
-          statusCard.setGravity(Gravity.CENTER_VERTICAL);
+          statusCard.setOrientation(LinearLayout.VERTICAL);
           statusCard.setPadding(dp(14), dp(10), dp(12), dp(10));
           GradientDrawable statusBg = new GradientDrawable();
           statusBg.setColor(0xB3FFFFFF);
@@ -1217,14 +1242,41 @@ public class MainActivity extends BaseActivity {
           statusBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
           statusCard.setBackground(statusBg);
           statusCard.setElevation(dp(4));
+          
+          // 第一行：ROOT 状态 + 工具链文件下载状态
+          LinearLayout firstRow = new LinearLayout(this);
+          firstRow.setOrientation(LinearLayout.HORIZONTAL);
+          firstRow.setGravity(Gravity.CENTER_VERTICAL);
           LinearLayout statusText = new LinearLayout(this);
           statusText.setOrientation(LinearLayout.VERTICAL);
-          TextView statusLabel = text(t("工具链状态", "Toolchain"), 12, 0xff5a6b82);
+          TextView statusLabel = text(t("ROOT 状态", "ROOT Status"), 12, 0xff5a6b82);
           statusText.addView(statusLabel, new LinearLayout.LayoutParams(-1, -2));
           dnaStatusView = text(t("检测中 …", "Checking..."), 14, 0xff5a6b82);
           dnaStatusView.setTypeface(null, 1);
           statusText.addView(dnaStatusView, new LinearLayout.LayoutParams(-1, -2));
-          statusCard.addView(statusText, new LinearLayout.LayoutParams(0, -2, 1f));
+          firstRow.addView(statusText, new LinearLayout.LayoutParams(0, -2, 1f));
+          
+          // DNA 工具链下载状态显示
+          LinearLayout toolsStatusBox = new LinearLayout(this);
+          toolsStatusBox.setOrientation(LinearLayout.VERTICAL);
+          toolsStatusBox.setGravity(Gravity.END);
+          TextView toolsLabel = text(t("工具链文件", "Tools"), 11, 0xff5a6b82);
+          toolsLabel.setGravity(Gravity.END);
+          toolsStatusBox.addView(toolsLabel, new LinearLayout.LayoutParams(-2, -2));
+          dnaToolsDownloadStatus = text(t("检测中", "Checking"), 13, 0xff5a6b82);
+          dnaToolsDownloadStatus.setTypeface(null, 1);
+          dnaToolsDownloadStatus.setGravity(Gravity.END);
+          toolsStatusBox.addView(dnaToolsDownloadStatus, new LinearLayout.LayoutParams(-2, -2));
+          firstRow.addView(toolsStatusBox, new LinearLayout.LayoutParams(-2, -2));
+          statusCard.addView(firstRow, new LinearLayout.LayoutParams(-1, -2));
+          
+          // 第二行：下载工具 + 检测按钮
+          LinearLayout secondRow = new LinearLayout(this);
+          secondRow.setOrientation(LinearLayout.HORIZONTAL);
+          secondRow.setGravity(Gravity.CENTER_VERTICAL);
+          LinearLayout.LayoutParams secondRowLp = new LinearLayout.LayoutParams(-1, -2);
+          secondRowLp.topMargin = dp(8);
+          
           // v3.41.11：下载工具按钮（17 个 CLI 工具改为 GitHub Release 云端下载，APK 减重约 27M）
           Button downloadBtn = new Button(this, null, 0);
           downloadBtn.setText(t("下载工具", "Download"));
@@ -1246,8 +1298,9 @@ public class MainActivity extends BaseActivity {
               Haptics.perform(v);
               downloadDnaTools();
           });
-          statusCard.addView(downloadBtn, new LinearLayout.LayoutParams(dp(88), dp(40)));
-          LinearLayout.LayoutParams checkLp = new LinearLayout.LayoutParams(dp(76), dp(40));
+          secondRow.addView(downloadBtn, new LinearLayout.LayoutParams(0, dp(40), 1f));
+          
+          LinearLayout.LayoutParams checkLp = new LinearLayout.LayoutParams(0, dp(40), 1f);
           checkLp.leftMargin = dp(8);
           Button checkBtn = new Button(this, null, 0);
           checkBtn.setText(t("检测", "Check"));
@@ -1255,7 +1308,6 @@ public class MainActivity extends BaseActivity {
           checkBtn.setTextSize(13);
           checkBtn.setTypeface(null, 1);
           checkBtn.setTextColor(0xff172b4d);
-          // v3.28.7：无样式 Button 文字默认偏左上 —— 显式居中 + 零内边距（修复文字不居中/溢出）
           checkBtn.setGravity(Gravity.CENTER);
           checkBtn.setPadding(0, 0, 0, 0);
           GradientDrawable checkBg = new GradientDrawable();
@@ -1270,7 +1322,9 @@ public class MainActivity extends BaseActivity {
               Haptics.perform(v);
               showDnaToolchainReport();
           });
-          statusCard.addView(checkBtn, checkLp);
+          secondRow.addView(checkBtn, checkLp);
+          statusCard.addView(secondRow, secondRowLp);
+          
           LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
           statusLp.topMargin = dp(4);
           statusLp.bottomMargin = dp(10);
@@ -1612,13 +1666,19 @@ public class MainActivity extends BaseActivity {
 
       /** 异步检测 DNA 工具链（root + 17 个二进制自检；v3.41.11 区分「未下载」与「无 ROOT」）
        *  v3.41.17：线程安全 —— 初始「检测中」提示经 runOnUiThread 上屏（修复从 dna-deep-check
-       *  等子线程调用时 CalledFromWrongThreadException 崩溃） */
+       *  等子线程调用时 CalledFromWrongThreadException 崩溃）
+       *  v3.50.12：同步更新右上角工具链文件下载状态
+       *  v3.50.13：左边改为 ROOT 状态，右边显示工具链文件下载状态 */
       private void refreshDnaToolchain() {
           if (dnaStatusView == null) return;
           runOnUiThread(() -> {
               if (dnaStatusView == null || isFinishing() || isDestroyed()) return;
               dnaStatusView.setText(t("检测中 …", "Checking..."));
               dnaStatusView.setTextColor(0xff5a6b82);
+              if (dnaToolsDownloadStatus != null) {
+                  dnaToolsDownloadStatus.setText(t("检测中", "Checking"));
+                  dnaToolsDownloadStatus.setTextColor(0xff5a6b82);
+              }
           });
           new Thread(() -> {
               boolean ok = DnaTools.ensure(this) != null;
@@ -1630,15 +1690,23 @@ public class MainActivity extends BaseActivity {
               final boolean installed = DnaTools.toolsInstalled(this);
               runOnUiThread(() -> {
                   if (dnaStatusView == null) return;
-                  if (ok) {
-                      dnaStatusView.setText(t("✓ 就绪（ROOT 可用）", "✓ Ready (ROOT OK)"));
+                  // 左边显示 ROOT 状态
+                  if (rootOk) {
+                      dnaStatusView.setText(t("✓ 已授权", "✓ Granted"));
                       dnaStatusView.setTextColor(0xff1d7a4f);
-                  } else if (rootOk && !installed) {
-                      dnaStatusView.setText(t("工具未下载（点右侧「下载工具」）", "Tools not downloaded"));
-                      dnaStatusView.setTextColor(0xffb07a1d);
                   } else {
-                      dnaStatusView.setText(t("未就绪（需要 ROOT 授权）", "Not ready (ROOT required)"));
+                      dnaStatusView.setText(t("✗ 未授权", "✗ Denied"));
                       dnaStatusView.setTextColor(0xffa33b3b);
+                  }
+                  // 右边显示工具链文件下载状态
+                  if (dnaToolsDownloadStatus != null) {
+                      if (installed) {
+                          dnaToolsDownloadStatus.setText(t("已下载", "Downloaded"));
+                          dnaToolsDownloadStatus.setTextColor(0xff1d7a4f);
+                      } else {
+                          dnaToolsDownloadStatus.setText(t("未下载，不可用", "Not downloaded"));
+                          dnaToolsDownloadStatus.setTextColor(0xffa33b3b);
+                      }
                   }
               });
           }, "dna-toolchain-check").start();
@@ -5667,8 +5735,8 @@ public class MainActivity extends BaseActivity {
          installOptionsPanel.setVisibility(View.GONE);
          installWithDsuSideloaderFlow(pendingInstallZip);
      }
-     private void chooseImage(){
-         // v3.30.15：内置文件浏览器替换系统 SAF（root 复制到 cache 后解码，支持任意路径）
+     private void chooseImage(ImageView bgImageView){
+         // v3.50.18：内置文件浏览器 + 裁剪预览界面（用户自己调整显示区域）
          FileBrowserDialog.show(this, t("选择 Logo 图片", "Select logo image"),
                  new String[]{".png", ".jpg", ".jpeg", ".webp", ".bmp"}, "/storage/emulated/0",
                  path -> {
@@ -5678,14 +5746,200 @@ public class MainActivity extends BaseActivity {
                      ).exec();
                      Bitmap bitmap = android.graphics.BitmapFactory.decodeFile(target.getAbsolutePath());
                      if (bitmap != null) {
-                         logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28)));
-                         logoCard.setClipToOutline(true);
+                         showImageCropDialog(bitmap, bgImageView);
                      } else {
                          toast(t("无法读取图片", "Cannot read image"));
                      }
                  });
      }
-     @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK)return; if((r==402||r==403||r==404) && otgFlashHelper != null){ otgFlashHelper.onActivityResult(r,c,d); return; } if(d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } else if(r==PICK_FASTBOOT_IMAGE){ String path=getPath(u,"fastboot.img"); if(!path.isEmpty()){ if(fastbootImagePathInput != null) fastbootImagePathInput.setText(path); else if(fastbootFilePathInput != null) fastbootFilePathInput.setText(path); } } else if(r==REQUEST_FLASH_IMAGE_FILE){ preparePartitionImage(u); } else if(r==REQUEST_OTG_SINGLE_IMAGE){ String path=getPath(u,"otg_single.img"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareSingleImage(path); } } else if(r==REQUEST_OTG_FULL_PACKAGE){ String path=getPath(u,"otg_full.zip"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.extractAndScanOta(path); } } else if(r==REQUEST_OTG_ADB_PUSH){ String path=getPath(u,"otg_push_file"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareAdbPush(path); } } }
+     
+     /** v3.50.23：彻底修复按钮溢出的图片裁剪对话框 */
+     private void showImageCropDialog(Bitmap bitmap, ImageView targetImageView) {
+         Dialog dialog = new Dialog(this);
+         dialog.setCancelable(true);
+         
+         LinearLayout panel = new LinearLayout(this);
+         panel.setOrientation(LinearLayout.VERTICAL);
+         panel.setPadding(dp(18), dp(16), dp(18), dp(14));
+         GradientDrawable bg = new GradientDrawable();
+         bg.setColor(0xF2e9f0f7);
+         bg.setCornerRadius(dp(20));
+         panel.setBackground(bg);
+         
+         TextView title = new TextView(this);
+         title.setText(t("调整", "Crop"));
+         title.setTextSize(15f);
+         title.setTypeface(null, 1);
+         title.setTextColor(0xff17334f);
+         panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+         
+         // 预览容器
+         FrameLayout previewContainer = new FrameLayout(this);
+         LinearLayout.LayoutParams containerLp = new LinearLayout.LayoutParams(-1, dp(160));
+         containerLp.topMargin = dp(10);
+         
+         // 背景图片
+         ImageView preview = new ImageView(this);
+         preview.setScaleType(ImageView.ScaleType.MATRIX);
+         preview.setImageBitmap(bitmap);
+         preview.setClipToOutline(true);
+         preview.setOutlineProvider(new ViewOutlineProvider() {
+             @Override public void getOutline(View view, android.graphics.Outline outline) {
+                 outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(16));
+             }
+         });
+         
+         // 手势处理
+         final android.graphics.Matrix matrix = new android.graphics.Matrix();
+         final android.graphics.Matrix savedMatrix = new android.graphics.Matrix();
+         
+         preview.post(() -> {
+             int viewWidth = preview.getWidth();
+             int viewHeight = preview.getHeight();
+             int imgWidth = bitmap.getWidth();
+             int imgHeight = bitmap.getHeight();
+             float scale = Math.max((float)viewWidth / imgWidth, (float)viewHeight / imgHeight);
+             matrix.setScale(scale, scale);
+             matrix.postTranslate((viewWidth - imgWidth * scale) / 2f, (viewHeight - imgHeight * scale) / 2f);
+             preview.setImageMatrix(matrix);
+         });
+         
+         final int NONE = 0, DRAG = 1, ZOOM = 2;
+         final int[] mode = {NONE};
+         final android.graphics.PointF start = new android.graphics.PointF();
+         final android.graphics.PointF mid = new android.graphics.PointF();
+         final float[] oldDist = {1f};
+         
+         preview.setOnTouchListener((v, event) -> {
+             int action = event.getActionMasked();
+             switch (action) {
+                 case MotionEvent.ACTION_DOWN:
+                     savedMatrix.set(matrix);
+                     start.set(event.getX(), event.getY());
+                     mode[0] = DRAG;
+                     break;
+                 case MotionEvent.ACTION_POINTER_DOWN:
+                     if (event.getPointerCount() == 2) {
+                         oldDist[0] = spacing(event);
+                         if (oldDist[0] > 10f) {
+                             savedMatrix.set(matrix);
+                             midPoint(mid, event);
+                             mode[0] = ZOOM;
+                         }
+                     }
+                     break;
+                 case MotionEvent.ACTION_MOVE:
+                     if (mode[0] == DRAG && event.getPointerCount() == 1) {
+                         matrix.set(savedMatrix);
+                         matrix.postTranslate(event.getX() - start.x, event.getY() - start.y);
+                     } else if (mode[0] == ZOOM && event.getPointerCount() == 2) {
+                         float newDist = spacing(event);
+                         if (newDist > 10f) {
+                             matrix.set(savedMatrix);
+                             float scale = newDist / oldDist[0];
+                             matrix.postScale(scale, scale, mid.x, mid.y);
+                         }
+                     }
+                     preview.setImageMatrix(matrix);
+                     break;
+                 case MotionEvent.ACTION_UP:
+                 case MotionEvent.ACTION_POINTER_UP:
+                     savedMatrix.set(matrix);
+                     mode[0] = NONE;
+                     break;
+             }
+             return true;
+          });
+          
+          previewContainer.addView(preview, new FrameLayout.LayoutParams(-1, -1));
+          
+          panel.addView(previewContainer, containerLp);
+         
+         TextView hint = new TextView(this);
+         hint.setText(t("缩放·拖动", "Zoom"));
+         hint.setTextSize(10f);
+         hint.setTextColor(0xff5a6b82);
+         hint.setGravity(Gravity.CENTER);
+         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+         hintLp.topMargin = dp(6);
+         panel.addView(hint, hintLp);
+         
+         // 按钮行：极简布局
+         LinearLayout btnRow = new LinearLayout(this);
+         btnRow.setOrientation(LinearLayout.HORIZONTAL);
+         LinearLayout.LayoutParams btnRowLp = new LinearLayout.LayoutParams(-1, -2);
+         btnRowLp.topMargin = dp(12);
+         
+          Button cancel = new Button(this, null, 0);
+          cancel.setText(t("取消", "Cancel"));
+          cancel.setAllCaps(false);
+          cancel.setTextSize(15);
+          cancel.setGravity(Gravity.CENTER);
+          cancel.setTextColor(0xff5a6b82);
+          cancel.setPadding(0, 0, 0, 0);
+          cancel.setMinWidth(0);
+          cancel.setMinimumWidth(0);
+          GradientDrawable cancelBg = new GradientDrawable();
+          cancelBg.setColor(0x18000000);
+          cancelBg.setCornerRadius(dp(8));
+          cancel.setBackground(cancelBg);
+          cancel.setStateListAnimator(null);
+          cancel.setOnClickListener(v -> dialog.dismiss());
+          LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, dp(36), 1f);
+          cancelLp.rightMargin = dp(8);
+          btnRow.addView(cancel, cancelLp);
+          
+          Button confirm = new Button(this, null, 0);
+          confirm.setText(t("确定", "Confirm"));
+          confirm.setAllCaps(false);
+          confirm.setTextSize(15);
+          confirm.setGravity(Gravity.CENTER);
+          confirm.setTextColor(Color.WHITE);
+          confirm.setPadding(0, 0, 0, 0);
+          confirm.setMinWidth(0);
+          confirm.setMinimumWidth(0);
+          GradientDrawable confirmBg = new GradientDrawable();
+          confirmBg.setCornerRadius(dp(8));
+          confirmBg.setColors(new int[]{0xFF4C74DE, 0xFF2563EB});
+          confirmBg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+          confirm.setBackground(confirmBg);
+          confirm.setStateListAnimator(null);
+          confirm.setOnClickListener(v -> {
+              dialog.dismiss();
+              Bitmap adjusted = Bitmap.createBitmap(preview.getWidth(), preview.getHeight(), Bitmap.Config.ARGB_8888);
+              android.graphics.Canvas canvas = new android.graphics.Canvas(adjusted);
+              canvas.drawBitmap(bitmap, matrix, null);
+              targetImageView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+              targetImageView.setImageBitmap(adjusted);
+              toast("✓");
+          });
+          LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(0, dp(36), 1f);
+          btnRow.addView(confirm, confirmLp);
+         panel.addView(btnRow, btnRowLp);
+         
+         dialog.setContentView(panel);
+         Window w = dialog.getWindow();
+         if (w != null) {
+             w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000));
+             w.setLayout((int)(getResources().getDisplayMetrics().widthPixels * 0.85f), -2);
+         }
+         dialog.show();
+     }
+     
+     /** 手势辅助方法：计算两指距离 */
+     private float spacing(MotionEvent event) {
+         float x = event.getX(0) - event.getX(1);
+         float y = event.getY(0) - event.getY(1);
+         return (float) Math.sqrt(x * x + y * y);
+     }
+     
+     /** 手势辅助方法：计算两指中点 */
+     private void midPoint(android.graphics.PointF point, MotionEvent event) {
+         float x = event.getX(0) + event.getX(1);
+         float y = event.getY(0) + event.getY(1);
+         point.set(x / 2f, y / 2f);
+     }
+     @Override protected void onActivityResult(int r,int c,Intent d){ super.onActivityResult(r,c,d); if(c!=RESULT_OK)return; if((r==402||r==403||r==404) && otgFlashHelper != null){ otgFlashHelper.onActivityResult(r,c,d); return; } if(d==null)return; Uri u=d.getData(); if(r==PICK_IMAGE){ String path=getPath(u,"logo.img"); if(!path.isEmpty()){ Bitmap bitmap=android.graphics.BitmapFactory.decodeFile(path); if(bitmap!=null) { logoCard.setBackground(new RoundedCropDrawable(bitmap, dp(28), -dp(15))); logoCard.setClipToOutline(true); } } } else if(r==PICK_ZIP){ pendingInstallZip = u; installedZipName = displayName(u); getPreferences(MODE_PRIVATE).edit().putString("installed_zip_name", installedZipName).apply(); installZipLabel.setText(installedZipName); confirmInstallButton.setEnabled(true); } else if(r==PICK_REPLACEMENT && replacementPartition != null){ replaceImage(u, replacementPartition); } else if(r==PICK_ROOTFS){ Intent intent = new Intent(this, LinuxTerminalActivity.class); intent.putExtra("local_install", true); intent.setData(u); startActivity(intent); } else if(r==PICK_FASTBOOT_IMAGE){ String path=getPath(u,"fastboot.img"); if(!path.isEmpty()){ if(fastbootImagePathInput != null) fastbootImagePathInput.setText(path); else if(fastbootFilePathInput != null) fastbootFilePathInput.setText(path); } } else if(r==REQUEST_FLASH_IMAGE_FILE){ preparePartitionImage(u); } else if(r==REQUEST_OTG_SINGLE_IMAGE){ String path=getPath(u,"otg_single.img"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareSingleImage(path); } } else if(r==REQUEST_OTG_FULL_PACKAGE){ String path=getPath(u,"otg_full.zip"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.extractAndScanOta(path); } } else if(r==REQUEST_OTG_ADB_PUSH){ String path=getPath(u,"otg_push_file"); if(!path.isEmpty() && otgFlashHelper != null){ otgFlashHelper.prepareAdbPush(path); } } }
 
      private String displayName(Uri uri){
          try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
@@ -6372,18 +6626,151 @@ public class MainActivity extends BaseActivity {
              runOnUiThread(() -> toast(t("设备正在重启到 DSU", "Device is rebooting to DSU")));
         }).start();
     }
+    
+      /** v3.50.16：简化版景深背景 —— 全图模糊 + 文字区域半透明遮罩 + 下方清晰区域 */
+      /** 
+       * v3.50.17：真正的景深效果 Drawable —— 基于亮度分离前景/背景
+       * 远景（天空）模糊，近景（人物）清晰，无黑色遮罩
+       */
+      private static final class SimpleBokehDrawable extends Drawable {
+         private final Bitmap result;  // 最终合成的图片
+         private final float radius;
+         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+         
+         SimpleBokehDrawable(android.content.Context ctx, Bitmap original, float radius) {
+             this.radius = radius;
+             this.result = createBokehEffect(ctx, original);
+         }
+         
+         /** 创建景深效果：背景模糊 + 前景清晰 */
+         private Bitmap createBokehEffect(android.content.Context ctx, Bitmap src) {
+             int w = src.getWidth();
+             int h = src.getHeight();
+             
+             // 1. 创建全图模糊版本
+             Bitmap blurred = createBlurredBitmap(ctx, src, 25f);
+             if (blurred == src) return src; // 模糊失败，返回原图
+             
+             // 2. 创建结果图
+             Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+             
+             // 3. 逐像素混合：根据亮度决定使用模糊还是清晰
+             int[] srcPixels = new int[w * h];
+             int[] blurPixels = new int[w * h];
+             src.getPixels(srcPixels, 0, w, 0, 0, w, h);
+             blurred.getPixels(blurPixels, 0, w, 0, 0, w, h);
+             
+             int[] outPixels = new int[w * h];
+             for (int i = 0; i < srcPixels.length; i++) {
+                 int pixel = srcPixels[i];
+                 int r = (pixel >> 16) & 0xFF;
+                 int g = (pixel >> 8) & 0xFF;
+                 int b = pixel & 0xFF;
+                 
+                 // 计算亮度
+                 int brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                 
+                 // 根据亮度混合模糊和清晰版本
+                 if (brightness > 140) {
+                     // 亮度高（人物）→ 使用清晰版本
+                     outPixels[i] = srcPixels[i];
+                 } else if (brightness > 100) {
+                     // 过渡区域 → 混合
+                     float ratio = (brightness - 100) / 40f;
+                     outPixels[i] = blendPixels(blurPixels[i], srcPixels[i], ratio);
+                 } else {
+                     // 亮度低（背景）→ 使用模糊版本
+                     outPixels[i] = blurPixels[i];
+                 }
+             }
+             
+             result.setPixels(outPixels, 0, w, 0, 0, w, h);
+             blurred.recycle();
+             return result;
+         }
+         
+         /** 混合两个像素 */
+         private int blendPixels(int bg, int fg, float ratio) {
+             int a = (int)(((bg >>> 24) * (1 - ratio) + (fg >>> 24) * ratio));
+             int r = (int)((((bg >> 16) & 0xFF) * (1 - ratio) + ((fg >> 16) & 0xFF) * ratio));
+             int g = (int)((((bg >> 8) & 0xFF) * (1 - ratio) + ((fg >> 8) & 0xFF) * ratio));
+             int b = (int)(((bg & 0xFF) * (1 - ratio) + (fg & 0xFF) * ratio));
+             return (a << 24) | (r << 16) | (g << 8) | b;
+         }
+         
+         private Bitmap createBlurredBitmap(android.content.Context ctx, Bitmap src, float blurRadius) {
+             try {
+                 android.renderscript.RenderScript rs = android.renderscript.RenderScript.create(ctx);
+                 android.renderscript.Allocation input = android.renderscript.Allocation.createFromBitmap(rs, src);
+                 android.renderscript.Allocation output = android.renderscript.Allocation.createTyped(rs, input.getType());
+                 android.renderscript.ScriptIntrinsicBlur script = android.renderscript.ScriptIntrinsicBlur.create(rs, android.renderscript.Element.U8_4(rs));
+                 script.setRadius(blurRadius);
+                 script.setInput(input);
+                 script.forEach(output);
+                 Bitmap blurred = Bitmap.createBitmap(src.getWidth(), src.getHeight(), src.getConfig());
+                 output.copyTo(blurred);
+                 rs.destroy();
+                 return blurred;
+             } catch (Exception e) {
+                 return src;
+             }
+         }
+         
+         @Override public void draw(Canvas canvas) {
+             RectF bounds = new RectF(getBounds());
+             int saveCount = canvas.save();
+             
+             // 裁剪圆角
+             android.graphics.Path path = new android.graphics.Path();
+             path.addRoundRect(bounds, radius, radius, android.graphics.Path.Direction.CW);
+             canvas.clipPath(path);
+             
+             float scale = Math.max(bounds.width() / result.getWidth(), bounds.height() / result.getHeight());
+             float width = result.getWidth() * scale;
+             float height = result.getHeight() * scale;
+             float left = bounds.left + (bounds.width() - width) / 2f;
+             float top = bounds.top + (bounds.height() - height) / 2f;
+             
+             android.graphics.Rect src = new android.graphics.Rect(0, 0, result.getWidth(), result.getHeight());
+             RectF dst = new RectF(left, top, left + width, top + height);
+             
+             // 绘制合成后的图片
+             canvas.drawBitmap(result, src, dst, paint);
+             
+             canvas.restoreToCount(saveCount);
+             
+             // 边框
+             paint.setStyle(Paint.Style.STROKE);
+             paint.setStrokeWidth(1.5f);
+             paint.setColor(0xCFFFFFFF);
+             canvas.drawRoundRect(bounds.left + .75f, bounds.top + .75f, bounds.right - .75f, bounds.bottom - .75f, radius, radius, paint);
+             paint.setStyle(Paint.Style.FILL);
+         }
+         
+         @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
+         @Override public void setColorFilter(android.graphics.ColorFilter filter) { paint.setColorFilter(filter); }
+         @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
+      }
+      
       private static final class RoundedCropDrawable extends Drawable {
          private final Bitmap bitmap;
          private final float radius;
+         private final float verticalOffset; // v3.50.14：垂直偏移（负数上移，正数下移）
          private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-         RoundedCropDrawable(Bitmap bitmap, float radius){ this.bitmap = bitmap; this.radius = radius; }
+         RoundedCropDrawable(Bitmap bitmap, float radius){ this(bitmap, radius, 0f); }
+         RoundedCropDrawable(Bitmap bitmap, float radius, float verticalOffset){
+             this.bitmap = bitmap;
+             this.radius = radius;
+             this.verticalOffset = verticalOffset;
+         }
          @Override public void draw(Canvas canvas){
              RectF bounds = new RectF(getBounds());
              float scale = Math.max(bounds.width() / bitmap.getWidth(), bounds.height() / bitmap.getHeight());
              float width = bitmap.getWidth() * scale;
              float height = bitmap.getHeight() * scale;
              float left = bounds.left + (bounds.width() - width) / 2f;
-             float top = bounds.top + (bounds.height() - height) / 2f;
+             // v3.50.14：应用垂直偏移，让人物上移
+             float top = bounds.top + (bounds.height() - height) / 2f + verticalOffset;
              BitmapShader shader = new BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
              android.graphics.Matrix matrix = new android.graphics.Matrix();
              matrix.setScale(scale, scale);

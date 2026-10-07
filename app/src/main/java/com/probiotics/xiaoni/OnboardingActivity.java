@@ -769,12 +769,10 @@ public final class OnboardingActivity extends BaseActivity {
     private android.app.Dialog permissionSheet;
     private LinearLayout sheetBody;
     private TextView allowNotification;
-    private TextView allowAudio;
-    private TextView allowMedia;
     private TextView rootRow;          // v3.41.20：「验证 Root」行胶囊
     private boolean rootCheckRunning;  // Root 检测进行中（防重复点击）
-    private TextView allFilesRow;      // v3.41.21：「所有文件访问」行状态圆点
-    private TextView installUnknownRow;   // v3.42.10：「安装未知应用」行状态圆点
+    private TextView allFilesRow;      // v3.50.16：「存储访问」行状态圆点（合并所有文件访问+安装未知应用+音频+照片视频）
+    private TextView installUnknownRow;   // v3.42.10：「安装未知应用」行状态圆点（v3.50.16已合并入allFilesRow，保留变量防编译错误）
     private Button confirmButton;      // v3.41.23：底部「一键授权」大按钮（授权中显示进度）
     /** v3.41.21：「继续」流程等待用户从系统设置开启所有文件访问（回来 onResume 自动前进） */
     private boolean pendingAllFiles;
@@ -862,35 +860,17 @@ public final class OnboardingActivity extends BaseActivity {
         scrollLp.topMargin = dp(10);
         sheet.addView(rowsScroll, scrollLp);
 
-        // 选项卡片行（整行可点击授权）
+        // v3.50.16：简化为 3 项式样（参考用户示例图二：通知权限、存储访问、验证Root）
         allowNotification = envRow(rowsContainer, "🔔",
                 english ? "Notifications" : "通知权限", notificationDescription(),
                 () -> grantRow(allowNotification, 1010,
                         new String[]{"android.permission.POST_NOTIFICATIONS"}, false));
-        allowAudio = envRow(rowsContainer, "🎵",
-                english ? "Music & audio" : "音频文件",
-                english ? "Read and edit music and audio files" : "读取和编辑音乐、音频文件",
-                () -> grantRow(allowAudio, 1011,
-                        new String[]{"android.permission.READ_MEDIA_AUDIO"}, false));
-        allowMedia = envRow(rowsContainer, "🖼️",
-                english ? "Photos and videos" : "照片和视频",
-                english ? "Read and edit photos and video files" : "读取和编辑照片、视频文件",
-                () -> grantRow(allowMedia, 1012,
-                        new String[]{"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"}, false));
-        // v3.41.21：补「所有文件访问」—— ROM 选择 / 镜像保存到公共目录的核心权限
-        // v3.41.22：ROOT 可用时直接 appops set 静默开启，不再跳系统设置页
+        // 存储访问（合并原「所有文件访问」+「安装未知应用」+「音频」+「照片视频」）
         allFilesRow = envRow(rowsContainer, "📂",
-                english ? "All files access" : "所有文件访问",
-                english ? "Required for picking ROM packages and saving images to public folders. Without Root this must be enabled manually in app details."
-                        : "选择 ROM 包、保存镜像到公共目录需要此权限。未授权 Root 时需跳转应用详情手动开启",
-                () -> grantRow(allFilesRow, 1014, new String[0], true));
-        // v3.42.10：新增「安装未知应用」—— 应用内自动更新安装的核心权限
-        // ROOT 时 appops 静默开启；无 ROOT 时跳应用详情手动开启（开启后应用内更新即静默安装）
-        installUnknownRow = envRow(rowsContainer, "📦",
-                english ? "Install unknown apps" : "安装未知应用",
-                english ? "Required for in-app self-update. Enabled automatically with Root; otherwise enable it in app details"
-                        : "应用内检查更新并自动安装新版本需要此权限。已授权 Root 时自动开启；未授权时需跳转应用详情手动开启",
-                () -> grantInstallUnknown());
+                english ? "Storage Access" : "存储访问",
+                english ? "All files access, install unknown apps, photos/videos/audio permissions. ROOT grants all automatically; without ROOT some items need manual setup in app details."
+                        : "包含所有文件访问、安装未知应用、照片视频音频权限。已授权 Root 时自动开启全部；未授权时部分项需跳转应用详情手动开启",
+                () -> grantStorageBundle());
         rootRow = envRow(rowsContainer, "🧢",
                 english ? "Verify Root" : "验证 Root",
                 english ? "ROOT is required by DSU install, image extraction, DNA toolbox and OTG"
@@ -1201,6 +1181,71 @@ public final class OnboardingActivity extends BaseActivity {
      * v3.42.10：「安装未知应用」行授权 —— ROOT 可用时 appops set 静默开启
      * （应用内更新即可真静默安装）；无 ROOT 回退跳系统应用详情页手动开启。
      */
+    /** v3.50.16：存储访问捆绑授权（所有文件访问 + 安装未知应用 + 音频 + 照片视频） */
+    private void grantStorageBundle() {
+        new Thread(() -> {
+            boolean rooted = false;
+            try { rooted = RootShell.INSTANCE.available(); } catch (Exception ignored) { }
+            if (rooted) {
+                String pkg = getPackageName();
+                // 运行时权限：音频、照片、视频
+                String[] runtime = {
+                        "android.permission.READ_MEDIA_AUDIO",
+                        "android.permission.READ_MEDIA_IMAGES",
+                        "android.permission.READ_MEDIA_VIDEO",
+                };
+                for (String p : runtime) {
+                    if (checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED) continue;
+                    try { RootShell.INSTANCE.exec("pm grant " + pkg + " " + p, 10000L, null); } catch (Exception ignored) { }
+                }
+                // 所有文件访问
+                if (needAllFiles()) {
+                    try {
+                        RootShell.INSTANCE.exec("pm grant " + pkg + " android.permission.MANAGE_EXTERNAL_STORAGE", 10000L, null);
+                    } catch (Exception ignored) { }
+                    try {
+                        RootShell.INSTANCE.exec("appops set " + pkg + " MANAGE_EXTERNAL_STORAGE allow", 10000L, null);
+                    } catch (Exception ignored) { }
+                }
+                // 安装未知应用
+                try {
+                    RootShell.INSTANCE.exec("appops set " + pkg + " REQUEST_INSTALL_PACKAGES allow", 10000L, null);
+                } catch (Exception ignored) { }
+                runOnUiThread(() -> {
+                    if (allFilesRow != null) markAllowed(allFilesRow);
+                });
+            } else {
+                // 无 ROOT：请求运行时权限，然后跳转系统设置（所有文件访问 + 安装未知应用）
+                runOnUiThread(() -> {
+                    String[] needed = {
+                            "android.permission.READ_MEDIA_AUDIO",
+                            "android.permission.READ_MEDIA_IMAGES",
+                            "android.permission.READ_MEDIA_VIDEO"
+                    };
+                    java.util.List<String> missing = new java.util.ArrayList<>();
+                    for (String p : needed) {
+                        if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) missing.add(p);
+                    }
+                    if (!missing.isEmpty()) {
+                        pendingPerms = missing.toArray(new String[0]);
+                        pendingRow = allFilesRow;
+                        requestPermissions(pendingPerms, 1015);
+                    } else {
+                        // 运行时权限已有，跳转所有文件访问设置
+                        if (needAllFiles()) {
+                            pendingAllFiles = true;
+                            requestAllFilesAccess();
+                        } else if (!getPackageManager().canRequestPackageInstalls()) {
+                            requestInstallUnknownAccess();
+                        } else {
+                            markAllowed(allFilesRow);
+                        }
+                    }
+                });
+            }
+        }, "grant-storage-bundle").start();
+    }
+
     private void grantInstallUnknown() {
         if (getPackageManager().canRequestPackageInstalls()) {
             markAllowed(installUnknownRow);
@@ -1388,12 +1433,14 @@ public final class OnboardingActivity extends BaseActivity {
 
     private void refreshAllPermissionRows() {
         refreshPermissionRow(allowNotification, "android.permission.POST_NOTIFICATIONS");
-        refreshPermissionRow(allowAudio, "android.permission.READ_MEDIA_AUDIO");
-        refreshPermissionRow(allowMedia, "android.permission.READ_MEDIA_IMAGES");
-        refreshAllFilesRow();
-        // v3.42.10：安装未知应用状态对账
-        if (installUnknownRow != null && getPackageManager().canRequestPackageInstalls()) {
-            markAllowed(installUnknownRow);
+        // v3.50.16：存储访问捆绑检查（音频 + 照片视频 + 所有文件访问 + 安装未知应用）
+        boolean storageOk = checkSelfPermission("android.permission.READ_MEDIA_AUDIO") == PackageManager.PERMISSION_GRANTED
+                && checkSelfPermission("android.permission.READ_MEDIA_IMAGES") == PackageManager.PERMISSION_GRANTED
+                && checkSelfPermission("android.permission.READ_MEDIA_VIDEO") == PackageManager.PERMISSION_GRANTED
+                && !needAllFiles()
+                && getPackageManager().canRequestPackageInstalls();
+        if (storageOk && allFilesRow != null) {
+            markAllowed(allFilesRow);
         }
     }
 
@@ -1445,11 +1492,10 @@ public final class OnboardingActivity extends BaseActivity {
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        // v3.8.8：底部「允许」一键授权回调 → 刷新三行状态后进入下一页（拒绝也不阻塞引导）
+        // v3.50.16：简化授权回调 → 刷新状态后进入下一页
         if (requestCode == 1013) {
             reconcileRow(allowNotification, new String[]{"android.permission.POST_NOTIFICATIONS"});
-            reconcileRow(allowAudio, new String[]{"android.permission.READ_MEDIA_AUDIO"});
-            reconcileRow(allowMedia, new String[]{"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"});
+            // 存储访问捆绑检查已在 refreshAllPermissionRows 中处理
             if (pendingAllowAll) {
                 pendingAllowAll = false;
                 // 运行时权限走完：Android 11+ 所有文件访问未开启 → 跳设置，返回后自动前进

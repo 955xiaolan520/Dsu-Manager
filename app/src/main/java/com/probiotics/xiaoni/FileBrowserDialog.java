@@ -335,7 +335,12 @@ public class FileBrowserDialog {
             dialog.dismiss();
             cb.onPicked(join(name));
         });
-        addIcon(row, fileIcon(name));
+        // v3.50.13：图片文件显示缩略图，而非统一图标
+        if (isImageFile(name)) {
+            addImageThumbnail(row, join(name));
+        } else {
+            addIcon(row, fileIcon(name));
+        }
         addName(row, name, 0xff17334f);
         addTail(row, size > 0 ? formatSize(size) : "", 0xff5a6b82);
         return row;
@@ -359,6 +364,56 @@ public class FileBrowserDialog {
         tv.setText(icon);
         tv.setTextSize(15);
         row.addView(tv, new LinearLayout.LayoutParams(-2, -2));
+    }
+
+    /** v3.50.13：判断是否为图片文件 */
+    private boolean isImageFile(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        return n.endsWith(".png") || n.endsWith(".jpg") || n.endsWith(".jpeg")
+                || n.endsWith(".webp") || n.endsWith(".bmp");
+    }
+
+    /** v3.50.13：加载并显示图片缩略图 */
+    private void addImageThumbnail(LinearLayout row, String path) {
+        android.widget.ImageView iv = new android.widget.ImageView(act);
+        int thumbSize = dp(42);
+        iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+        GradientDrawable placeholder = new GradientDrawable();
+        placeholder.setColor(0x33FFFFFF);
+        placeholder.setCornerRadius(dp(8));
+        iv.setBackground(placeholder);
+        LinearLayout.LayoutParams ivLp = new LinearLayout.LayoutParams(thumbSize, thumbSize);
+        ivLp.rightMargin = dp(4);
+        row.addView(iv, ivLp);
+        
+        // 后台加载缩略图
+        IO.execute(() -> {
+            try {
+                // 使用 root 权限复制到临时文件
+                File temp = new File(act.getCacheDir(), "thumb_" + System.currentTimeMillis() + ".tmp");
+                com.topjohnwu.superuser.Shell.cmd(
+                    "cp -f " + DnaTools.quote(path) + " " + DnaTools.quote(temp.getAbsolutePath())
+                ).exec();
+                
+                // 加载缩略图
+                android.graphics.BitmapFactory.Options opts = new android.graphics.BitmapFactory.Options();
+                opts.inJustDecodeBounds = true;
+                android.graphics.BitmapFactory.decodeFile(temp.getAbsolutePath(), opts);
+                opts.inSampleSize = Math.max(1, Math.max(opts.outWidth, opts.outHeight) / thumbSize);
+                opts.inJustDecodeBounds = false;
+                android.graphics.Bitmap thumb = android.graphics.BitmapFactory.decodeFile(temp.getAbsolutePath(), opts);
+                temp.delete();
+                
+                if (thumb != null) {
+                    main.post(() -> {
+                        if (!act.isFinishing() && dialog.isShowing()) {
+                            iv.setImageBitmap(thumb);
+                        }
+                    });
+                }
+            } catch (Exception ignored) {
+            }
+        });
     }
 
     private void addName(LinearLayout row, String name, Integer color) {
