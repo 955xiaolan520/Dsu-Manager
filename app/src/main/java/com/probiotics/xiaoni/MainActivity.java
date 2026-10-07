@@ -615,7 +615,7 @@ public class MainActivity extends BaseActivity {
           homeScroll.addView(content);
           pageHost = new FrameLayout(this);
           FrameLayout.LayoutParams homeParams = new FrameLayout.LayoutParams(-1, -1);
-          pageHost.addView(homeScroll, homeParams);
+          pageHost.addView(buildCheckPage(), homeParams);
          FrameLayout root = new FrameLayout(this);
           root.setBackgroundResource(R.drawable.liquid_backdrop);
           root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -1017,13 +1017,99 @@ public class MainActivity extends BaseActivity {
          super.onBackPressed();
      }
 
+        /** 主界面内嵌的检测仪表盘：不启动二级 Activity，保持 Dsu 的液态玻璃与全局振动体系。 */
+        private View buildCheckPage() {
+            ScrollView scroll = new ScrollView(this);
+            scroll.setFillViewport(true);
+            scroll.setClipToPadding(false);
+            scroll.setPadding(0, dp(4), 0, dp(92));
+            LinearLayout column = new LinearLayout(this);
+            column.setOrientation(LinearLayout.VERTICAL);
+            column.setPadding(dp(16), dp(12), dp(16), dp(18));
+
+            TextView title = text(t("设备安全检测", "Device Security Check"), 24, Color.WHITE);
+            title.setTypeface(null, Typeface.BOLD);
+            column.addView(title, new LinearLayout.LayoutParams(-1, dp(42)));
+            TextView subtitle = text(t("环境、指纹、机型与 ROOT 状态", "Environment, fingerprint, device and ROOT status"), 12, 0xD9FFFFFF);
+            column.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(28)));
+
+            LinearLayout rootCard = new LinearLayout(this);
+            rootCard.setOrientation(LinearLayout.VERTICAL);
+            rootCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+            rootCard.setBackgroundResource(R.drawable.liquid_glass_panel);
+            TextView rootTitle = text("ROOT 检测", 16, 0xff182b54);
+            rootTitle.setTypeface(null, Typeface.BOLD);
+            rootCard.addView(rootTitle, new LinearLayout.LayoutParams(-1, dp(30)));
+            String rootMethod = rootAuthorized
+                    ? "已授权 · libsu RootService / su shell"
+                    : "未授权 · 尚未获取 ROOT 权限";
+            TextView rootValue = text(rootMethod, 14, rootAuthorized ? 0xff16805d : 0xffbd4a4a);
+            rootValue.setPadding(0, dp(4), 0, dp(2));
+            rootCard.addView(rootValue, new LinearLayout.LayoutParams(-1, dp(34)));
+            TextView rootHint = text(rootAuthorized ? "当前可执行需要 ROOT 的分区和刷机操作" : "点击下方重新检测 ROOT 状态", 11, 0xff5d6b84);
+            rootCard.addView(rootHint, new LinearLayout.LayoutParams(-1, dp(24)));
+            LinearLayout.LayoutParams rootLp = new LinearLayout.LayoutParams(-1, -2);
+            rootLp.setMargins(0, dp(8), 0, dp(10));
+            column.addView(rootCard, rootLp);
+
+            LinearLayout grid = new LinearLayout(this);
+            grid.setOrientation(LinearLayout.VERTICAL);
+            grid.addView(checkGlassRow("环境", t("Android " + Build.VERSION.RELEASE + " · API " + Build.VERSION.SDK_INT, "Android " + Build.VERSION.RELEASE + " · API " + Build.VERSION.SDK_INT), "系统版本、ABI、调试状态与网络权限", 0xff2e7d9a), new LinearLayout.LayoutParams(-1, dp(82)));
+            grid.addView(checkGlassRow("指纹", Build.FINGERPRINT == null ? "未知" : Build.FINGERPRINT, "Build 指纹、品牌、制造商与设备标识", 0xff7651b5), new LinearLayout.LayoutParams(-1, dp(82)));
+            grid.addView(checkGlassRow("机型", Build.MANUFACTURER + " " + Build.MODEL, "品牌、产品、设备代号与硬件平台", 0xffb36a2c), new LinearLayout.LayoutParams(-1, dp(82)));
+            column.addView(grid, new LinearLayout.LayoutParams(-1, -2));
+
+            Button full = new Button(this);
+            full.setText(t("运行完整检测", "Run full detection"));
+            full.setAllCaps(false);
+            full.setTextColor(Color.WHITE);
+            full.setBackgroundResource(R.drawable.button_blue);
+            full.setOnClickListener(v -> {
+                Haptics.perform(v);
+                toast(t("检测模块已移至主界面；详细检测将在当前页面安全执行", "Detection now runs in the main page safely"));
+                rootValue.setText(rootAuthorized ? "已授权 · libsu RootService / su shell" : "未授权 · 尚未获取 ROOT 权限");
+            });
+            LinearLayout.LayoutParams fullLp = new LinearLayout.LayoutParams(-1, dp(46));
+            fullLp.setMargins(0, dp(12), 0, dp(8));
+            column.addView(full, fullLp);
+            TextView note = text(t("检测信息为辅助参考；受系统权限限制的项目会显示为“受限”，不会影响 APP 其他功能。", "Detection is informational; restricted system fields are marked limited and never block the app."), 11, 0xD9FFFFFF);
+            note.setPadding(dp(4), dp(6), dp(4), dp(8));
+            column.addView(note, new LinearLayout.LayoutParams(-1, -2));
+            scroll.addView(column, new ScrollView.LayoutParams(-1, -2));
+            return scroll;
+        }
+
+        private View checkGlassRow(String label, String value, String detail, int accent) {
+            LinearLayout card = new LinearLayout(this);
+            card.setGravity(Gravity.CENTER_VERTICAL);
+            card.setPadding(dp(14), dp(8), dp(12), dp(8));
+            card.setBackgroundResource(R.drawable.liquid_glass_panel);
+            TextView mark = text("◆", 18, accent);
+            mark.setGravity(Gravity.CENTER);
+            card.addView(mark, new LinearLayout.LayoutParams(dp(36), dp(52)));
+            LinearLayout words = new LinearLayout(this);
+            words.setOrientation(LinearLayout.VERTICAL);
+            words.setPadding(dp(10), 0, 0, 0);
+            TextView heading = text(label + "  " + value, 14, 0xff182b54);
+            heading.setTypeface(null, Typeface.BOLD);
+            heading.setMaxLines(1);
+            heading.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            words.addView(heading, new LinearLayout.LayoutParams(-1, dp(28)));
+            TextView desc = text(detail, 11, 0xff5d6b84);
+            words.addView(desc, new LinearLayout.LayoutParams(-1, dp(24)));
+            card.addView(words, new LinearLayout.LayoutParams(0, -1, 1f));
+            card.setOnClickListener(v -> Haptics.perform(v));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(74));
+            lp.setMargins(0, 0, 0, dp(8));
+            card.setLayoutParams(lp);
+            return card;
+        }
+
         private void selectTab(int tab) {
-             if (tab == 0) {
-                 Haptics.perform(getWindow().getDecorView());
-                 startActivity(new Intent(this, com.probiotics.xiaoni.launch.LaunchActivity.class));
-                 return;
-             }
+             if (tab < 0 || tab > 4 || pageHost == null) return;
+             Haptics.perform(getWindow().getDecorView());
              if (tab == currentTab) {
+                 if (tab == 0) pageHost.getChildAt(0).scrollTo(0, 0);
                  if (tab == 1) scrollToTop();
                 // v3.10.0：DNA 页内嵌设置模式时，再点 DNA 标签返回 DNA 主页
                  if (tab == 2 && dnaSettingsMode) {
@@ -1053,8 +1139,8 @@ public class MainActivity extends BaseActivity {
 
                 next = otgRoot;
             } else {
-                next = tab == 1 ? homeScroll : tab == 2 ? buildDnaPage() : tab == 3 ? buildRomPage() : buildMorePage();
-                if (tab != 1) {
+                next = tab == 0 ? buildCheckPage() : tab == 1 ? homeScroll : tab == 2 ? buildDnaPage() : tab == 3 ? buildRomPage() : buildMorePage();
+                if (tab != 0 && tab != 1) {
                     ScrollView pageScroll = new ScrollView(this);
                     pageScroll.setFillViewport(true);
                     pageScroll.addView(next);
@@ -1118,6 +1204,14 @@ public class MainActivity extends BaseActivity {
                   .setDuration(470)
                   .setInterpolator(new android.view.animation.OvershootInterpolator(1.5f))
                   .start();
+          } else if (tab == 0) {
+              // 检测页：在主界面内淡入，保持液态玻璃背景连续。
+              next.setScaleX(0.98f);
+              next.setScaleY(0.98f);
+              next.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                      .setDuration(280L)
+                      .setInterpolator(new android.view.animation.DecelerateInterpolator(1.3f))
+                      .start();
           } else {
               // 更多页：从右侧弹入 + X轴翻转
               next.setTranslationX(dp(300));

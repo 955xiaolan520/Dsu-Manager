@@ -222,18 +222,29 @@ public class DeviceInfoFragment extends Fragment {
         SensorManager sensorManager = (SensorManager) ctx.getSystemService(Context.SENSOR_SERVICE);
         info.setSensorCount(sensorManager.getSensorList(Sensor.TYPE_ALL).size());
 
-        // Network info
-        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
-        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
-        if (activeNetwork != null) {
-            info.setNetworkType(activeNetwork.getTypeName());
+        // Network info: some Android 17 vendor builds restrict ConnectivityService even when
+        // the permission is declared; network details are optional and must never crash detection.
+        try {
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            NetworkInfo activeNetwork = cm != null ? cm.getActiveNetworkInfo() : null;
+            if (activeNetwork != null) info.setNetworkType(activeNetwork.getTypeName());
+        } catch (SecurityException ignored) {
+            info.setNetworkType("受限");
+        } catch (Throwable ignored) {
+            info.setNetworkType("未知");
         }
 
-        // WiFi info
-        WifiManager wifiManager = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
-        if (wifiManager != null && wifiManager.isWifiEnabled()) {
-            WifiInfo wifiInfo = wifiManager.getConnectionInfo();
-            info.setWifiSsid(wifiInfo.getSSID());
+        // WiFi info is also optional and may require location permission on newer Android.
+        try {
+            WifiManager wifiManager = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
+            if (wifiManager != null && wifiManager.isWifiEnabled()) {
+                WifiInfo wifiInfo = wifiManager.getConnectionInfo();
+                if (wifiInfo != null) info.setWifiSsid(wifiInfo.getSSID());
+            }
+        } catch (SecurityException ignored) {
+            info.setWifiSsid("受限");
+        } catch (Throwable ignored) {
+            info.setWifiSsid("未知");
         }
 
         // IP address
