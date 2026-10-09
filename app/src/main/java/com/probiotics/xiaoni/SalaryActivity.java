@@ -15,11 +15,14 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.CalendarContract;
+import android.graphics.drawable.Drawable;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -32,11 +35,15 @@ public class SalaryActivity extends BaseActivity {
     private Calendar calendar;
     private TextView monthTitle;
     private GridLayout calendarGrid;
+    private GestureDetector calendarGesture;
+    private boolean calendarSwiped;
+    private final Map<String, List<String>> calendarTitlesCache = new HashMap<>();
     private TextView grossSalaryView;
     private TextView netSalaryView;
     private LinearLayout detailPanel;
+    private GridLayout hoursSummaryView;
     
-    private int salaryMode = 1;
+    private int salaryMode = 0;
     private float baseSalary = 0;
     private float performance = 0;
     private float attendance = 0;
@@ -54,15 +61,12 @@ public class SalaryActivity extends BaseActivity {
     private float otherDeduction = 0;
     private float dailyHours = 8;
     private float pieceRate = 0;
-    
-    private static final Set<String> HOLIDAYS_2026 = new HashSet<>(Arrays.asList(
-        "2026-01-01", "2026-01-02", "2026-01-03",
-        "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-21", "2026-02-22", "2026-02-23",
-        "2026-04-05", "2026-04-06", "2026-04-07",
-        "2026-05-01", "2026-05-02", "2026-05-03",
-        "2026-06-25", "2026-06-26", "2026-06-27",
-        "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"
-    ));
+    private float pieceQuota = 0;
+    private float pieceBonus = 0;
+    private float weekdayOvertimeMultiplier = 1.5f;
+    private float weekendOvertimeMultiplier = 2f;
+    private float holidayOvertimeMultiplier = 3f;
+    private int workScheduleDays = 5;
     
     private int dp(int n) { return (int) (n * getResources().getDisplayMetrics().density + 0.5f); }
     private String t(String zh, String en) {
@@ -84,6 +88,9 @@ public class SalaryActivity extends BaseActivity {
         
         getWindow().setStatusBarColor(0x00000000);
         getWindow().setNavigationBarColor(0x220b131f);
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         
         int sb = 0;
         int rid = getResources().getIdentifier("status_bar_height", "dimen", "android");
@@ -114,8 +121,32 @@ public class SalaryActivity extends BaseActivity {
         
         checkCalendarPermission();
         refreshCalendar();
+        String widgetDate = getIntent().getStringExtra("widget_date");
+        if (widgetDate != null) {
+            root.post(() -> {
+                Calendar selected = parseDate(widgetDate);
+                if (selected != null) showDayEditor(widgetDate,
+                        selected.get(Calendar.DAY_OF_WEEK) == Calendar.SATURDAY || selected.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY,
+                        isLegalHoliday(selected));
+            });
+        }
     }
     
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String widgetDate = intent.getStringExtra("widget_date");
+        if (widgetDate != null) {
+            getWindow().getDecorView().post(() -> {
+                Calendar selected = parseDate(widgetDate);
+                if (selected != null) showDayEditor(widgetDate,
+                        selected.get(Calendar.DAY_OF_WEEK) == Calendar.SATURDAY || selected.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY,
+                        isLegalHoliday(selected));
+            });
+        }
+    }
+
     private void checkCalendarPermission() {
         if (checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.READ_CALENDAR}, 1001);
@@ -126,6 +157,7 @@ public class SalaryActivity extends BaseActivity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == 1001 && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            calendarTitlesCache.clear();
             refreshCalendar();
         }
     }
@@ -160,7 +192,7 @@ public class SalaryActivity extends BaseActivity {
         back.setOnClickListener(v -> { 
             Haptics.perform(v); 
             finish(); 
-            overridePendingTransition(R.anim.slide_in_left, R.anim.slide_out_right); 
+            overridePendingTransition(R.anim.fade_in, R.anim.slide_out_right);
         });
         bar.addView(back, new LinearLayout.LayoutParams(dp(46), dp(46)));
         
@@ -249,8 +281,7 @@ public class SalaryActivity extends BaseActivity {
         prevBtn.setStateListAnimator(null);
         prevBtn.setOnClickListener(v -> {
             Haptics.perform(v);
-            calendar.add(Calendar.MONTH, -1);
-            refreshCalendar();
+            switchMonth(-1);
         });
         card.addView(prevBtn, new LinearLayout.LayoutParams(dp(36), dp(36)));
         
@@ -277,8 +308,7 @@ public class SalaryActivity extends BaseActivity {
         nextBtn.setStateListAnimator(null);
         nextBtn.setOnClickListener(v -> {
             Haptics.perform(v);
-            calendar.add(Calendar.MONTH, 1);
-            refreshCalendar();
+            switchMonth(1);
         });
         card.addView(nextBtn, new LinearLayout.LayoutParams(dp(36), dp(36)));
         
@@ -317,13 +347,84 @@ public class SalaryActivity extends BaseActivity {
         
         calendarGrid = new GridLayout(this);
         calendarGrid.setColumnCount(7);
+        calendarGesture = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onDown(MotionEvent e) { return true; }
+            @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+                float dx = e2.getX() - e1.getX();
+                float dy = e2.getY() - e1.getY();
+                if (Math.max(Math.abs(dx), Math.abs(dy)) < dp(70)) return false;
+                // 只允许左右切换月份；上下滑动不切换，也不触发日期点击。
+                if (Math.abs(dy) >= Math.abs(dx)) {
+                    calendarSwiped = true;
+                    return true;
+                }
+                int direction = dx < 0 ? 1 : -1;
+                calendarSwiped = true;
+                switchMonth(direction);
+                Haptics.perform(calendarGrid);
+                return true;
+            }
+        });
+        calendarGrid.setClickable(true);
+        calendarGrid.setOnTouchListener((v, event) -> calendarGesture.onTouchEvent(event));
         calCard.addView(calendarGrid);
         
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.bottomMargin = dp(10);
         parent.addView(calCard, lp);
+        LinearLayout summaryCard = new LinearLayout(this);
+        summaryCard.setOrientation(LinearLayout.VERTICAL);
+        summaryCard.setPadding(dp(14), dp(10), dp(14), dp(10));
+        GradientDrawable summaryBg = new GradientDrawable();
+        summaryBg.setColor(0x42FFFFFF);
+        summaryBg.setCornerRadius(dp(16));
+        summaryBg.setStroke(Math.max(1, dp(1)), 0x55FFFFFF);
+        summaryCard.setBackground(summaryBg);
+        TextView summaryTitle = new TextView(this);
+        summaryTitle.setText("本月工时统计");
+        summaryTitle.setTextSize(13);
+        summaryTitle.setTextColor(0xff17334f);
+        summaryTitle.setTypeface(null, Typeface.BOLD);
+        summaryCard.addView(summaryTitle, new LinearLayout.LayoutParams(-1, -2));
+        hoursSummaryView = new GridLayout(this);
+        hoursSummaryView.setColumnCount(2);
+        hoursSummaryView.setRowCount(4);
+        hoursSummaryView.setUseDefaultMargins(false);
+        LinearLayout.LayoutParams tableLp = new LinearLayout.LayoutParams(-1, -2);
+        tableLp.topMargin = dp(7);
+        summaryCard.addView(hoursSummaryView, tableLp);
+        LinearLayout.LayoutParams summaryLp = new LinearLayout.LayoutParams(-1, -2);
+        summaryLp.bottomMargin = dp(10);
+        parent.addView(summaryCard, summaryLp);
     }
     
+    private void addSummaryCell(GridLayout grid, String label, String value, int valueColor) {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setPadding(dp(9), dp(7), dp(9), dp(7));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0x35FFFFFF);
+        bg.setCornerRadius(dp(10));
+        bg.setStroke(Math.max(1, dp(1)), 0x35FFFFFF);
+        cell.setBackground(bg);
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextSize(10);
+        labelView.setTextColor(0xff526A82);
+        TextView valueView = new TextView(this);
+        valueView.setText(value);
+        valueView.setTextSize(15);
+        valueView.setTypeface(null, Typeface.BOLD);
+        valueView.setTextColor(valueColor);
+        cell.addView(labelView);
+        cell.addView(valueView);
+        GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+        lp.width = 0;
+        lp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
+        lp.setMargins(dp(3), dp(3), dp(3), dp(3));
+        grid.addView(cell, lp);
+    }
+
     private void buildSalaryCard(LinearLayout parent) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -389,6 +490,22 @@ public class SalaryActivity extends BaseActivity {
         parent.addView(card, new LinearLayout.LayoutParams(-1, -2));
     }
     
+    private void switchMonth(int direction) {
+        calendar.add(Calendar.MONTH, direction);
+        if (calendarGrid == null) { refreshCalendar(); return; }
+        calendarGrid.post(() -> {
+            try {
+                refreshCalendar();
+                calendarGrid.setAlpha(0.25f);
+                calendarGrid.setTranslationY(direction > 0 ? dp(26) : -dp(26));
+                calendarGrid.animate().alpha(1f).translationY(0f)
+                        .setDuration(260L)
+                        .setInterpolator(new DecelerateInterpolator())
+                        .start();
+            } catch (RuntimeException ignored) { }
+        });
+    }
+
     private void refreshCalendar() {
         calendarGrid.removeAllViews();
         Calendar cal = (Calendar) calendar.clone();
@@ -407,11 +524,11 @@ public class SalaryActivity extends BaseActivity {
             String dateKey = new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(cal.getTime());
             boolean isWeekend = cal.get(Calendar.DAY_OF_WEEK) == Calendar.SATURDAY || 
                                cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY;
-            boolean isHoliday = HOLIDAYS_2026.contains(dateKey);
-            
+            String calendarEvent = getSystemCalendarEvent(cal);
+            String holidayMark = getHolidayMark(cal);
+            boolean isHoliday = "休".equals(holidayMark);
             String lunarInfo = getLunarAndFestival(cal);
-            
-            LinearLayout dayCell = buildDayCell(day, dateKey, isWeekend, isHoliday, lunarInfo);
+            FrameLayout dayCell = buildDayCell(day, dateKey, isWeekend, isHoliday, lunarInfo, calendarEvent, holidayMark);
             calendarGrid.addView(dayCell, dayParams());
             
             cal.add(Calendar.DAY_OF_MONTH, 1);
@@ -421,72 +538,179 @@ public class SalaryActivity extends BaseActivity {
     }
     
     private String getLunarAndFestival(Calendar cal) {
-        int month = cal.get(Calendar.MONTH) + 1;
-        int day = cal.get(Calendar.DAY_OF_MONTH);
-        String dateKey = month + "-" + day;
-        
-        // 优先读取系统日历
+        // 先显示本地农历节日，再显示农历日期；系统日历事件作为额外提示。
+        String festival = LunarCalendarHelper.festival(cal);
+        String lunarDay = LunarCalendarHelper.day(cal);
         String systemEvent = getSystemCalendarEvent(cal);
-        if (systemEvent != null && !systemEvent.isEmpty()) {
-            return systemEvent;
-        }
-        
-        // 回退到预设节日
-        Map<String, String> festivals = new HashMap<>();
-        festivals.put("1-1", "元旦");
-        festivals.put("2-14", "情人节");
-        festivals.put("3-8", "妇女节");
-        festivals.put("5-1", "劳动节");
-        festivals.put("5-4", "青年节");
-        festivals.put("6-1", "儿童节");
-        festivals.put("9-10", "教师节");
-        festivals.put("10-1", "国庆节");
-        festivals.put("12-25", "圣诞节");
-        
-        if (festivals.containsKey(dateKey)) {
-            return festivals.get(dateKey);
-        }
-        
-        return "";
+        String result = lunarDay + (festival.isEmpty() ? "" : " · " + festival);
+        if (systemEvent != null && !systemEvent.trim().isEmpty()) result += " · " + systemEvent;
+        return result;
     }
     
-    private String getSystemCalendarEvent(Calendar cal) {
+    private List<String> querySystemCalendarTitles(Calendar cal) {
+        String cacheKey = new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(cal.getTime());
+        List<String> cached = calendarTitlesCache.get(cacheKey);
+        if (cached != null) return cached;
+        ArrayList<String> titles = new ArrayList<>();
         if (checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
-            return null;
+            calendarTitlesCache.put(cacheKey, titles);
+            return titles;
         }
-        
+        Calendar dayStart = (Calendar) cal.clone();
+        dayStart.set(Calendar.HOUR_OF_DAY, 0); dayStart.set(Calendar.MINUTE, 0);
+        dayStart.set(Calendar.SECOND, 0); dayStart.set(Calendar.MILLISECOND, 0);
+        long localStart = dayStart.getTimeInMillis();
+        long localEnd = localStart + 24L * 60L * 60L * 1000L;
+        SimpleDateFormat localDate = new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA);
+        localDate.setTimeZone(dayStart.getTimeZone());
+        SimpleDateFormat utcDate = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        utcDate.setTimeZone(TimeZone.getTimeZone("UTC"));
+        String targetLocalDate = localDate.format(dayStart.getTime());
+        Cursor cursor = null;
         try {
-            ContentResolver cr = getContentResolver();
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA);
-            String dateStr = sdf.format(cal.getTime());
-            
-            long startTime = cal.getTimeInMillis();
-            long endTime = startTime + 24 * 60 * 60 * 1000;
-            
-            String[] projection = new String[]{
-                CalendarContract.Events.TITLE,
-                CalendarContract.Events.DTSTART,
-                CalendarContract.Events.DTEND
+            // 使用 Instances 最小兼容列，避免部分系统 Provider 不支持 DESCRIPTION/CALENDAR_DISPLAY_NAME 导致整次查询失败。
+            Uri.Builder range = CalendarContract.Instances.CONTENT_URI.buildUpon();
+            android.content.ContentUris.appendId(range, localStart - 2L * 24L * 60L * 60L * 1000L);
+            android.content.ContentUris.appendId(range, localEnd + 2L * 24L * 60L * 60L * 1000L);
+            String[] projection = {
+                    CalendarContract.Instances.EVENT_ID,
+                    CalendarContract.Instances.TITLE,
+                    CalendarContract.Instances.BEGIN,
+                    CalendarContract.Instances.END,
+                    CalendarContract.Instances.ALL_DAY,
+                    CalendarContract.Instances.CALENDAR_ID
             };
-            
-            Uri.Builder builder = CalendarContract.Instances.CONTENT_URI.buildUpon();
-            android.content.ContentUris.appendId(builder, startTime);
-            android.content.ContentUris.appendId(builder, endTime);
-            
-            Cursor cursor = cr.query(builder.build(), projection, null, null, null);
-            if (cursor != null && cursor.moveToFirst()) {
-                String title = cursor.getString(0);
-                cursor.close();
-                return title;
+            cursor = getContentResolver().query(range.build(), projection, null, null,
+                    CalendarContract.Instances.BEGIN + " ASC");
+            if (cursor != null) {
+                while (cursor.moveToNext()) {
+                    long begin = cursor.isNull(2) ? Long.MIN_VALUE : cursor.getLong(2);
+                    long end = cursor.isNull(3) ? begin + 24L * 60L * 60L * 1000L : cursor.getLong(3);
+                    boolean allDay = !cursor.isNull(4) && cursor.getInt(4) != 0;
+                    boolean overlaps;
+                    if (allDay) {
+                        String beginUtc = utcDate.format(new Date(begin));
+                        String endUtc = utcDate.format(new Date(Math.max(begin, end - 1L)));
+                        String beginLocal = localDate.format(new Date(begin));
+                        String endLocal = localDate.format(new Date(Math.max(begin, end - 1L)));
+                        overlaps = (targetLocalDate.compareTo(beginUtc) >= 0 && targetLocalDate.compareTo(endUtc) <= 0)
+                                || (targetLocalDate.compareTo(beginLocal) >= 0 && targetLocalDate.compareTo(endLocal) <= 0);
+                    } else {
+                        overlaps = begin < localEnd && end > localStart;
+                    }
+                    if (!overlaps) continue;
+                    StringBuilder text = new StringBuilder();
+                    String title = cursor.getString(1);
+                    if (title != null && !title.trim().isEmpty()) text.append(title.trim());
+                    long eventId = cursor.isNull(0) ? -1L : cursor.getLong(0);
+                    if (eventId >= 0) {
+                        Cursor event = null;
+                        try {
+                            event = getContentResolver().query(CalendarContract.Events.CONTENT_URI,
+                                    new String[]{CalendarContract.Events.DESCRIPTION},
+                                    CalendarContract.Events._ID + "=?",
+                                    new String[]{String.valueOf(eventId)}, null);
+                            if (event != null && event.moveToFirst()) {
+                                String description = event.getString(0);
+                                if (description != null && !description.trim().isEmpty()) {
+                                    if (text.length() > 0) text.append(" ");
+                                    text.append(description.trim());
+                                }
+                            }
+                        } finally { if (event != null) event.close(); }
+                    }
+                    // 日历名称单独读取，兼容系统节假日专用日历把“休/班”放在名称中。
+                    long calendarId = cursor.isNull(5) ? -1L : cursor.getLong(5);
+                    if (calendarId >= 0) {
+                        Cursor calendarCursor = null;
+                        try {
+                            calendarCursor = getContentResolver().query(CalendarContract.Calendars.CONTENT_URI,
+                                    new String[]{CalendarContract.Calendars.CALENDAR_DISPLAY_NAME},
+                                    CalendarContract.Calendars._ID + "=?",
+                                    new String[]{String.valueOf(calendarId)}, null);
+                            if (calendarCursor != null && calendarCursor.moveToFirst()) {
+                                String name = calendarCursor.getString(0);
+                                if (name != null && !name.trim().isEmpty()) {
+                                    if (text.length() > 0) text.append(" ");
+                                    text.append(name.trim());
+                                }
+                            }
+                        } finally { if (calendarCursor != null) calendarCursor.close(); }
+                    }
+                    if (text.length() > 0) titles.add(text.toString());
+                }
             }
-            if (cursor != null) cursor.close();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        
-        return null;
+            if (titles.isEmpty()) {
+                Cursor events = null;
+                try {
+                    String[] ep = {CalendarContract.Events.TITLE, CalendarContract.Events.DESCRIPTION,
+                            CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND,
+                            CalendarContract.Events.ALL_DAY};
+                    String sel = CalendarContract.Events.DTSTART + " < ? AND (" +
+                            CalendarContract.Events.DTEND + " IS NULL OR " +
+                            CalendarContract.Events.DTEND + " > ?)";
+                    events = getContentResolver().query(CalendarContract.Events.CONTENT_URI, ep, sel,
+                            new String[]{String.valueOf(localEnd), String.valueOf(localStart)},
+                            CalendarContract.Events.DTSTART + " ASC");
+                    if (events != null) while (events.moveToNext()) {
+                        long begin = events.isNull(2) ? Long.MIN_VALUE : events.getLong(2);
+                        long end = events.isNull(3) ? begin + 86400000L : events.getLong(3);
+                        boolean allDay = !events.isNull(4) && events.getInt(4) != 0;
+                        boolean overlaps = allDay
+                                ? targetLocalDate.compareTo(utcDate.format(new Date(begin))) >= 0
+                                && targetLocalDate.compareTo(utcDate.format(new Date(Math.max(begin, end - 1L)))) <= 0
+                                : begin < localEnd && end > localStart;
+                        if (!overlaps) continue;
+                        String title = events.getString(0), desc = events.getString(1);
+                        String text = ((title == null ? "" : title) + " " + (desc == null ? "" : desc)).trim();
+                        if (!text.isEmpty()) titles.add(text);
+                    }
+                } finally { if (events != null) events.close(); }
+            }
+        } catch (SecurityException ignored) {
+            titles.clear();
+        } catch (Exception ignored) {
+            titles.clear();
+        } finally { if (cursor != null) cursor.close(); }
+        calendarTitlesCache.put(cacheKey, titles);
+        return titles;
     }
-    
+
+    private String getSystemCalendarEvent(Calendar cal) {
+        List<String> titles = querySystemCalendarTitles(cal);
+        return titles.isEmpty() ? null : titles.get(0);
+    }
+
+    private String getHolidayMark(Calendar cal) {
+        String mark = "";
+        for (String title : querySystemCalendarTitles(cal)) {
+            String t = title.trim();
+            // 优先识别调休上班，避免同一天同时存在节日和补班事件时显示错误。
+            if (t.matches(".*(^|[^休])班([^班]|$).*" ) || t.contains("上班") || t.contains("补班")
+                    || t.contains("调班") || t.contains("调休上班") || t.contains("工作日")
+                    || t.contains("上班日")) return "班";
+            if (t.matches(".*(^|[^休])休([^休]|$).*" ) || t.contains("放假") || t.contains("休假")
+                    || t.contains("休息") || t.contains("休班") || t.contains("法定") || t.contains("节假")
+                    || t.contains("假日") || t.contains("Holiday")
+                    || t.contains("国庆") || t.contains("春节") || t.contains("清明")
+                    || t.contains("劳动节") || t.contains("端午") || t.contains("中秋")
+                    || t.contains("元旦")) mark = "休";
+        }
+        if (!mark.isEmpty()) return mark;
+        // 厂商日历的蓝色“休”/橙色“班”常来自私有节假日库，不一定出现在 CalendarContract。
+        // 公开 Provider 没有显式休班时，使用国务院办公厅 2026 年安排作为可靠回退。
+        return getOfficialHolidayMark(cal);
+    }
+    private String getOfficialHolidayMark(Calendar cal) {
+        return OfficialHolidaySchedule.mark(cal);
+    }
+    private boolean isLegalHoliday(Calendar cal) {
+        return "休".equals(getHolidayMark(cal));
+    }
+    private boolean isAdjustedWorkday(Calendar cal) {
+        return "班".equals(getHolidayMark(cal));
+    }
+
     private GridLayout.LayoutParams dayParams() {
         GridLayout.LayoutParams params = new GridLayout.LayoutParams();
         params.width = 0;
@@ -496,86 +720,97 @@ public class SalaryActivity extends BaseActivity {
         return params;
     }
     
-    private LinearLayout buildDayCell(int day, String dateKey, boolean isWeekend, boolean isHoliday, String lunarInfo) {
-        LinearLayout cell = new LinearLayout(this);
-        cell.setOrientation(LinearLayout.VERTICAL);
-        cell.setGravity(Gravity.CENTER);
-        cell.setPadding(dp(3), dp(5), dp(3), dp(5));
-        
+    private FrameLayout buildDayCell(int day, String dateKey, boolean isWeekend, boolean isHoliday, String lunarInfo, String calendarEvent, String holidayMark) {
+        FrameLayout cell = new FrameLayout(this);
         GradientDrawable cellBg = new GradientDrawable();
         if (isHoliday) {
-            cellBg.setColor(0xFFFFE5CC);
-            cellBg.setStroke(Math.max(1, dp(1)), 0xFFFFB366);
+            cellBg.setColor(0x18D32F2F);
         } else if (isWeekend) {
-            cellBg.setColor(0x26FFFFFF);
-        } else {
             cellBg.setColor(0x1AFFFFFF);
+        } else {
+            cellBg.setColor(0x12FFFFFF);
         }
         cellBg.setCornerRadius(dp(10));
         cell.setBackground(cellBg);
-        
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER);
+        content.setPadding(dp(3), dp(5), dp(3), dp(5));
+        cell.addView(content, new FrameLayout.LayoutParams(-1, -1));
+
         TextView dayText = new TextView(this);
         dayText.setText(String.valueOf(day));
-        dayText.setTextSize(13);
-        dayText.setTextColor(isHoliday ? 0xFFCC6600 : (isWeekend ? 0xff5a6b82 : 0xff17334f));
+        dayText.setTextSize(14);
+        dayText.setTextColor(isHoliday ? 0xFFB71C1C : (isWeekend ? 0xff40566F : 0xff243B55));
         dayText.setTypeface(null, Typeface.BOLD);
-        cell.addView(dayText);
-        
-        if (isHoliday) {
-            TextView holidayMark = new TextView(this);
-            holidayMark.setText("休");
-            holidayMark.setTextSize(7);
-            holidayMark.setTextColor(0xFFFFFFFF);
-            holidayMark.setTypeface(null, Typeface.BOLD);
-            holidayMark.setPadding(dp(3), dp(1), dp(3), dp(1));
-            GradientDrawable markBg = new GradientDrawable();
-            markBg.setColor(0xFFFF6600);
-            markBg.setCornerRadius(dp(4));
-            holidayMark.setBackground(markBg);
-            cell.addView(holidayMark);
-        } else if (!lunarInfo.isEmpty()) {
-            TextView festivalText = new TextView(this);
-            festivalText.setText(lunarInfo);
-            festivalText.setTextSize(7);
-            festivalText.setTextColor(0xFFFF6600);
-            festivalText.setTypeface(null, Typeface.BOLD);
-            cell.addView(festivalText);
+        content.addView(dayText);
+        if (!lunarInfo.isEmpty()) {
+            TextView lunarText = new TextView(this);
+            lunarText.setText(lunarInfo);
+            lunarText.setTextSize(8);
+            lunarText.setTextColor(0xFF526A82);
+            lunarText.setTypeface(null, Typeface.BOLD);
+            content.addView(lunarText);
         }
-        
         String record = prefs.getString(dateKey, null);
         if (record != null) {
             String[] parts = record.split(",");
-            float normalHours = Float.parseFloat(parts[0]);
-            float nightHours = parts.length > 1 ? Float.parseFloat(parts[1]) : 0;
-            float overtimeHours = parts.length > 2 ? Float.parseFloat(parts[2]) : 0;
+            float normalHours = parseFloatStr(parts[0]);
+            float nightHours = parts.length > 1 ? parseFloatStr(parts[1]) : 0;
+            float overtimeHours = parts.length > 2 ? parseFloatStr(parts[2]) : 0;
             int late = parts.length > 3 ? parseIntSafe(parts[3]) : 0;
-            
             if (normalHours > 0 || nightHours > 0 || overtimeHours > 0) {
                 TextView hourText = new TextView(this);
                 String hourStr = "";
-                if (normalHours > 0) hourStr += String.format("%.1f", normalHours);
-                if (nightHours > 0) hourStr += (hourStr.isEmpty() ? "" : "+") + String.format("%.1f夜", nightHours);
-                if (overtimeHours > 0) hourStr += (hourStr.isEmpty() ? "" : "+") + String.format("%.1f加", overtimeHours);
+                if (normalHours > 0) hourStr += String.format(Locale.CHINA, "%.1f", normalHours);
+                if (nightHours > 0) hourStr += (hourStr.isEmpty() ? "" : "+") + String.format(Locale.CHINA, "%.1f夜", nightHours);
+                if (overtimeHours > 0) hourStr += (hourStr.isEmpty() ? "" : "+") + String.format(Locale.CHINA, "%.1f加", overtimeHours);
                 hourText.setText(hourStr);
-                hourText.setTextSize(7);
-                hourText.setTextColor(0xFF0E7D95);
+                hourText.setTextSize(8);
+                hourText.setTextColor(overtimeHours > 0 ? 0xFFC2410C : 0xFF00695C);
                 hourText.setTypeface(null, Typeface.BOLD);
-                cell.addView(hourText);
+                content.addView(hourText);
             }
-            
             if (late > 0) {
                 TextView lateText = new TextView(this);
                 lateText.setText("迟" + late);
-                lateText.setTextSize(6);
-                lateText.setTextColor(0xFFCC6600);
-                cell.addView(lateText);
+                lateText.setTextSize(7);
+                lateText.setTextColor(0xFF7C3AED);
+                content.addView(lateText);
             }
         }
-        
+        Calendar cellCalendar = Calendar.getInstance();
+        try { cellCalendar.setTime(new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).parse(dateKey)); } catch (Exception ignored) { }
+        boolean workdayAdjustment = "班".equals(holidayMark);
+        if (isHoliday || workdayAdjustment) {
+            TextView badge = new TextView(this);
+            badge.setText(isHoliday ? "休" : "班");
+            badge.setTextSize(10);
+            badge.setTypeface(null, Typeface.BOLD);
+            badge.setTextColor(isHoliday ? 0xFFE53935 : 0xFFFFA000);
+            badge.setGravity(Gravity.CENTER);
+            badge.setPadding(0, 0, 0, 0);
+            FrameLayout.LayoutParams badgeLp = new FrameLayout.LayoutParams(dp(20), dp(18), Gravity.TOP | Gravity.END);
+            badgeLp.setMargins(0, dp(2), dp(2), 0);
+            cell.addView(badge, badgeLp);
+        }
         cell.setOnClickListener(v -> { Haptics.perform(v); showDayEditor(dateKey, isWeekend, isHoliday); });
+        cell.setOnTouchListener((v, eventTouch) -> {
+            if (eventTouch.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                calendarSwiped = false;
+                if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
+            }
+            boolean handled = calendarGesture != null && calendarGesture.onTouchEvent(eventTouch);
+            if (eventTouch.getActionMasked() == MotionEvent.ACTION_UP) {
+                if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(false);
+                if (!calendarSwiped) v.performClick();
+            }
+            return handled || eventTouch.getActionMasked() != MotionEvent.ACTION_CANCEL;
+        });
         return cell;
     }
-    
+
     private int parseIntSafe(String str) {
         try {
             if (str == null || str.trim().isEmpty()) return 0;
@@ -586,6 +821,15 @@ public class SalaryActivity extends BaseActivity {
         }
     }
     
+    private void refreshSalaryWidgets() {
+        try {
+            android.appwidget.AppWidgetManager manager = android.appwidget.AppWidgetManager.getInstance(this);
+            android.content.ComponentName component = new android.content.ComponentName(this, SalaryWidget.class);
+            int[] ids = manager.getAppWidgetIds(component);
+            if (ids != null && ids.length > 0) new SalaryWidget().onUpdate(this, manager, ids);
+        } catch (RuntimeException ignored) { }
+    }
+
     private void showDayEditor(String dateKey, boolean isWeekend, boolean isHoliday) {
         final android.app.Dialog dialog = new android.app.Dialog(this, android.R.style.Theme_Translucent_NoTitleBar);
         
@@ -594,7 +838,8 @@ public class SalaryActivity extends BaseActivity {
         root.setOnClickListener(v -> dialog.dismiss());
         
         ScrollView scrollCard = new ScrollView(this);
-        scrollCard.setVerticalScrollBarEnabled(false);
+        scrollCard.setVerticalScrollBarEnabled(true);
+        scrollCard.setFillViewport(true);
         
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -625,12 +870,7 @@ public class SalaryActivity extends BaseActivity {
         String record = prefs.getString(dateKey, null);
         String[] parts = record != null ? record.split(",") : new String[]{"", "", "", ""};
         
-        // 白班上班时间选择
-        addTimeSelector(card, "⏰ 白班上班时间:", "dayStartTime", "08:00");
-        
-        // 夜班上班时间选择
-        addTimeSelector(card, "🌙 夜班上班时间:", "nightStartTime", "22:00");
-        
+        // 只保留用户直接填写的白班、夜班和加班工时。
         EditText normalInput = addStyledInputEmpty(card, "⏰ 白班工时(小时):", parts[0]);
         EditText nightInput = addStyledInputEmpty(card, "🌙 夜班工时(小时):", parts.length > 1 ? parts[1] : "");
         EditText overtimeInput = addStyledInputEmpty(card, "⚡ 加班工时(小时):", parts.length > 2 ? parts[2] : "");
@@ -671,6 +911,7 @@ public class SalaryActivity extends BaseActivity {
                 String saveStr = normalVal + "," + nightVal + "," + overtimeVal + "," + lateVal;
                 prefs.edit().putString(dateKey, saveStr).apply();
                 refreshCalendar();
+                refreshSalaryWidgets();
                 dialog.dismiss();
             } else {
                 Toast.makeText(this, "请至少填写一项工时或迟到次数", Toast.LENGTH_SHORT).show();
@@ -680,14 +921,24 @@ public class SalaryActivity extends BaseActivity {
         
         scrollCard.addView(card);
         
+        int maxDialogHeight = (int) (getResources().getDisplayMetrics().heightPixels * 0.82f);
         FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(-1, -2);
         cardLp.leftMargin = dp(24);
         cardLp.rightMargin = dp(24);
+        cardLp.topMargin = dp(24);
+        cardLp.bottomMargin = dp(24);
         cardLp.gravity = Gravity.CENTER;
         root.addView(scrollCard, cardLp);
         
         dialog.setContentView(root);
         dialog.show();
+        scrollCard.post(() -> {
+            if (scrollCard.getHeight() > maxDialogHeight) {
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) scrollCard.getLayoutParams();
+                lp.height = maxDialogHeight;
+                scrollCard.setLayoutParams(lp);
+            }
+        });
     }
     
     private EditText addStyledInputEmpty(LinearLayout parent, String label, String value) {
@@ -720,7 +971,7 @@ public class SalaryActivity extends BaseActivity {
         return input;
     }
     
-    private void addTimeSelector(LinearLayout parent, String label, String prefKey, String defaultTime) {
+    private TextView addTimeSelector(LinearLayout parent, String label, String prefKey, String defaultTime) {
         TextView labelView = new TextView(this);
         labelView.setText(label);
         labelView.setTextSize(13);
@@ -748,9 +999,13 @@ public class SalaryActivity extends BaseActivity {
         
         timeDisplay.setOnClickListener(v -> {
             Haptics.perform(v);
-            String[] timeParts = savedTime.split(":");
-            int hour = Integer.parseInt(timeParts[0]);
-            int minute = Integer.parseInt(timeParts[1]);
+            String[] timeParts = timeDisplay.getText().toString().split(":");
+            int hour = 0;
+            int minute = 0;
+            try {
+                hour = Integer.parseInt(timeParts[0]);
+                minute = Integer.parseInt(timeParts[1]);
+            } catch (Exception ignored) { }
             
             TimePickerDialog picker = new TimePickerDialog(this, (view, h, m) -> {
                 String newTime = String.format("%02d:%02d", h, m);
@@ -759,6 +1014,20 @@ public class SalaryActivity extends BaseActivity {
             }, hour, minute, true);
             picker.show();
         });
+        return timeDisplay;
+    }
+
+    private float durationHours(String start, String end, boolean crossesMidnight) {
+        try {
+            String[] a = start.split(":");
+            String[] b = end.split(":");
+            int from = Integer.parseInt(a[0]) * 60 + Integer.parseInt(a[1]);
+            int to = Integer.parseInt(b[0]) * 60 + Integer.parseInt(b[1]);
+            if (crossesMidnight || to <= from) to += 24 * 60;
+            return Math.max(0f, (to - from) / 60f);
+        } catch (Exception ignored) {
+            return 0f;
+        }
     }
     
     private EditText addStyledInput(LinearLayout parent, String label, float value) {
@@ -811,24 +1080,25 @@ public class SalaryActivity extends BaseActivity {
         return btn;
     }
     
+    private boolean isScheduledWorkday(Calendar cal) {
+        String mark = getHolidayMark(cal);
+        if ("休".equals(mark)) return false;
+        if ("班".equals(mark)) return true;
+        int day = cal.get(Calendar.DAY_OF_WEEK);
+        if (workScheduleDays == 6) return day != Calendar.SUNDAY;
+        return day != Calendar.SATURDAY && day != Calendar.SUNDAY;
+    }
     private int getWorkDaysInMonth() {
         Calendar cal = (Calendar) calendar.clone();
         cal.set(Calendar.DAY_OF_MONTH, 1);
         int month = cal.get(Calendar.MONTH);
         int workDays = 0;
-        
         while (cal.get(Calendar.MONTH) == month) {
-            int dayOfWeek = cal.get(Calendar.DAY_OF_WEEK);
-            String dateKey = new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(cal.getTime());
-            if (dayOfWeek != Calendar.SATURDAY && dayOfWeek != Calendar.SUNDAY && !HOLIDAYS_2026.contains(dateKey)) {
-                workDays++;
-            }
+            if (isScheduledWorkday(cal)) workDays++;
             cal.add(Calendar.DAY_OF_MONTH, 1);
         }
-        
         return workDays;
     }
-    
     private void calculateMonthlySalary() {
         Calendar cal = (Calendar) calendar.clone();
         cal.set(Calendar.DAY_OF_MONTH, 1);
@@ -836,7 +1106,18 @@ public class SalaryActivity extends BaseActivity {
         
         float totalNormalHours = 0;
         float totalNightHours = 0;
+        float recordedTotalHours = 0;
         float totalOvertimeHours = 0;
+        float baseHoursUsed = 0;
+        int scheduledWorkDays = Math.max(1, getWorkDaysInMonth());
+        float standardHours = scheduledWorkDays * Math.max(1f, dailyHours);
+        float weekdayOvertimeHours = 0;
+        float weekendOvertimeHours = 0;
+        float holidayOvertimeHours = 0;
+        float weekdayOvertimePay = 0;
+        float weekendOvertimePay = 0;
+        float holidayOvertimePay = 0;
+        float totalOvertimePay = 0;
         int workDays = 0;
         int lateTimes = 0;
         int absentDays = 0;
@@ -853,21 +1134,44 @@ public class SalaryActivity extends BaseActivity {
                 float night = parts.length > 1 ? Float.parseFloat(parts[1]) : 0;
                 float overtime = parts.length > 2 ? Float.parseFloat(parts[2]) : 0;
                 int late = parts.length > 3 ? parseIntSafe(parts[3]) : 0;
+                recordedTotalHours += normal + night + overtime;
                 
                 totalNormalHours += normal;
                 totalNightHours += night;
-                totalOvertimeHours += overtime;
+                float regularHours = normal + night;
+                boolean scheduledDay = isScheduledWorkday(cal);
+                float basePart = scheduledDay
+                        ? Math.min(regularHours, Math.max(0f, standardHours - baseHoursUsed))
+                        : 0f;
+                float excessRegular = Math.max(0f, regularHours - basePart);
+                baseHoursUsed += basePart;
+                float countedOvertime = overtime + excessRegular;
+                totalOvertimeHours += countedOvertime;
+                boolean holidayDay = isLegalHoliday(cal);
+                boolean weekendDay = cal.get(Calendar.DAY_OF_WEEK) == Calendar.SATURDAY
+                        || cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY;
+                if (holidayDay) holidayOvertimeHours += countedOvertime;
+                else if (weekendDay) weekendOvertimeHours += countedOvertime;
+                else weekdayOvertimeHours += countedOvertime;
+                if (salaryMode == 1) {
+                    float overtimeHourly = baseSalary / Math.max(1f, dailyHours) / scheduledWorkDays;
+                    weekdayOvertimePay = weekdayOvertimeHours * overtimeHourly * weekdayOvertimeMultiplier;
+                    weekendOvertimePay = weekendOvertimeHours * overtimeHourly * weekendOvertimeMultiplier;
+                    holidayOvertimePay = holidayOvertimeHours * overtimeHourly * holidayOvertimeMultiplier;
+                    totalOvertimePay = weekdayOvertimePay + weekendOvertimePay + holidayOvertimePay;
+                } else {
+                    totalOvertimePay = 0f;
+                }
                 lateTimes += late;
                 
                 int dayOfWeek = cal.get(Calendar.DAY_OF_WEEK);
-                boolean isHoliday = HOLIDAYS_2026.contains(dateKey);
-                
-                if (dayOfWeek != Calendar.SATURDAY && dayOfWeek != Calendar.SUNDAY && !isHoliday) {
+                boolean isHoliday = isLegalHoliday(cal);
+                if (isScheduledWorkday(cal)) {
                     workDays++;
                 }
             } else {
                 int dayOfWeek = cal.get(Calendar.DAY_OF_WEEK);
-                if (dayOfWeek != Calendar.SATURDAY && dayOfWeek != Calendar.SUNDAY && !HOLIDAYS_2026.contains(dateKey)) {
+                if (isScheduledWorkday(cal)) {
                     absentDays++;
                 }
             }
@@ -875,6 +1179,17 @@ public class SalaryActivity extends BaseActivity {
             cal.add(Calendar.DAY_OF_MONTH, 1);
         }
         
+        if (hoursSummaryView != null) {
+            hoursSummaryView.removeAllViews();
+            addSummaryCell(hoursSummaryView, "总工时", String.format(Locale.CHINA, "%.1fh", recordedTotalHours), 0xff00695C);
+            addSummaryCell(hoursSummaryView, "已计薪", String.format(Locale.CHINA, "%.1fh", baseHoursUsed), 0xff1565C0);
+            addSummaryCell(hoursSummaryView, "满额工时", String.format(Locale.CHINA, "%.1fh", standardHours), 0xff455A64);
+            addSummaryCell(hoursSummaryView, "应出勤", scheduledWorkDays + "天", 0xff455A64);
+            addSummaryCell(hoursSummaryView, "平日加班", String.format(Locale.CHINA, "%.1fh", weekdayOvertimeHours), 0xffC2410C);
+            addSummaryCell(hoursSummaryView, "周六日加班", String.format(Locale.CHINA, "%.1fh", weekendOvertimeHours), 0xffD97706);
+            addSummaryCell(hoursSummaryView, "法定节假日加班", String.format(Locale.CHINA, "%.1fh", holidayOvertimeHours), 0xffB91C1C);
+            addSummaryCell(hoursSummaryView, "加班合计", String.format(Locale.CHINA, "%.1fh", totalOvertimeHours), 0xff7C3AED);
+        }
         detailPanel.removeAllViews();
         float grossSalary = 0;
         float totalDeduction = 0;
@@ -882,28 +1197,37 @@ public class SalaryActivity extends BaseActivity {
         addSectionTitle("收入项");
         
         if (salaryMode == 0) {
-            grossSalary = baseSalary;
-            if (baseSalary > 0) addDetailRow("基本工资", baseSalary);
+            if (baseSalary > 0) {
+                grossSalary = baseSalary;
+                addDetailRow("固定月薪", baseSalary);
+            }
         } else if (salaryMode == 1) {
             if (baseSalary > 0) {
-                float basePay = workDays * baseSalary;
-                grossSalary = basePay;
-                addDetailRow("底薪(" + workDays + "天×" + baseSalary + ")", basePay);
-                
-                float hourlyRate = baseSalary / dailyHours;
-                
-                if (totalOvertimeHours > 0) {
-                    float overtimePay = totalOvertimeHours * hourlyRate * 1.5f;
-                    grossSalary += overtimePay;
-                    addDetailRow("加班工资(" + String.format("%.1f", totalOvertimeHours) + "h×1.5)", overtimePay);
+                float normalizedBase = baseSalary / Math.max(1f, dailyHours)
+                        / scheduledWorkDays * baseHoursUsed;
+                grossSalary = normalizedBase + totalOvertimePay;
+                addDetailRow("底薪(" + baseSalary + "÷" + dailyHours + "÷" + scheduledWorkDays
+                        + "×已计薪工时" + String.format(Locale.CHINA, "%.1f", baseHoursUsed)
+                        + "/" + String.format(Locale.CHINA, "%.1f", standardHours) + ")", normalizedBase);
+                if (weekdayOvertimeHours > 0) {
+                    addDetailRow("平日加班(" + baseSalary + "÷" + dailyHours + "÷" + scheduledWorkDays
+                            + "×" + weekdayOvertimeMultiplier + "×" + String.format(Locale.CHINA, "%.1f", weekdayOvertimeHours) + "h)", weekdayOvertimePay);
+                }
+                if (weekendOvertimeHours > 0) {
+                    addDetailRow("周六日加班(" + baseSalary + "÷" + dailyHours + "÷" + scheduledWorkDays
+                            + "×" + weekendOvertimeMultiplier + "×" + String.format(Locale.CHINA, "%.1f", weekendOvertimeHours) + "h)", weekendOvertimePay);
+                }
+                if (holidayOvertimeHours > 0) {
+                    addDetailRow("法定节假日加班(" + baseSalary + "÷" + dailyHours + "÷" + scheduledWorkDays
+                            + "×" + holidayOvertimeMultiplier + "×" + String.format(Locale.CHINA, "%.1f", holidayOvertimeHours) + "h)", holidayOvertimePay);
                 }
             }
         } else if (salaryMode == 2) {
             if (baseSalary > 0) {
-                float totalHours = totalNormalHours + totalOvertimeHours;
+                float totalHours = totalNormalHours + totalNightHours + totalOvertimeHours;
                 float basePay = totalHours * baseSalary;
                 grossSalary = basePay;
-                addDetailRow("时薪×工时(" + String.format("%.1f", totalHours) + "h)", basePay);
+                addDetailRow("小时工(" + String.format(Locale.CHINA, "%.1f", totalHours) + "h×工价)", basePay);
             }
         } else if (salaryMode == 3) {
             // 计件工资
@@ -912,8 +1236,10 @@ public class SalaryActivity extends BaseActivity {
                 int pieces = prefs.getInt(key + "_pieces", 0);
                 if (pieces > 0) {
                     float piecePay = pieces * pieceRate;
-                    grossSalary = piecePay;
+                    float excessBonus = pieceQuota > 0 ? Math.max(0, pieces - pieceQuota * workDays) * pieceBonus : 0;
+                    grossSalary = piecePay + excessBonus;
                     addDetailRow("计件收入(" + pieces + "件×" + pieceRate + ")", piecePay);
+                    if (excessBonus > 0) addDetailRow("超额奖励", excessBonus);
                 }
             }
         } else {
@@ -960,20 +1286,32 @@ public class SalaryActivity extends BaseActivity {
             addDetailRow("迟到扣款(" + lateTimes + "次)", -late);
         }
         
-        float taxableIncome = grossSalary - socialSecurity - housingFund - 5000;
-        float tax = 0;
-        if (taxableIncome > 0) {
-            if (taxableIncome <= 3000) {
-                tax = taxableIncome * 0.03f;
-            } else if (taxableIncome <= 12000) {
-                tax = 3000 * 0.03f + (taxableIncome - 3000) * 0.1f;
-            } else {
-                tax = 3000 * 0.03f + 9000 * 0.1f + (taxableIncome - 12000) * 0.2f;
-            }
-            totalDeduction += tax;
-            addDetailRow("个人所得税", -tax);
+        String currentMonthKey = new SimpleDateFormat("yyyy-MM", Locale.CHINA).format(calendar.getTime());
+        int currentMonth = calendar.get(Calendar.MONTH) + 1;
+        float cumulativeIncome = grossSalary;
+        float cumulativeSocial = socialSecurity;
+        float cumulativeFund = housingFund;
+        float previousTaxPaid = 0f;
+        Calendar prior = (Calendar) calendar.clone();
+        prior.set(Calendar.MONTH, Calendar.JANUARY);
+        for (int m = 1; m < currentMonth; m++) {
+            String key = new SimpleDateFormat("yyyy-MM", Locale.CHINA).format(prior.getTime());
+            cumulativeIncome += prefs.getFloat("income_" + key, 0f);
+            cumulativeSocial += prefs.getFloat("social_" + key, 0f);
+            cumulativeFund += prefs.getFloat("fund_" + key, 0f);
+            previousTaxPaid += prefs.getFloat("tax_" + key, 0f);
+            prior.add(Calendar.MONTH, 1);
         }
-        
+        float monthlyExtraDeduction = prefs.getFloat("taxAdditionalDeduction", 0f);
+        float monthlyOtherTaxDeduction = prefs.getFloat("taxOtherDeduction", 0f);
+        float cumulativeTaxable = Math.max(0f, cumulativeIncome - cumulativeSocial - cumulativeFund
+                - (monthlyExtraDeduction + monthlyOtherTaxDeduction) * currentMonth - 5000f * currentMonth);
+        float cumulativeTax = calculateAnnualComprehensiveTax(cumulativeTaxable);
+        float tax = Math.max(0f, cumulativeTax - previousTaxPaid);
+        if (tax > 0) {
+            totalDeduction += tax;
+            addDetailRow("个人所得税（累计预扣）", -tax);
+        }
         if (otherDeduction > 0) { totalDeduction += otherDeduction; addDetailRow("其他扣款", -otherDeduction); }
         
         if (totalDeduction > 0) {
@@ -984,6 +1322,13 @@ public class SalaryActivity extends BaseActivity {
         
         grossSalaryView.setText(t("应发工资：", "Gross: ") + String.format("¥%.2f", grossSalary));
         netSalaryView.setText(String.format("¥%.2f", netSalary));
+        String monthKey = new SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(calendar.getTime());
+        prefs.edit().putFloat("income_" + monthKey, grossSalary)
+                .putFloat("tax_" + monthKey, tax)
+                .putFloat("social_" + monthKey, socialSecurity)
+                .putFloat("fund_" + monthKey, housingFund)
+                .putFloat("net_" + monthKey, netSalary)
+                .putFloat("overtime_" + monthKey, totalOvertimeHours).apply();
         
         TextView hint = new TextView(this);
         hint.setText("本月工作日: " + expectedWorkDays + "天 | 已出勤: " + workDays + "天");
@@ -994,6 +1339,23 @@ public class SalaryActivity extends BaseActivity {
         detailPanel.addView(hint);
     }
     
+    private Calendar parseDate(String key) {
+        try {
+            Calendar c = Calendar.getInstance();
+            c.setTime(new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).parse(key));
+            return c;
+        } catch (Exception ignored) { return null; }
+    }
+    private float calculateAnnualComprehensiveTax(float income) {
+        if (income <= 36000f) return income * 0.03f;
+        if (income <= 144000f) return income * 0.10f - 2520f;
+        if (income <= 300000f) return income * 0.20f - 16920f;
+        if (income <= 420000f) return income * 0.25f - 31920f;
+        if (income <= 660000f) return income * 0.30f - 52920f;
+        if (income <= 960000f) return income * 0.35f - 85920f;
+        return income * 0.45f - 181920f;
+    }
+
     private void addSectionTitle(String title) {
         TextView tv = new TextView(this);
         tv.setText(title);
@@ -1058,8 +1420,16 @@ public class SalaryActivity extends BaseActivity {
         absentDeduction = prefs.getFloat("absent", 0);
         lateDeduction = prefs.getFloat("late", 0);
         otherDeduction = prefs.getFloat("otherDeduct", 0);
-        dailyHours = prefs.getFloat("dailyhours", 8);
+        // 工作制度统一为八小时；旧版本保存的 dailyhours 不再参与计算。
+        dailyHours = 8f;
         pieceRate = prefs.getFloat("pieceRate", 0);
+        pieceQuota = prefs.getFloat("pieceQuota", 0);
+        pieceBonus = prefs.getFloat("pieceBonus", 0);
+        weekdayOvertimeMultiplier = prefs.getFloat("weekdayOvertimeMultiplier", 1.5f);
+        weekendOvertimeMultiplier = prefs.getFloat("weekendOvertimeMultiplier", 2f);
+        holidayOvertimeMultiplier = prefs.getFloat("holidayOvertimeMultiplier", 3f);
+        workScheduleDays = prefs.getInt("workSchedule", 5);
+        if (workScheduleDays != 6) workScheduleDays = 5;
     }
     
     private float parseFloatStr(String str) {

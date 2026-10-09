@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Calendar;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
@@ -6007,6 +6008,59 @@ public class MainActivity extends BaseActivity {
                   });
       }
 
+      private View buildSalarySummaryCard() {
+          LiquidGlassPanel card = new LiquidGlassPanel(this);
+          card.setOrientation(LinearLayout.VERTICAL);
+          card.setPadding(dp(14), dp(12), dp(14), dp(12));
+          TextView title = text("📈  " + t("本月工资概览", "Monthly Salary Overview"), 14, 0xff17334f);
+          title.setTypeface(null, Typeface.BOLD);
+          card.addView(title, new LinearLayout.LayoutParams(-1, dp(28)));
+          String month = new java.text.SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Calendar.getInstance().getTime());
+          SharedPreferences salary = getSharedPreferences("salary", MODE_PRIVATE);
+          float gross = salary.getFloat("income_" + month, 0f);
+          float net = salary.getFloat("net_" + month, 0f);
+          float overtime = salary.getFloat("overtime_" + month, 0f);
+          TextView summary = text(String.format(Locale.getDefault(), "应发 ¥%.2f   实发 ¥%.2f   加班 %.1fh", gross, net, overtime), 12, 0xff52617b);
+          card.addView(summary, new LinearLayout.LayoutParams(-1, dp(24)));
+          float max = Math.max(1f, Math.max(gross, Math.max(net, overtime * 100f)));
+          addSalaryBar(card, "应发", gross, max, 0xff2e9fbc);
+          addSalaryBar(card, "实发", net, max, 0xff4d78c7);
+          addSalaryBar(card, "加班", overtime * 100f, max, 0xffc77943);
+          card.setOnClickListener(v -> {
+              Haptics.perform(v);
+              startActivity(new Intent(this, SalaryActivity.class));
+              overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left);
+          });
+          return card;
+      }
+
+      private void addSalaryBar(LinearLayout parent, String label, float value, float max, int color) {
+          LinearLayout row = new LinearLayout(this);
+          row.setGravity(Gravity.CENTER_VERTICAL);
+          TextView labelView = text(label, 11, 0xff52617b);
+          row.addView(labelView, new LinearLayout.LayoutParams(dp(34), dp(22)));
+          FrameLayout track = new FrameLayout(this);
+          GradientDrawable trackBg = new GradientDrawable();
+          trackBg.setColor(0x33FFFFFF);
+          trackBg.setCornerRadius(dp(8));
+          track.setBackground(trackBg);
+          View fill = new View(this);
+          GradientDrawable fillBg = new GradientDrawable();
+          fillBg.setColor(color);
+          fillBg.setCornerRadius(dp(8));
+          fill.setBackground(fillBg);
+          float ratio = Math.max(0f, Math.min(1f, value / max));
+          FrameLayout.LayoutParams fillLp = new FrameLayout.LayoutParams(0, -1);
+          fillLp.width = Math.max(dp(3), (int) (dp(170) * ratio));
+          track.addView(fill, fillLp);
+          LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(0, dp(10), 1f);
+          trackLp.setMargins(dp(6), 0, dp(8), 0);
+          row.addView(track, trackLp);
+          TextView valueView = text(String.format(Locale.getDefault(), "%.1f", value), 10, 0xff52617b);
+          row.addView(valueView, new LinearLayout.LayoutParams(dp(44), dp(22)));
+          parent.addView(row, new LinearLayout.LayoutParams(-1, dp(24)));
+      }
+
       private LinearLayout buildSettingsPage() {
          LinearLayout page = page(t("设置", "Settings"));
 
@@ -6212,6 +6266,10 @@ public class MainActivity extends BaseActivity {
           LinearLayout.LayoutParams salaryParams = new LinearLayout.LayoutParams(-1, dp(60));
           salaryParams.setMargins(0, 0, 0, dp(18));
           page.addView(salaryCard, salaryParams);
+          View salarySummary = buildSalarySummaryCard();
+          LinearLayout.LayoutParams salarySummaryParams = new LinearLayout.LayoutParams(-1, -2);
+          salarySummaryParams.setMargins(0, -dp(8), 0, dp(18));
+          page.addView(salarySummary, salarySummaryParams);
           
          TextView updateTitle = text(t("更新", "Updates"), 16, Color.rgb(35, 126, 91));
          updateTitle.setTypeface(null, 1);
