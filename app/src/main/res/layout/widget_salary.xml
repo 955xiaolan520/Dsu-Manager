@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@drawable/widget_background">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="8dp">
+        
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="工时记录"
+            android:textColor="#0f1e36"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+        
+        <TextView
+            android:id="@+id/widget_date"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="10/09"
+            android:textColor="#5a6b82"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="6dp">
+            
+            <TextView
+                android:id="@+id/widget_day_hours"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.0"
+                android:textColor="#0f1e36"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+            
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="白班"
+                android:textColor="#5a6b82"
+                android:textSize="10sp"
+                android:paddingTop="2dp" />
+            
+            <Button
+                android:id="@+id/widget_btn_day"
+                android:layout_width="48dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="4dp"
+                android:text="+1"
+                android:textColor="#ffffff"
+                android:textSize="11sp"
+                android:background="@drawable/widget_button_day" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="6dp">
+            
+            <TextView
+                android:id="@+id/widget_night_hours"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.0"
+                android:textColor="#0f1e36"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+            
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="夜班"
+                android:textColor="#5a6b82"
+                android:textSize="10sp"
+                android:paddingTop="2dp" />
+            
+            <Button
+                android:id="@+id/widget_btn_night"
+                android:layout_width="48dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="4dp"
+                android:text="+1"
+                android:textColor="#ffffff"
+                android:textSize="11sp"
+                android:background="@drawable/widget_button_night" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="6dp">
+            
+            <TextView
+                android:id="@+id/widget_overtime_hours"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.0"
+                android:textColor="#0f1e36"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+            
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="加班"
+                android:textColor="#5a6b82"
+                android:textSize="10sp"
+                android:paddingTop="2dp" />
+            
+            <Button
+                android:id="@+id/widget_btn_overtime"
+                android:layout_width="48dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="4dp"
+                android:text="+1"
+                android:textColor="#ffffff"
+                android:textSize="11sp"
+                android:background="@drawable/widget_button_overtime" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>

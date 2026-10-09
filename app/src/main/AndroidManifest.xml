@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
     <!-- v3.9.13 「打开文件位置」选择器需要看到其他文件管理器（Android 11+ 包可见性） -->
     <queries>
         <intent>
@@ -65,6 +66,24 @@
         <activity android:name=".UbuntuTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".DebianTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".LocalTerminalActivity" android:theme="@style/LinuxTerminalTheme" android:screenOrientation="portrait" android:exported="false" />
+        <!-- v3.51.97: 工资工时记账系统 -->
+        <activity android:name=".SalaryActivity" android:screenOrientation="portrait" android:exported="false" />
+        <!-- v3.52.1: 独立设置页面 -->
+        <activity android:name=".SalarySettingsActivity" android:screenOrientation="portrait" android:exported="false" />
+        <!-- v3.53.0: 统计图表 -->
+        <activity android:name=".SalaryStatsActivity" android:screenOrientation="portrait" android:exported="false" />
+        <!-- v3.53.0: 桌面小部件 -->
+        <receiver android:name=".SalaryWidget" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.probiotics.xiaoni.RECORD_DAY" />
+                <action android:name="com.probiotics.xiaoni.RECORD_NIGHT" />
+                <action android:name="com.probiotics.xiaoni.RECORD_OVERTIME" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_salary_info" />
+        </receiver>
         <provider
             android:name=".UpdateFileProvider"
             android:authorities="${applicationId}.fileprovider"

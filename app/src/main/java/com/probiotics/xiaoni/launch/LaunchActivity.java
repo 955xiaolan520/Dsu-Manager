@@ -5,6 +5,7 @@ import android.animation.ObjectAnimator;
 import android.os.Bundle;
 import android.os.Debug;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.animation.LinearInterpolator;
 import android.widget.ImageButton;
@@ -16,6 +17,7 @@ import androidx.fragment.app.Fragment;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.probiotics.xiaoni.Haptics;
 import com.probiotics.xiaoni.launch.detector.NativeDetector;
 import com.probiotics.xiaoni.launch.ui.deviceinfo.DeviceInfoFragment;
 import com.probiotics.xiaoni.launch.ui.environment.EnvironmentFragment;
@@ -64,6 +66,13 @@ public class LaunchActivity extends AppCompatActivity {
         setupNavigation();
     }
 
+    /** 全局振动反馈：与宿主 MainActivity 同体系，任何可点击 View 松手即触发触觉反馈 */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        Haptics.onTouch(getWindow().getDecorView(), event);
+        return super.dispatchTouchEvent(event);
+    }
+
     private void initViews() {
         bottomNavigation = findViewById(R.id.bottom_navigation);
         btnRefresh = findViewById(R.id.btn_refresh);
@@ -75,8 +84,14 @@ public class LaunchActivity extends AppCompatActivity {
         rotateAnimator.setRepeatCount(ObjectAnimator.INFINITE);
         rotateAnimator.setInterpolator(new LinearInterpolator());
 
-        btnRefresh.setOnClickListener(v -> refreshCurrentFragment());
-        btnAbout.setOnClickListener(v -> showAboutBottomSheet());
+        btnRefresh.setOnClickListener(v -> {
+            Haptics.perform(v);
+            refreshCurrentFragment();
+        });
+        btnAbout.setOnClickListener(v -> {
+            Haptics.perform(v);
+            showAboutBottomSheet();
+        });
     }
 
     private void initFragments() {
@@ -96,6 +111,7 @@ public class LaunchActivity extends AppCompatActivity {
 
     private void setupNavigation() {
         bottomNavigation.setOnItemSelectedListener(item -> {
+            Haptics.perform(bottomNavigation);
             Fragment selectedFragment = null;
             int itemId = item.getItemId();
 

@@ -70,6 +70,18 @@ public class MainActivity extends BaseActivity {
     private int languageMode;
     private boolean rootAuthorized;
     private boolean rootCheckInProgress;
+    // v3.51.75: 缓存Root方法检测结果，避免每次进入检测页都执行耗时的shell命令
+    private String cachedRootMethod = null;
+    // v3.51.81: SoC数据库和native库支持
+    static {
+        try {
+            System.loadLibrary("devcheck");
+        } catch (Throwable e) {
+            android.util.Log.e("MainActivity", "Failed to load libdevcheck.so", e);
+        }
+    }
+    private JSONObject socsDatabase = null;
+    private JSONObject currentSocInfo = null;
     private View[] actionButtons;
     private static final String DSU_SLOT = "dsu";
     private LinearLayout installPanel, installOptionsPanel;
@@ -90,6 +102,9 @@ public class MainActivity extends BaseActivity {
     private ScrollView embeddedReleaseNotesScroll;
     private Button embeddedDownloadButton;
     private int currentTab;
+    // CPU频率监控
+    private Handler cpuFreqHandler;
+    private Runnable cpuFreqUpdateTask;
     // v3.10.0：DNA 标签页内嵌「设置」子模式（设置入口在 DNA 页标题栏，返回时切回 DNA 主页）
     private boolean dnaSettingsMode;
     // v3.28.2：DNA 主页工具链状态 / 当前工程视图
@@ -160,6 +175,8 @@ public class MainActivity extends BaseActivity {
         new Thread(() -> adbManager.extractBinaries()).start();
         // v3.41.13：后台清理上次进程遗留的 JNI 提取整包副本 / OTA 解包目录（可达十几 G）
         DnaTools.INSTANCE.cleanStaleCaches(this);
+        // v3.51.81: 加载 SoC 数据库
+        loadSocsDatabase();
         buildUi();
         // 从引导页淡入进入：只淡入内容层（页面 + 底部导航），渐变背景常驻 → 任何 ROM 都不闪黑屏
         if (getIntent().getBooleanExtra("crossfade_entry", false)) {
@@ -198,7 +215,8 @@ public class MainActivity extends BaseActivity {
         applyWindowTransparency(isTransparent);
         bindRootService();
         if (!rootAuthorized) refreshRootStatus();
-        if (currentTab == 4) refreshMorePage();
+        // v3.51.77: 删除 refreshMorePage() 调用 - tab=4是检测页，不是终端页
+        // if (currentTab == 4) refreshMorePage();
     }
 
     /** v3.41.22：可清理缓存超过 100M 时后台自动深度清理（全扫描白名单 + su 兜底），完成后提示 */
@@ -218,6 +236,8 @@ public class MainActivity extends BaseActivity {
 
     @Override protected void onPause() {
         super.onPause();
+        // v3.51.68：保存当前页面位置
+        getSharedPreferences("settings", MODE_PRIVATE).edit().putInt("last_tab", currentTab).apply();
     }
 
     private void installCrashCatcher() {
@@ -615,7 +635,21 @@ public class MainActivity extends BaseActivity {
           homeScroll.addView(content);
           pageHost = new FrameLayout(this);
           FrameLayout.LayoutParams homeParams = new FrameLayout.LayoutParams(-1, -1);
-          pageHost.addView(buildCheckPage(), homeParams);
+          // v3.51.68：恢复上次打开的页面，首次打开默认DSU页
+          int lastTab = getSharedPreferences("settings", MODE_PRIVATE).getInt("last_tab", 0);
+          currentTab = lastTab;
+          
+          // 根据lastTab初始化对应页面
+          View initialPage;
+          switch (lastTab) {
+              case 0: initialPage = homeScroll; break;
+              case 1: initialPage = wrapInScroll(buildDnaPage()); break;
+              case 2: initialPage = wrapInScroll(buildRomPage()); break;
+              case 3: initialPage = buildOtgPageWrapper(); break;
+              case 4: initialPage = buildCheckPageLoading(); break;  // v3.51.80: 检测页异步加载
+              default: initialPage = homeScroll; currentTab = 0; break;
+          }
+          pageHost.addView(initialPage, homeParams);
          FrameLayout root = new FrameLayout(this);
           root.setBackgroundResource(R.drawable.liquid_backdrop);
           root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -630,7 +664,10 @@ public class MainActivity extends BaseActivity {
          bottomNavigation = buildBottomNavigation();
          root.addView(pageHost, new FrameLayout.LayoutParams(-1, -1));
          root.addView(bottomNavigation, bottomNavigationParams());
-          root.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+         
+         // v3.51.72: 初始化后更新底部导航高亮状态
+         root.post(() -> animateNavigation(currentTab));
+         root.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
               android.graphics.Rect visibleFrame = new android.graphics.Rect();
               root.getWindowVisibleDisplayFrame(visibleFrame);
               boolean keyboardVisible = root.getRootView().getHeight() - visibleFrame.bottom > dp(120);
@@ -760,16 +797,17 @@ public class MainActivity extends BaseActivity {
          items.setClipToPadding(false);
           navigation.addView(items, new FrameLayout.LayoutParams(-1, -1));
           bottomNavigationItems = items;
-          addNavigationItem(items, t("检测", "Check"), 0, v -> selectTab(0));
-         // v3.10.0：底部导航「设置」换成「DNA」工具箱，设置入口移至 DNA 页标题栏（与 ROM 页下载管理同款胶囊按钮）
-         addNavigationItem(items, t("DSU", "DSU"), 1, v -> selectTab(1));
-           addNavigationItem(items, t("DNA", "DNA"), 2, v -> selectTab(2));
-           addNavigationItem(items, t("ROM", "ROM"), 3, v -> selectTab(3));
-           addNavigationItem(items, t("OTG", "OTG"), 4, v -> selectTab(4));
+          // v3.51.67：调整底部导航顺序为 DSU | DNA | ROM | OTG | 检测
+         addNavigationItem(items, t("DSU", "DSU"), 0, v -> selectTab(0));
+           addNavigationItem(items, t("DNA", "DNA"), 1, v -> selectTab(1));
+           addNavigationItem(items, t("ROM", "ROM"), 2, v -> selectTab(2));
+           addNavigationItem(items, t("OTG", "OTG"), 3, v -> selectTab(3));
+          addNavigationItem(items, t("检测", "Check"), 4, v -> selectTab(4));
           liquidIndicator = new LiquidGlassIndicator(this);
           liquidIndicator.setElevation(dp(4));
           navigation.addView(liquidIndicator, new FrameLayout.LayoutParams(dp(62), dp(48)));
-         navigation.post(() -> moveLiquidIndicator(0, false));
+         // v3.51.76: 不要硬编码tab=0，等待初始化后通过animateNavigation设置
+         // navigation.post(() -> moveLiquidIndicator(0, false));
          return navigation;
      }
 
@@ -781,8 +819,9 @@ public class MainActivity extends BaseActivity {
          item.setSingleLine(true);
          item.setIncludeFontPadding(false);
          item.setEllipsize(null);
-           item.setTextColor(tab == 0 ? 0xff17334f : 0xfff8fbff);
-          item.setShadowLayer(dp(2), 0, dp(1), tab == 0 ? 0x55ffffff : 0x66233c50);
+         // v3.51.76: 不要硬编码tab==0的高亮，初始化后通过animateNavigation统一设置
+           item.setTextColor(0xfff8fbff);
+          item.setShadowLayer(dp(2), 0, dp(1), 0x66233c50);
          item.setPadding(0, 0, 0, 0);
           item.setBackground(null);
           item.setTag(tab);
@@ -1017,102 +1056,14 @@ public class MainActivity extends BaseActivity {
          super.onBackPressed();
      }
 
-        /** 主界面内嵌的检测仪表盘：不启动二级 Activity，保持 Dsu 的液态玻璃与全局振动体系。 */
-        private View buildCheckPage() {
-            ScrollView scroll = new ScrollView(this);
-            scroll.setFillViewport(true);
-            scroll.setClipToPadding(false);
-            scroll.setPadding(0, dp(4), 0, dp(92));
-            LinearLayout column = new LinearLayout(this);
-            column.setOrientation(LinearLayout.VERTICAL);
-            column.setPadding(dp(16), dp(12), dp(16), dp(18));
-
-            TextView title = text(t("设备安全检测", "Device Security Check"), 24, Color.WHITE);
-            title.setTypeface(null, Typeface.BOLD);
-            column.addView(title, new LinearLayout.LayoutParams(-1, dp(42)));
-            TextView subtitle = text(t("环境、指纹、机型与 ROOT 状态", "Environment, fingerprint, device and ROOT status"), 12, 0xD9FFFFFF);
-            column.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(28)));
-
-            LinearLayout rootCard = new LinearLayout(this);
-            rootCard.setOrientation(LinearLayout.VERTICAL);
-            rootCard.setPadding(dp(16), dp(14), dp(16), dp(14));
-            rootCard.setBackgroundResource(R.drawable.liquid_glass_panel);
-            TextView rootTitle = text("ROOT 检测", 16, 0xff182b54);
-            rootTitle.setTypeface(null, Typeface.BOLD);
-            rootCard.addView(rootTitle, new LinearLayout.LayoutParams(-1, dp(30)));
-            String rootMethod = rootAuthorized
-                    ? "已授权 · libsu RootService / su shell"
-                    : "未授权 · 尚未获取 ROOT 权限";
-            TextView rootValue = text(rootMethod, 14, rootAuthorized ? 0xff16805d : 0xffbd4a4a);
-            rootValue.setPadding(0, dp(4), 0, dp(2));
-            rootCard.addView(rootValue, new LinearLayout.LayoutParams(-1, dp(34)));
-            TextView rootHint = text(rootAuthorized ? "当前可执行需要 ROOT 的分区和刷机操作" : "点击下方重新检测 ROOT 状态", 11, 0xff5d6b84);
-            rootCard.addView(rootHint, new LinearLayout.LayoutParams(-1, dp(24)));
-            LinearLayout.LayoutParams rootLp = new LinearLayout.LayoutParams(-1, -2);
-            rootLp.setMargins(0, dp(8), 0, dp(10));
-            column.addView(rootCard, rootLp);
-
-            LinearLayout grid = new LinearLayout(this);
-            grid.setOrientation(LinearLayout.VERTICAL);
-            grid.addView(checkGlassRow("环境", t("Android " + Build.VERSION.RELEASE + " · API " + Build.VERSION.SDK_INT, "Android " + Build.VERSION.RELEASE + " · API " + Build.VERSION.SDK_INT), "系统版本、ABI、调试状态与网络权限", 0xff2e7d9a), new LinearLayout.LayoutParams(-1, dp(82)));
-            grid.addView(checkGlassRow("指纹", Build.FINGERPRINT == null ? "未知" : Build.FINGERPRINT, "Build 指纹、品牌、制造商与设备标识", 0xff7651b5), new LinearLayout.LayoutParams(-1, dp(82)));
-            grid.addView(checkGlassRow("机型", Build.MANUFACTURER + " " + Build.MODEL, "品牌、产品、设备代号与硬件平台", 0xffb36a2c), new LinearLayout.LayoutParams(-1, dp(82)));
-            column.addView(grid, new LinearLayout.LayoutParams(-1, -2));
-
-            Button full = new Button(this);
-            full.setText(t("运行完整检测", "Run full detection"));
-            full.setAllCaps(false);
-            full.setTextColor(Color.WHITE);
-            full.setBackgroundResource(R.drawable.button_blue);
-            full.setOnClickListener(v -> {
-                Haptics.perform(v);
-                toast(t("检测模块已移至主界面；详细检测将在当前页面安全执行", "Detection now runs in the main page safely"));
-                rootValue.setText(rootAuthorized ? "已授权 · libsu RootService / su shell" : "未授权 · 尚未获取 ROOT 权限");
-            });
-            LinearLayout.LayoutParams fullLp = new LinearLayout.LayoutParams(-1, dp(46));
-            fullLp.setMargins(0, dp(12), 0, dp(8));
-            column.addView(full, fullLp);
-            TextView note = text(t("检测信息为辅助参考；受系统权限限制的项目会显示为“受限”，不会影响 APP 其他功能。", "Detection is informational; restricted system fields are marked limited and never block the app."), 11, 0xD9FFFFFF);
-            note.setPadding(dp(4), dp(6), dp(4), dp(8));
-            column.addView(note, new LinearLayout.LayoutParams(-1, -2));
-            scroll.addView(column, new ScrollView.LayoutParams(-1, -2));
-            return scroll;
-        }
-
-        private View checkGlassRow(String label, String value, String detail, int accent) {
-            LinearLayout card = new LinearLayout(this);
-            card.setGravity(Gravity.CENTER_VERTICAL);
-            card.setPadding(dp(14), dp(8), dp(12), dp(8));
-            card.setBackgroundResource(R.drawable.liquid_glass_panel);
-            TextView mark = text("◆", 18, accent);
-            mark.setGravity(Gravity.CENTER);
-            card.addView(mark, new LinearLayout.LayoutParams(dp(36), dp(52)));
-            LinearLayout words = new LinearLayout(this);
-            words.setOrientation(LinearLayout.VERTICAL);
-            words.setPadding(dp(10), 0, 0, 0);
-            TextView heading = text(label + "  " + value, 14, 0xff182b54);
-            heading.setTypeface(null, Typeface.BOLD);
-            heading.setMaxLines(1);
-            heading.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            words.addView(heading, new LinearLayout.LayoutParams(-1, dp(28)));
-            TextView desc = text(detail, 11, 0xff5d6b84);
-            words.addView(desc, new LinearLayout.LayoutParams(-1, dp(24)));
-            card.addView(words, new LinearLayout.LayoutParams(0, -1, 1f));
-            card.setOnClickListener(v -> Haptics.perform(v));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(74));
-            lp.setMargins(0, 0, 0, dp(8));
-            card.setLayoutParams(lp);
-            return card;
-        }
-
         private void selectTab(int tab) {
              if (tab < 0 || tab > 4 || pageHost == null) return;
              Haptics.perform(getWindow().getDecorView());
              if (tab == currentTab) {
-                 if (tab == 0) pageHost.getChildAt(0).scrollTo(0, 0);
-                 if (tab == 1) scrollToTop();
-                // v3.10.0：DNA 页内嵌设置模式时，再点 DNA 标签返回 DNA 主页
-                 if (tab == 2 && dnaSettingsMode) {
+                 if (tab == 0) scrollToTop();  // DSU页滚动到顶部
+                 if (tab == 4) pageHost.getChildAt(0).scrollTo(0, 0);  // 检测页滚动到顶部
+                // v3.51.67：DNA 页内嵌设置模式时，再点 DNA 标签返回 DNA 主页
+                 if (tab == 1 && dnaSettingsMode) {
                      dnaSettingsMode = false;
                      swapTabOne();
                      return;
@@ -1121,7 +1072,7 @@ public class MainActivity extends BaseActivity {
             }
             dnaSettingsMode = false;
             View next;
-            if (tab == 4) {
+            if (tab == 3) {
                 // OTG 页：内容可滚动 + FAB 悬浮在视口右下角（不随内容滚动）
                 FrameLayout otgRoot = new FrameLayout(this);
                 ScrollView pageScroll = new ScrollView(this);
@@ -1139,8 +1090,19 @@ public class MainActivity extends BaseActivity {
 
                 next = otgRoot;
             } else {
-                next = tab == 0 ? buildCheckPage() : tab == 1 ? homeScroll : tab == 2 ? buildDnaPage() : tab == 3 ? buildRomPage() : buildMorePage();
-                if (tab != 0 && tab != 1) {
+                // v3.51.73：明确每个tab的页面映射
+                switch (tab) {
+                    case 0: next = homeScroll; break;
+                    case 1: next = buildDnaPage(); break;
+                    case 2: next = buildRomPage(); break;
+                    case 4: 
+                        // v3.51.80: 检测页异步加载，先显示加载中
+                        next = buildCheckPageLoading(); 
+                        break;
+                    default: next = homeScroll; break;
+                }
+                // DNA和ROM页需要包装ScrollView，检测页(tab=4)已经是ScrollView不需要包装
+                if (tab == 1 || tab == 2) {
                     ScrollView pageScroll = new ScrollView(this);
                     pageScroll.setFillViewport(true);
                     pageScroll.addView(next);
@@ -1152,7 +1114,7 @@ public class MainActivity extends BaseActivity {
            pageHost.addView(next, nextParams);
           // 每个页面不同的神级炸裂动画效果
           next.setAlpha(0f);
-          if (tab == 1) {
+          if (tab == 0) {
               // DSU 页：从左侧滑入 + 3D翻转
               next.setTranslationX(-dp(300));
               next.setRotationY(90f);
@@ -1163,7 +1125,7 @@ public class MainActivity extends BaseActivity {
                   .setDuration(450)
                   .setInterpolator(new android.view.animation.DecelerateInterpolator(1.8f))
                   .start();
-          } else if (tab == 2) {
+          } else if (tab == 1) {
               // DNA 页：从上方落下 + Z轴旋转
               next.setTranslationY(-dp(400));
               next.setRotation(180f);
@@ -1178,7 +1140,7 @@ public class MainActivity extends BaseActivity {
                   .setDuration(500)
                   .setInterpolator(new android.view.animation.OvershootInterpolator(1.2f))
                   .start();
-          } else if (tab == 3) {
+          } else if (tab == 2) {
               // ROM页：从中心爆炸放大 + Y轴翻转
               next.setScaleX(0.1f);
               next.setScaleY(0.1f);
@@ -1191,7 +1153,7 @@ public class MainActivity extends BaseActivity {
                   .setDuration(480)
                   .setInterpolator(new android.view.animation.DecelerateInterpolator(2.2f))
                   .start();
-          } else if (tab == 4) {
+          } else if (tab == 3) {
               // OTG页：从底部弹起 + 弹性缩放
               next.setTranslationY(dp(400));
               next.setScaleX(0.7f);
@@ -1204,33 +1166,906 @@ public class MainActivity extends BaseActivity {
                   .setDuration(470)
                   .setInterpolator(new android.view.animation.OvershootInterpolator(1.5f))
                   .start();
-          } else if (tab == 0) {
-              // 检测页：在主界面内淡入，保持液态玻璃背景连续。
+          } else if (tab == 4) {
+              // 检测页：淡入缩放
               next.setScaleX(0.98f);
               next.setScaleY(0.98f);
               next.animate().alpha(1f).scaleX(1f).scaleY(1f)
                       .setDuration(280L)
                       .setInterpolator(new android.view.animation.DecelerateInterpolator(1.3f))
                       .start();
-          } else {
-              // 更多页：从右侧弹入 + X轴翻转
-              next.setTranslationX(dp(300));
-              next.setRotationX(-90f);
-              next.setScaleY(0.5f);
-              next.animate()
-                  .alpha(1f)
-                  .translationX(0f)
-                  .rotationX(0f)
-                  .scaleY(1f)
-                  .setDuration(460)
-                  .setInterpolator(new android.view.animation.DecelerateInterpolator(1.9f))
-                  .start();
           }
           animateNavigation(tab);
            currentTab = tab;
        }
 
-       private void refreshMorePage() {
+        /** v3.51.80: 检测页加载中占位符 */
+        private View buildCheckPageLoading() {
+            FrameLayout loading = new FrameLayout(this);
+            loading.setBackgroundResource(R.drawable.panel_bg);
+            
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setGravity(Gravity.CENTER);
+            content.setPadding(dp(20), dp(100), dp(20), dp(100));
+            
+            TextView loadingText = text("正在读取设备信息...", 16, 0xff999999);
+            loadingText.setGravity(Gravity.CENTER);
+            content.addView(loadingText);
+            
+            loading.addView(content, new FrameLayout.LayoutParams(-1, -1));
+            
+            // 后台异步构建真实页面
+            new Thread(() -> {
+                View checkPage = buildCheckPage();
+                runOnUiThread(() -> {
+                    if (pageHost != null && pageHost.getChildCount() > 0) {
+                        View current = pageHost.getChildAt(0);
+                        if (current == loading) {
+                            // 只有当前还是loading页面时才替换
+                            pageHost.removeAllViews();
+                            pageHost.addView(checkPage, new FrameLayout.LayoutParams(-1, -1));
+                        }
+                    }
+                });
+            }).start();
+            
+            return loading;
+        }
+        
+        /** v3.51.69：检测页 - 统一信息展示页面，无Tab切换 */
+        private View buildCheckPage() {
+            ScrollView scroll = new ScrollView(this);
+            scroll.setFillViewport(false);
+            scroll.setClipToPadding(false);
+            scroll.setPadding(0, dp(8), 0, dp(92));
+            // v3.51.93: 检测页使用渐变背景
+            scroll.setBackgroundResource(R.drawable.check_page_gradient_bg);
+            
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setPadding(dp(16), dp(12), dp(16), dp(12));
+            
+             // v3.51.95: 设备信息卡片（添加跳转到关于手机）
+             LinearLayout deviceCard = buildWhiteCard("设备", android.R.drawable.ic_menu_info_details, android.provider.Settings.ACTION_DEVICE_INFO_SETTINGS);
+            
+            // v3.51.84: 设备名称 + 品牌Logo
+            LinearLayout deviceHeader = new LinearLayout(this);
+            deviceHeader.setOrientation(LinearLayout.HORIZONTAL);
+            deviceHeader.setGravity(Gravity.CENTER_VERTICAL);
+            
+            // 品牌Logo
+            int brandLogoId = getBrandLogoResource();
+            if (brandLogoId != 0) {
+                ImageView brandLogo = new ImageView(this);
+                brandLogo.setImageResource(brandLogoId);
+                brandLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(dp(60), dp(60));
+                logoLp.rightMargin = dp(12);
+                deviceHeader.addView(brandLogo, logoLp);
+            }
+            
+            // 设备名称（大字标题）- v3.51.76: 使用真实市场名称
+            String deviceName = getMarketName();
+            TextView deviceTitle = text(deviceName, 18, 0xff16805d);
+            deviceTitle.setTypeface(null, Typeface.BOLD);
+            deviceHeader.addView(deviceTitle, new LinearLayout.LayoutParams(0, -2, 1));
+            
+            deviceCard.addView(deviceHeader);
+            addVerticalSpace(deviceCard, 12);
+           
+           addInfoRow(deviceCard, "型号", android.os.Build.MODEL, "", 0xff333333);
+           addInfoRow(deviceCard, "产品", android.os.Build.PRODUCT, "", 0xff333333);
+           addInfoRow(deviceCard, "设备", android.os.Build.DEVICE, "", 0xff333333);
+           addInfoRow(deviceCard, "主板", android.os.Build.BOARD, "", 0xff333333);
+           addInfoRow(deviceCard, "硬件", android.os.Build.HARDWARE, "", 0xff333333);
+           addInfoRow(deviceCard, "制造商", android.os.Build.MANUFACTURER, "", 0xff333333);
+           
+           // 基带版本
+           String baseband = getBasebandVersion();
+           addInfoRow(deviceCard, "基带", baseband, "", 0xff333333);
+           
+           content.addView(deviceCard, new LinearLayout.LayoutParams(-1, -2));
+           addVerticalSpace(content, 12);
+            
+             // v3.51.95: 操作系统卡片（跳转到关于手机）
+             LinearLayout osCard = buildWhiteCard("操作系统", android.R.drawable.ic_menu_agenda, android.provider.Settings.ACTION_DEVICE_INFO_SETTINGS);
+           addInfoRow(osCard, "Android 版本", "Android " + android.os.Build.VERSION.RELEASE, "", 0xff333333);
+           String securityPatch = android.os.Build.VERSION.SECURITY_PATCH;
+           addInfoRow(osCard, "安全修补程序级别", securityPatch, "", 0xff333333);
+           String versionNumber = android.os.Build.DISPLAY;
+           addInfoRow(osCard, "版本号", versionNumber, "", 0xff333333);
+           String kernelVersion = System.getProperty("os.version", "未知");
+           addInfoRow(osCard, "内核", kernelVersion, "", 0xff333333);
+           String arch = System.getProperty("os.arch", "未知");
+           String bits = arch.contains("64") ? "64-bit" : "32-bit";
+           addInfoRow(osCard, "架构", arch + " (" + bits + ")", "", 0xff333333);
+           String abi = android.os.Build.SUPPORTED_ABIS.length > 0 ? android.os.Build.SUPPORTED_ABIS[0] : "unknown";
+           addInfoRow(osCard, "指令集架构", abi, "", 0xff333333);
+           String activeSlot = getActiveSlot();
+           addInfoRow(osCard, "活动插槽", activeSlot, "", 0xff333333);
+            content.addView(osCard, new LinearLayout.LayoutParams(-1, -2));
+            addVerticalSpace(content, 12);
+            
+             // v3.51.96: 指纹信息卡片（跳转到指纹解锁设置）
+             LinearLayout fingerprintCard = buildWhiteCard("指纹", android.R.drawable.ic_menu_info_details, "android.settings.FINGERPRINT_ENROLL");
+            String fingerprint = android.os.Build.FINGERPRINT;
+            addInfoRow(fingerprintCard, "完整指纹", fingerprint, "", 0xff333333);
+            content.addView(fingerprintCard, new LinearLayout.LayoutParams(-1, -2));
+            addVerticalSpace(content, 12);
+             
+             // v3.51.96: 更新信息卡片（跳转到关于手机，里面有系统更新选项）
+             LinearLayout updateCard = buildWhiteCard("更新", android.R.drawable.ic_menu_rotate, android.provider.Settings.ACTION_DEVICE_INFO_SETTINGS);
+            addInfoRow(updateCard, "当前版本", "Android " + android.os.Build.VERSION.RELEASE, "", 0xff333333);
+            addInfoRow(updateCard, "首批发行", getFirstApiLevel(), "", 0xff333333);
+            
+            boolean treble = isTrebleSupported();
+            addInfoRow(updateCard, "Project Treble", treble ? "支持" : "不支持", "", treble ? 0xff16805d : 0xff999999);
+            
+            addInfoRow(updateCard, "Project Mainline", android.os.Build.VERSION.SDK_INT >= 29 ? "支持" : "不支持", "", 
+                android.os.Build.VERSION.SDK_INT >= 29 ? 0xff16805d : 0xff999999);
+            
+            boolean dynamicPartitions = isDynamicPartitionsSupported();
+            addInfoRow(updateCard, "动态分区", dynamicPartitions ? "支持" : "不支持", "", dynamicPartitions ? 0xff16805d : 0xff999999);
+            
+            boolean seamlessUpdate = isSeamlessUpdateSupported();
+            addInfoRow(updateCard, "无缝更新", seamlessUpdate ? "支持" : "不支持", "", seamlessUpdate ? 0xff16805d : 0xff999999);
+            
+            String activeSlot2 = getActiveSlot();
+            addInfoRow(updateCard, "活动插槽", activeSlot2, "", 0xff333333);
+            
+            content.addView(updateCard, new LinearLayout.LayoutParams(-1, -2));
+            addVerticalSpace(content, 12);
+             
+             // v3.51.95: 安全卡片（跳转到安全设置）
+             LinearLayout securityCard = buildWhiteCard("安全", android.R.drawable.ic_lock_lock, android.provider.Settings.ACTION_SECURITY_SETTINGS);
+            addInfoRow(securityCard, "Root权限", rootAuthorized ? "设备已获得Root权限" : "未检测到Root", "", rootAuthorized ? 0xffF39C12 : 0xff16805d);
+            
+            // v3.51.78: Root方法异步检测，避免卡顿
+            if (rootAuthorized) {
+                if (cachedRootMethod != null) {
+                    // 已有缓存，直接显示
+                    addInfoRow(securityCard, "Root方法", cachedRootMethod, "", 0xff333333);
+                } else {
+                    // 先显示"检测中"，后台异步检测
+                    LinearLayout rootMethodRow = new LinearLayout(this);
+                    rootMethodRow.setOrientation(LinearLayout.HORIZONTAL);
+                    LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+                    rowLp.topMargin = dp(8);
+                    
+                    TextView labelView = text("Root方法", 13, 0xff757575);
+                    labelView.setTypeface(null, Typeface.BOLD);
+                    labelView.setMaxLines(2);
+                    LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(dp(100), -2);
+                    labelLp.rightMargin = dp(8);
+                    rootMethodRow.addView(labelView, labelLp);
+                    
+                    TextView valueView = text("检测中...", 13, 0xff999999);
+                    valueView.setGravity(Gravity.END);
+                    LinearLayout valueBox = new LinearLayout(this);
+                    valueBox.setOrientation(LinearLayout.VERTICAL);
+                    valueBox.setGravity(Gravity.END);
+                    valueBox.addView(valueView, new LinearLayout.LayoutParams(-1, -2));
+                    rootMethodRow.addView(valueBox, new LinearLayout.LayoutParams(0, -2, 1));
+                    
+                    securityCard.addView(rootMethodRow, rowLp);
+                    
+                    // 后台异步检测
+                    new Thread(() -> {
+                        String method = detectRootMethod();
+                        runOnUiThread(() -> {
+                            valueView.setText(method);
+                            valueView.setTextColor(0xff333333);
+                        });
+                    }).start();
+                }
+            }
+            
+            String selinux = getSELinuxStatus();
+           addInfoRow(securityCard, "SELinux", selinux, "", selinux.contains("Enforcing") ? 0xff16805d : 0xffF39C12);
+           String avbStatus = getAVBStatus();
+           addInfoRow(securityCard, "Verified Boot (AVB)", avbStatus, "", avbStatus.contains("绿色") || avbStatus.contains("Green") ? 0xff16805d : 0xffF39C12);
+           String bootloaderLocked = getBootloaderLockStatus();
+           addInfoRow(securityCard, "Bootloader锁定", bootloaderLocked, "", bootloaderLocked.contains("已锁定") ? 0xff16805d : 0xffF39C12);
+           String bootloader = android.os.Build.BOOTLOADER;
+           addInfoRow(securityCard, "Bootloader版本", bootloader.isEmpty() ? "未知" : bootloader, "", 0xff333333);
+            content.addView(securityCard, new LinearLayout.LayoutParams(-1, -2));
+            addVerticalSpace(content, 12);
+            
+             // v3.51.95: 处理器卡片（没有直接对应的系统设置，使用关于手机）
+             LinearLayout cpuCard = buildWhiteCard("处理器", android.R.drawable.ic_menu_manage, android.provider.Settings.ACTION_DEVICE_INFO_SETTINGS);
+            
+            // CPU名称和Logo区域
+            LinearLayout cpuHeader = new LinearLayout(this);
+            cpuHeader.setOrientation(LinearLayout.HORIZONTAL);
+            cpuHeader.setGravity(Gravity.CENTER_VERTICAL);
+            
+            // v3.51.81: 使用真实品牌Logo
+            int logoResId = getCpuLogoResource();
+            if (logoResId != 0) {
+                ImageView logoView = new ImageView(this);
+                logoView.setImageResource(logoResId);
+                logoView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(dp(80), dp(80));
+                logoLp.rightMargin = dp(16);
+                cpuHeader.addView(logoView, logoLp);
+            } else {
+                // 备用：灰色占位块
+                View logoPlaceholder = new View(this);
+                GradientDrawable logoBg = new GradientDrawable();
+                logoBg.setColor(0xFF333333);
+                logoBg.setCornerRadius(dp(8));
+                logoPlaceholder.setBackground(logoBg);
+                LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(dp(80), dp(80));
+                logoLp.rightMargin = dp(16);
+                cpuHeader.addView(logoPlaceholder, logoLp);
+            }
+            
+            // v3.51.81: 使用SoC完整名称
+            String cpuName = getSocFullName();
+            TextView cpuNameView = text(cpuName, 20, 0xff16805d);
+            cpuNameView.setTypeface(null, Typeface.BOLD);
+            cpuHeader.addView(cpuNameView, new LinearLayout.LayoutParams(0, -2, 1));
+            
+            cpuCard.addView(cpuHeader);
+            addVerticalSpace(cpuCard, 12);
+            
+            // 三个胶囊标签
+            LinearLayout chipRow = new LinearLayout(this);
+            chipRow.setOrientation(LinearLayout.HORIZONTAL);
+            
+            // v3.51.81: 使用真实制程工艺
+            String fab = getSocFab();
+            chipRow.addView(buildChip(fab));
+            
+            // 核心数
+            int cores = Runtime.getRuntime().availableProcessors();
+            chipRow.addView(buildChip(cores + " 核心"));
+            
+            // 位宽
+            String cpuBits = System.getProperty("os.arch", "").contains("64") ? "64-bit" : "32-bit";
+            chipRow.addView(buildChip(cpuBits));
+            
+            cpuCard.addView(chipRow);
+            addVerticalSpace(cpuCard, 12);
+            
+            // CPU配置区域（灰色背景）
+            LinearLayout cpuConfigBg = new LinearLayout(this);
+            cpuConfigBg.setOrientation(LinearLayout.VERTICAL);
+            cpuConfigBg.setPadding(dp(12), dp(10), dp(12), dp(10));
+            cpuConfigBg.setBackgroundColor(0xFFF5F5F5);
+            GradientDrawable configBg = new GradientDrawable();
+            configBg.setColor(0xFFF5F5F5);
+            configBg.setCornerRadius(dp(8));
+            cpuConfigBg.setBackground(configBg);
+            
+            TextView cpuConfigTitle = text("CPU配置", 13, 0xff999999);
+            cpuConfigBg.addView(cpuConfigTitle);
+            addVerticalSpace(cpuConfigBg, 6);
+            
+            // CPU核心配置（简化版，因为无法读取实际频率）
+            addCpuCore(cpuConfigBg, 0xff16805d, "性能核心 ×" + (cores > 4 ? cores-2 : cores/2), "高频");
+            addVerticalSpace(cpuConfigBg, 4);
+            addCpuCore(cpuConfigBg, 0xff4C8EF5, "效率核心 ×" + (cores > 4 ? 2 : cores/2), "低频");
+            
+            cpuCard.addView(cpuConfigBg, new LinearLayout.LayoutParams(-1, -2));
+            addVerticalSpace(cpuCard, 12);
+            
+            // 左右两列信息
+            LinearLayout twoColRow1 = new LinearLayout(this);
+            twoColRow1.setOrientation(LinearLayout.HORIZONTAL);
+            
+            LinearLayout leftCol1 = new LinearLayout(this);
+            leftCol1.setOrientation(LinearLayout.VERTICAL);
+            TextView label1 = text("供应商", 13, 0xff999999);
+            // v3.51.81: 使用SoC数据库的供应商信息
+            TextView value1 = text(getSocVendor(), 15, 0xff333333);
+            value1.setTypeface(null, Typeface.BOLD);
+            leftCol1.addView(label1);
+            leftCol1.addView(value1);
+            
+            LinearLayout rightCol1 = new LinearLayout(this);
+            rightCol1.setOrientation(LinearLayout.VERTICAL);
+            rightCol1.setGravity(Gravity.END);
+            TextView label2 = text("硬件", 13, 0xff999999);
+            label2.setGravity(Gravity.END);
+            TextView value2 = text(android.os.Build.HARDWARE, 15, 0xff333333);
+            value2.setTypeface(null, Typeface.BOLD);
+            value2.setGravity(Gravity.END);
+            rightCol1.addView(label2);
+            rightCol1.addView(value2);
+            
+            twoColRow1.addView(leftCol1, new LinearLayout.LayoutParams(0, -2, 1));
+            twoColRow1.addView(rightCol1, new LinearLayout.LayoutParams(0, -2, 1));
+            cpuCard.addView(twoColRow1);
+            addVerticalSpace(cpuCard, 12);
+            
+            // 第二行
+            LinearLayout twoColRow2 = new LinearLayout(this);
+            twoColRow2.setOrientation(LinearLayout.HORIZONTAL);
+            
+            LinearLayout leftCol2 = new LinearLayout(this);
+            leftCol2.setOrientation(LinearLayout.VERTICAL);
+            TextView label3 = text("架构", 13, 0xff999999);
+            TextView value3 = text(System.getProperty("os.arch", "未知"), 15, 0xff333333);
+            value3.setTypeface(null, Typeface.BOLD);
+            leftCol2.addView(label3);
+            leftCol2.addView(value3);
+            
+            LinearLayout rightCol2 = new LinearLayout(this);
+            rightCol2.setOrientation(LinearLayout.VERTICAL);
+            rightCol2.setGravity(Gravity.END);
+            TextView label4 = text("ABI", 13, 0xff999999);
+            label4.setGravity(Gravity.END);
+            String cpuAbi = android.os.Build.SUPPORTED_ABIS.length > 0 ? android.os.Build.SUPPORTED_ABIS[0] : "unknown";
+            TextView value4 = text(cpuAbi + " (" + cpuBits + ")", 15, 0xff333333);
+            value4.setTypeface(null, Typeface.BOLD);
+            value4.setGravity(Gravity.END);
+            rightCol2.addView(label4);
+            rightCol2.addView(value4);
+            
+            twoColRow2.addView(leftCol2, new LinearLayout.LayoutParams(0, -2, 1));
+            twoColRow2.addView(rightCol2, new LinearLayout.LayoutParams(0, -2, 1));
+            cpuCard.addView(twoColRow2);
+            addVerticalSpace(cpuCard, 12);
+            
+            // 第三行
+            LinearLayout twoColRow3 = new LinearLayout(this);
+            twoColRow3.setOrientation(LinearLayout.HORIZONTAL);
+            
+            LinearLayout leftCol3 = new LinearLayout(this);
+            leftCol3.setOrientation(LinearLayout.VERTICAL);
+            TextView label5 = text("支持的ABIs", 13, 0xff999999);
+            String[] allAbis = android.os.Build.SUPPORTED_ABIS;
+            String abisText = allAbis.length > 0 ? allAbis[0] : "unknown";
+            TextView value5 = text(abisText, 15, 0xff333333);
+            value5.setTypeface(null, Typeface.BOLD);
+            leftCol3.addView(label5);
+            leftCol3.addView(value5);
+            
+            LinearLayout rightCol3 = new LinearLayout(this);
+            rightCol3.setOrientation(LinearLayout.VERTICAL);
+            rightCol3.setGravity(Gravity.END);
+            TextView label6 = text("调频器", 13, 0xff999999);
+            label6.setGravity(Gravity.END);
+            TextView value6 = text("walt", 15, 0xff333333);
+            value6.setTypeface(null, Typeface.BOLD);
+            value6.setGravity(Gravity.END);
+            rightCol3.addView(label6);
+            rightCol3.addView(value6);
+            
+            twoColRow3.addView(leftCol3, new LinearLayout.LayoutParams(0, -2, 1));
+            twoColRow3.addView(rightCol3, new LinearLayout.LayoutParams(0, -2, 1));
+            cpuCard.addView(twoColRow3);
+            
+            content.addView(cpuCard, new LinearLayout.LayoutParams(-1, -2));
+            addVerticalSpace(content, 12);
+            
+            // 内存卡片
+            // v3.51.96: 内存卡片（跳转到应用管理，查看内存使用）
+            LinearLayout memCard = buildWhiteCard("内存", android.R.drawable.ic_menu_sort_by_size, android.provider.Settings.ACTION_APPLICATION_SETTINGS);
+           try {
+               android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+               android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+               am.getMemoryInfo(mi);
+               long total = mi.totalMem;
+               long avail = mi.availMem;
+               long used = total - avail;
+               
+               addInfoRow(memCard, "大小", formatBytes(total), "", 0xff333333);
+               addVerticalSpace(memCard, 8);
+               
+               LinearLayout progressBar = buildProgressBar(used, total, 0xff16805d);
+               memCard.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(16)));
+               
+               addVerticalSpace(memCard, 6);
+               
+               LinearLayout legend = new LinearLayout(this);
+               legend.setOrientation(LinearLayout.HORIZONTAL);
+               legend.setGravity(Gravity.CENTER_VERTICAL);
+               
+               View usedDot = new View(this);
+               GradientDrawable usedDrawable = new GradientDrawable();
+               usedDrawable.setShape(GradientDrawable.OVAL);
+               usedDrawable.setColor(0xff16805d);
+               usedDot.setBackground(usedDrawable);
+               legend.addView(usedDot, new LinearLayout.LayoutParams(dp(8), dp(8)));
+               
+               TextView usedText = text(" 已用 " + formatBytes(used), 11, 0xff757575);
+               legend.addView(usedText);
+               
+               View availDot = new View(this);
+               GradientDrawable availDrawable = new GradientDrawable();
+               availDrawable.setShape(GradientDrawable.OVAL);
+               availDrawable.setColor(0xFFE0E0E0);
+               availDot.setBackground(availDrawable);
+               LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
+               dotLp.leftMargin = dp(16);
+               legend.addView(availDot, dotLp);
+               
+               TextView availText = text(" 可用 " + formatBytes(avail), 11, 0xff757575);
+               legend.addView(availText);
+               
+               memCard.addView(legend);
+           } catch (Exception e) {
+               addInfoRow(memCard, "读取失败", e.getMessage(), "", 0xffF39C12);
+           }
+           content.addView(memCard, new LinearLayout.LayoutParams(-1, -2));
+           addVerticalSpace(content, 12);
+           
+            // 存储卡片
+            // v3.51.95: 存储卡片（跳转到存储设置）
+            LinearLayout storageCard = buildWhiteCard("存储", android.R.drawable.ic_menu_save, android.provider.Settings.ACTION_INTERNAL_STORAGE_SETTINGS);
+           try {
+               java.io.File dataDir = android.os.Environment.getDataDirectory();
+               android.os.StatFs dataStat = new android.os.StatFs(dataDir.getPath());
+               long dataTotal = dataStat.getTotalBytes();
+               long dataAvail = dataStat.getAvailableBytes();
+               long dataUsed = dataTotal - dataAvail;
+               
+               addInfoRow(storageCard, "内部存储", formatBytes(dataTotal), "", 0xff333333);
+               addVerticalSpace(storageCard, 8);
+               
+               LinearLayout dataBar = buildProgressBar(dataUsed, dataTotal, 0xff4C8EF5);
+               storageCard.addView(dataBar, new LinearLayout.LayoutParams(-1, dp(16)));
+               
+               addVerticalSpace(storageCard, 6);
+               
+               TextView dataInfo = text("已用 " + formatBytes(dataUsed) + " / 可用 " + formatBytes(dataAvail), 11, 0xff757575);
+               storageCard.addView(dataInfo);
+           } catch (Exception e) {
+               addInfoRow(storageCard, "读取失败", e.getMessage(), "", 0xffF39C12);
+           }
+           content.addView(storageCard, new LinearLayout.LayoutParams(-1, -2));
+           addVerticalSpace(content, 12);
+           
+            // 屏幕卡片
+            // v3.51.95: 屏幕卡片（跳转到显示设置）
+            LinearLayout screenCard = buildWhiteCard("屏幕", android.R.drawable.ic_menu_view, android.provider.Settings.ACTION_DISPLAY_SETTINGS);
+           populateScreenInfo(screenCard);
+           content.addView(screenCard, new LinearLayout.LayoutParams(-1, -2));
+           addVerticalSpace(content, 12);
+           
+            // 运行时卡片
+            // v3.51.95: 运行时卡片（跳转到应用管理）
+            LinearLayout runtimeCard = buildWhiteCard("运行时", android.R.drawable.ic_menu_preferences, android.provider.Settings.ACTION_APPLICATION_SETTINGS);
+           addInfoRow(runtimeCard, "虚拟机", "ART", "", 0xff333333);
+           addInfoRow(runtimeCard, "ABI", android.os.Build.SUPPORTED_ABIS.length > 0 ? android.os.Build.SUPPORTED_ABIS[0] : "unknown", "", 0xff333333);
+           boolean debuggable = (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+           addInfoRow(runtimeCard, "调试", debuggable ? "可调试" : "已禁用", "", debuggable ? 0xffF39C12 : 0xff16805d);
+           content.addView(runtimeCard, new LinearLayout.LayoutParams(-1, -2));
+           addVerticalSpace(content, 12);
+           
+            // DRM卡片
+            // v3.51.95: DRM卡片（跳转到关于手机）
+            LinearLayout drmCard = buildWhiteCard("DRM", android.R.drawable.ic_menu_slideshow, android.provider.Settings.ACTION_DEVICE_INFO_SETTINGS);
+           addInfoRow(drmCard, "Widevine", getWidevineLevel(), "", 0xff16805d);
+           addInfoRow(drmCard, "供应商", "Google", "", 0xff333333);
+           addInfoRow(drmCard, "版本", getWidevineVersion(), "", 0xff333333);
+           content.addView(drmCard, new LinearLayout.LayoutParams(-1, -2));
+           
+           scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
+           return scroll;
+       }
+        
+        // 检测页 Tab 手势处理（完全复制 OTG Tab 实现）
+        
+        
+        // 辅助方法：构建白色卡片
+        private LinearLayout buildWhiteCard(String title) {
+            return buildWhiteCard(title, 0, null);
+        }
+        
+        // v3.51.78: 带图标的卡片
+        private LinearLayout buildWhiteCard(String title, int iconResId) {
+            return buildWhiteCard(title, iconResId, null);
+        }
+        
+        // v3.51.95: 带图标和设置按钮的卡片
+        private LinearLayout buildWhiteCard(String title, int iconResId, String settingsAction) {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(16), dp(14), dp(16), dp(14));
+            // v3.51.92: 恢复白色卡片背景
+            card.setBackgroundResource(R.drawable.white_card_bg);
+            
+            // 标题行（图标 + 文字 + 设置按钮）
+            LinearLayout titleRow = new LinearLayout(this);
+            titleRow.setOrientation(LinearLayout.HORIZONTAL);
+            titleRow.setGravity(Gravity.CENTER_VERTICAL);
+            
+            if (iconResId != 0) {
+                ImageView icon = new ImageView(this);
+                icon.setImageResource(iconResId);
+                // v3.51.91: 标题图标改为深蓝色
+                icon.setColorFilter(0xff2C5F7C);
+                LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(20), dp(20));
+                iconLp.rightMargin = dp(8);
+                titleRow.addView(icon, iconLp);
+            }
+            
+            // v3.51.91: 标题颜色改为深蓝色
+            TextView titleView = text(title, 16, 0xff2C5F7C);
+            titleView.setTypeface(null, Typeface.BOLD);
+            LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1);
+            titleRow.addView(titleView, titleLp);
+            
+            // v3.51.95: 添加设置图标按钮
+            if (settingsAction != null) {
+                ImageView settingsIcon = new ImageView(this);
+                settingsIcon.setImageResource(android.R.drawable.ic_menu_preferences);
+                settingsIcon.setColorFilter(0xff2C5F7C);
+                settingsIcon.setPadding(dp(8), dp(8), dp(8), dp(8));
+                LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(dp(36), dp(36));
+                settingsIcon.setOnClickListener(v -> openSystemSettings(settingsAction));
+                titleRow.addView(settingsIcon, settingsLp);
+            }
+            
+            card.addView(titleRow);
+            addVerticalSpace(card, 10);
+            
+            return card;
+        }
+        
+        // v3.51.95: 打开系统设置页面
+        private void openSystemSettings(String action) {
+            try {
+                Intent intent = new Intent(action);
+                startActivity(intent);
+            } catch (Exception e) {
+                Toast.makeText(this, "无法打开系统设置", Toast.LENGTH_SHORT).show();
+            }
+        }
+        
+        // 辅助方法：添加信息行
+        private void addInfoRow(LinearLayout parent, String label, String value, String extra, int valueColor) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+            rowLp.topMargin = dp(8);
+            
+            // v3.51.91: 标签改为深灰蓝色
+            TextView labelView = text(label, 13, 0xff5A7A8C);
+            labelView.setTypeface(null, Typeface.BOLD);
+            labelView.setMaxLines(2);
+            LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(dp(100), -2);
+            labelLp.rightMargin = dp(8);
+            row.addView(labelView, labelLp);
+            
+            // v3.51.76: 内容区域占据剩余空间，自动换行
+            LinearLayout valueBox = new LinearLayout(this);
+            valueBox.setOrientation(LinearLayout.VERTICAL);
+            valueBox.setGravity(Gravity.END);
+            
+            // v3.51.91: 如果valueColor是默认灰色，改为深色
+            int finalValueColor = (valueColor == 0xff333333) ? 0xff1A3A4A : valueColor;
+            TextView valueView = text(value, 13, finalValueColor);
+            valueView.setGravity(Gravity.END | Gravity.TOP);
+            
+            // v3.51.94: 只给value文字添加长按复制
+            valueView.setOnLongClickListener(v -> {
+                android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                android.content.ClipData clip = android.content.ClipData.newPlainText(label, value);
+                clipboard.setPrimaryClip(clip);
+                Toast.makeText(this, "已复制: " + value, Toast.LENGTH_SHORT).show();
+                return true;
+            });
+            
+            // 使用weight=0，MATCH_PARENT填充valueBox宽度
+            valueBox.addView(valueView, new LinearLayout.LayoutParams(-1, -2));
+            
+            if (!extra.isEmpty()) {
+                // v3.51.91: 额外信息改为中灰色
+                TextView extraView = text(extra, 11, 0xff6A8A9C);
+                extraView.setGravity(Gravity.END);
+                
+                // v3.51.94: 额外信息也可以长按复制
+                extraView.setOnLongClickListener(v -> {
+                    android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    android.content.ClipData clip = android.content.ClipData.newPlainText(label, extra);
+                    clipboard.setPrimaryClip(clip);
+                    Toast.makeText(this, "已复制: " + extra, Toast.LENGTH_SHORT).show();
+                    return true;
+                });
+                
+                LinearLayout.LayoutParams extraLp = new LinearLayout.LayoutParams(-1, -2);
+                extraLp.topMargin = dp(2);
+                valueBox.addView(extraView, extraLp);
+            }
+            
+            // valueBox占据剩余空间
+            row.addView(valueBox, new LinearLayout.LayoutParams(0, -2, 1));
+            parent.addView(row, rowLp);
+        }
+        
+        // 辅助方法：构建芯片标签
+        private View buildChip(String text) {
+            TextView chip = new TextView(this);
+            chip.setText(text);
+            chip.setTextSize(11);
+            chip.setTextColor(0xff16805d);
+            chip.setTypeface(null, Typeface.BOLD);
+            chip.setPadding(dp(10), dp(5), dp(10), dp(5));
+            chip.setGravity(Gravity.CENTER);
+            
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(0xFFE8F5E9);
+            bg.setCornerRadius(dp(12));
+            chip.setBackground(bg);
+            
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+            lp.rightMargin = dp(8);
+            chip.setLayoutParams(lp);
+            
+            return chip;
+        }
+        
+        private void addCpuCore(LinearLayout parent, int color, String name, String freq) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            
+            View colorBox = new View(this);
+            GradientDrawable boxBg = new GradientDrawable();
+            boxBg.setColor(color);
+            boxBg.setCornerRadius(dp(2));
+            colorBox.setBackground(boxBg);
+            row.addView(colorBox, new LinearLayout.LayoutParams(dp(12), dp(12)));
+            
+            TextView nameView = text(name, 13, 0xff333333);
+            nameView.setTypeface(null, Typeface.BOLD);
+            LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            nameLp.leftMargin = dp(10);
+            row.addView(nameView, nameLp);
+            
+            TextView freqView = text(freq, 13, 0xff757575);
+            freqView.setGravity(Gravity.END);
+            row.addView(freqView, new LinearLayout.LayoutParams(-2, -2));
+            
+            parent.addView(row);
+        }
+        private void addVerticalSpace(LinearLayout parent, int dp) {
+            View space = new View(this);
+            parent.addView(space, new LinearLayout.LayoutParams(-1, dp(dp)));
+        }
+        
+        private LinearLayout buildCpuCard() {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(16), dp(14), dp(16), dp(14));
+            card.setBackgroundResource(R.drawable.liquid_glass_panel);
+            
+            // 标题
+            LinearLayout header = new LinearLayout(this);
+            header.setOrientation(LinearLayout.HORIZONTAL);
+            TextView title = text("CPU", 16, 0xff16805d);
+            title.setTypeface(null, Typeface.BOLD);
+            header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+            card.addView(header);
+            
+            addVerticalSpace(card, 10);
+            
+            // 架构 + 核心数
+            String abi = android.os.Build.SUPPORTED_ABIS.length > 0 ? android.os.Build.SUPPORTED_ABIS[0] : "unknown";
+            int cores = Runtime.getRuntime().availableProcessors();
+            
+            LinearLayout row1 = new LinearLayout(this);
+            row1.setOrientation(LinearLayout.HORIZONTAL);
+            addInfoPair(row1, "架构", abi);
+            addInfoPair(row1, "核心", cores + " 核");
+            card.addView(row1);
+            
+            addVerticalSpace(card, 8);
+            
+            // 硬件信息
+            LinearLayout row2 = new LinearLayout(this);
+            row2.setOrientation(LinearLayout.HORIZONTAL);
+            addInfoPair(row2, "硬件", android.os.Build.HARDWARE);
+            addInfoPair(row2, "型号", android.os.Build.MODEL);
+            card.addView(row2);
+            
+            return card;
+        }
+        
+        private LinearLayout buildMemoryCard() {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(16), dp(14), dp(16), dp(14));
+            card.setBackgroundResource(R.drawable.liquid_glass_panel);
+            
+            TextView title = text("内存", 16, 0xff16805d);
+            title.setTypeface(null, Typeface.BOLD);
+            card.addView(title);
+            
+            try {
+                android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+                android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+                am.getMemoryInfo(mi);
+                
+                long total = mi.totalMem;
+                long avail = mi.availMem;
+                long used = total - avail;
+                
+                addVerticalSpace(card, 10);
+                
+                // 总大小
+                TextView sizeText = text("大小: " + formatBytes(total), 14, 0xffffffff);
+                card.addView(sizeText);
+                
+                addVerticalSpace(card, 8);
+                
+                // 进度条
+                LinearLayout progressBar = buildProgressBar(used, total, 0xff16805d);
+                card.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(20)));
+                
+                addVerticalSpace(card, 6);
+                
+                // 已用/空闲
+                LinearLayout legend = new LinearLayout(this);
+                legend.setOrientation(LinearLayout.HORIZONTAL);
+                TextView usedText = text("已用 " + formatBytes(used), 12, 0xccffffff);
+                legend.addView(usedText, new LinearLayout.LayoutParams(0, -2, 1f));
+                TextView availText = text("空闲 " + formatBytes(avail), 12, 0xccffffff);
+                availText.setGravity(Gravity.END);
+                legend.addView(availText, new LinearLayout.LayoutParams(0, -2, 1f));
+                card.addView(legend);
+                
+            } catch (Throwable ignored) {}
+            
+            return card;
+        }
+        
+        private LinearLayout buildStorageCard() {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(16), dp(14), dp(16), dp(14));
+            card.setBackgroundResource(R.drawable.liquid_glass_panel);
+            
+            TextView title = text("存储", 16, 0xff16805d);
+            title.setTypeface(null, Typeface.BOLD);
+            card.addView(title);
+            
+            try {
+                java.io.File path = android.os.Environment.getDataDirectory();
+                android.os.StatFs stat = new android.os.StatFs(path.getPath());
+                long blockSize = stat.getBlockSizeLong();
+                long totalBlocks = stat.getBlockCountLong();
+                long availBlocks = stat.getAvailableBlocksLong();
+                long total = totalBlocks * blockSize;
+                long avail = availBlocks * blockSize;
+                long used = total - avail;
+                
+                addVerticalSpace(card, 10);
+                
+                TextView sizeText = text("大小: " + formatBytes(total), 14, 0xffffffff);
+                card.addView(sizeText);
+                
+                addVerticalSpace(card, 8);
+                
+                // 进度条
+                LinearLayout progressBar = buildProgressBar(used, total, 0xff4c8ef5);
+                card.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(20)));
+                
+                addVerticalSpace(card, 6);
+                
+                LinearLayout legend = new LinearLayout(this);
+                legend.setOrientation(LinearLayout.HORIZONTAL);
+                TextView usedText = text("已用 " + formatBytes(used), 12, 0xccffffff);
+                legend.addView(usedText, new LinearLayout.LayoutParams(0, -2, 1f));
+                TextView availText = text("空闲 " + formatBytes(avail), 12, 0xccffffff);
+                availText.setGravity(Gravity.END);
+                legend.addView(availText, new LinearLayout.LayoutParams(0, -2, 1f));
+                card.addView(legend);
+                
+            } catch (Throwable ignored) {}
+            
+            return card;
+        }
+        
+        private LinearLayout buildScreenCard() {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(16), dp(14), dp(16), dp(14));
+            card.setBackgroundResource(R.drawable.liquid_glass_panel);
+            
+            TextView title = text("屏幕", 16, 0xff16805d);
+            title.setTypeface(null, Typeface.BOLD);
+            card.addView(title);
+            
+            addVerticalSpace(card, 10);
+            
+            try {
+                android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+                
+                LinearLayout row1 = new LinearLayout(this);
+                row1.setOrientation(LinearLayout.HORIZONTAL);
+                addInfoPair(row1, "分辨率", dm.widthPixels + " × " + dm.heightPixels);
+                addInfoPair(row1, "密度", dm.densityDpi + " dpi");
+                card.addView(row1);
+                
+            } catch (Throwable ignored) {}
+            
+            return card;
+        }
+        
+        private LinearLayout buildBatteryCard() {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(16), dp(14), dp(16), dp(14));
+            card.setBackgroundResource(R.drawable.liquid_glass_panel);
+            
+            TextView title = text("电池", 16, 0xff16805d);
+            title.setTypeface(null, Typeface.BOLD);
+            card.addView(title);
+            
+            addVerticalSpace(card, 10);
+            
+            try {
+                android.content.IntentFilter filter = new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED);
+                android.content.Intent batteryStatus = registerReceiver(null, filter);
+                if (batteryStatus != null) {
+                    int level = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1);
+                    int scale = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1);
+                    float pct = level * 100 / (float) scale;
+                    
+                    int status = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1);
+                    String statusStr = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ? "充电中" : "放电中";
+                    
+                    LinearLayout row1 = new LinearLayout(this);
+                    row1.setOrientation(LinearLayout.HORIZONTAL);
+                    addInfoPair(row1, "电量", String.format(java.util.Locale.US, "%.0f%%", pct));
+                    addInfoPair(row1, "状态", statusStr);
+                    card.addView(row1);
+                }
+            } catch (Throwable ignored) {}
+            
+            return card;
+        }
+        
+        private void addInfoPair(LinearLayout parent, String label, String value) {
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            box.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+            
+            TextView labelView = text(label, 12, 0xaaffffff);
+            box.addView(labelView);
+            
+            TextView valueView = text(value, 14, 0xffffffff);
+            valueView.setTypeface(null, Typeface.BOLD);
+            LinearLayout.LayoutParams valueLp = new LinearLayout.LayoutParams(-1, -2);
+            valueLp.topMargin = dp(4);
+            box.addView(valueView, valueLp);
+            
+            parent.addView(box);
+        }
+        
+        private LinearLayout buildProgressBar(long used, long total, int color) {
+            LinearLayout bar = new LinearLayout(this);
+            bar.setOrientation(LinearLayout.HORIZONTAL);
+            
+            float usedRatio = used / (float) total;
+            
+            // 已用部分
+            View usedPart = new View(this);
+            GradientDrawable usedBg = new GradientDrawable();
+            usedBg.setColor(color);
+            usedBg.setCornerRadius(dp(10));
+            usedPart.setBackground(usedBg);
+            bar.addView(usedPart, new LinearLayout.LayoutParams(0, -1, usedRatio));
+            
+            // 空闲部分
+            View freePart = new View(this);
+            GradientDrawable freeBg = new GradientDrawable();
+            freeBg.setColor(0x22ffffff);
+            freeBg.setCornerRadius(dp(10));
+            freePart.setBackground(freeBg);
+            LinearLayout.LayoutParams freeLp = new LinearLayout.LayoutParams(0, -1, 1f - usedRatio);
+            freeLp.leftMargin = dp(4);
+            bar.addView(freePart, freeLp);
+            
+            return bar;
+        }
+         private void refreshMorePage() {
           if (pageHost == null) return;
           pageHost.removeAllViews();
           ScrollView pageScroll = new ScrollView(this);
@@ -5356,6 +6191,28 @@ public class MainActivity extends BaseActivity {
           creditParams.setMargins(0, 0, 0, dp(18));
           page.addView(thanksCard, creditParams);
           
+          // v3.51.97：工资工时记账入口
+          LiquidGlassPanel salaryCard = new LiquidGlassPanel(this);
+          salaryCard.setGravity(Gravity.CENTER_VERTICAL);
+          salaryCard.setPadding(dp(14), dp(6), dp(10), dp(6));
+          Button salaryButton = new Button(this);
+          salaryButton.setText("💰  " + t("工资工时记账", "Salary Tracker"));
+          salaryButton.setAllCaps(false);
+          salaryButton.setTextColor(0xff1a3356);
+          salaryButton.setTextSize(15);
+          salaryButton.setTypeface(null, 1);
+          salaryButton.setBackgroundColor(Color.TRANSPARENT);
+          salaryButton.setOnClickListener(v -> {
+              Haptics.perform(v);
+              Intent salaryIntent = new Intent(this, SalaryActivity.class);
+              startActivity(salaryIntent);
+              overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left);
+          });
+          salaryCard.addView(salaryButton, new LinearLayout.LayoutParams(-1, dp(48)));
+          LinearLayout.LayoutParams salaryParams = new LinearLayout.LayoutParams(-1, dp(60));
+          salaryParams.setMargins(0, 0, 0, dp(18));
+          page.addView(salaryCard, salaryParams);
+          
          TextView updateTitle = text(t("更新", "Updates"), 16, Color.rgb(35, 126, 91));
          updateTitle.setTypeface(null, 1);
          updateTitle.setPadding(dp(14), 0, dp(14), 0);
@@ -6617,11 +7474,732 @@ public class MainActivity extends BaseActivity {
         TextView hint = text(t("替换完成后点击“重启到 DSU”使更新后的分区生效。", "Tap \"Reboot to DSU\" after replacement to apply the updated partition."), 12, Color.rgb(110, 118, 135));
         imageManagementPanel.addView(hint, new LinearLayout.LayoutParams(-1, dp(42)));
     }
+    
+    // Enhanced Root Detection - detect KernelSU/Magisk/SuperSU version
+    private String detectRootMethod() {
+        if (!rootAuthorized) return "未检测到Root";
+        
+        // v3.51.75: 使用缓存避免重复执行耗时的shell命令
+        if (cachedRootMethod != null) {
+            return cachedRootMethod;
+        }
+        
+        try {
+            // Check KernelSU
+            com.topjohnwu.superuser.Shell.Result result = com.topjohnwu.superuser.Shell.cmd("ksud -V").exec();
+            if (result.isSuccess() && !result.getOut().isEmpty()) {
+                String output = result.getOut().get(0).trim();
+                if (!output.isEmpty() && !output.contains("not found")) {
+                    cachedRootMethod = "KernelSU v" + output;
+                    return cachedRootMethod;
+                }
+            }
+            
+            // Check Magisk - try both version command and version code
+            result = com.topjohnwu.superuser.Shell.cmd("magisk -v").exec();
+            if (result.isSuccess() && !result.getOut().isEmpty()) {
+                String versionName = result.getOut().get(0).trim();
+                result = com.topjohnwu.superuser.Shell.cmd("magisk -V").exec();
+                if (result.isSuccess() && !result.getOut().isEmpty()) {
+                    String versionCode = result.getOut().get(0).trim();
+                    if (!versionName.isEmpty() && !versionCode.isEmpty()) {
+                        cachedRootMethod = "Magisk " + versionName + " (" + versionCode + ")";
+                        return cachedRootMethod;
+                    }
+                }
+            }
+            
+            // Check APatch
+            result = com.topjohnwu.superuser.Shell.cmd("apd --version").exec();
+            if (result.isSuccess() && !result.getOut().isEmpty()) {
+                String ver = result.getOut().get(0).trim();
+                if (!ver.isEmpty() && !ver.contains("not found")) {
+                    cachedRootMethod = "APatch " + ver;
+                    return cachedRootMethod;
+                }
+            }
+            
+            // Check SuperSU
+            result = com.topjohnwu.superuser.Shell.cmd("su --version").exec();
+            if (result.isSuccess() && !result.getOut().isEmpty()) {
+                String ver = result.getOut().get(0).trim();
+                if (!ver.isEmpty() && !ver.contains("not found")) {
+                    cachedRootMethod = "SuperSU " + ver;
+                    return cachedRootMethod;
+                }
+            }
+            
+            cachedRootMethod = "通用Root (未识别具体方法)";
+            return cachedRootMethod;
+        } catch (Exception e) {
+            cachedRootMethod = "Root已授权 (检测异常)";
+            return cachedRootMethod;
+        }
+    }
+    
+    // Get SELinux status with Chinese translation
+    private String getSELinuxStatus() {
+        try {
+            com.topjohnwu.superuser.Shell.Result result = com.topjohnwu.superuser.Shell.cmd("getenforce").exec();
+            if (result.isSuccess() && !result.getOut().isEmpty()) {
+                String status = result.getOut().get(0).trim();
+                switch (status) {
+                    case "Enforcing":
+                        return "Enforcing (强制模式)";
+                    case "Permissive":
+                        return "Permissive (宽容模式)";
+                    case "Disabled":
+                        return "Disabled (已禁用)";
+                    default:
+                        return status;
+                }
+            }
+        } catch (Exception e) {}
+        return "Unknown (未知)";
+    }
+    
+    // Get AVB (Android Verified Boot) status
+    private String getAVBStatus() {
+        try {
+            // Use reflection to access SystemProperties
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            
+            String avbVersion = (String) getMethod.invoke(null, "ro.boot.avb_version", "");
+            String verityMode = (String) getMethod.invoke(null, "ro.boot.veritymode", "");
+            String verifiedBootState = (String) getMethod.invoke(null, "ro.boot.verifiedbootstate", "");
+            
+            StringBuilder status = new StringBuilder();
+            
+            if (!avbVersion.isEmpty()) {
+                status.append("AVB ").append(avbVersion);
+            } else {
+                status.append("AVB 状态未知");
+            }
+            
+            if (!verifiedBootState.isEmpty()) {
+                switch (verifiedBootState) {
+                    case "green":
+                        status.append(" - 绿色 (完全验证)");
+                        break;
+                    case "yellow":
+                        status.append(" - 黄色 (已解锁)");
+                        break;
+                    case "orange":
+                        status.append(" - 橙色 (自定义系统)");
+                        break;
+                    case "red":
+                        status.append(" - 红色 (验证失败)");
+                        break;
+                    default:
+                        status.append(" - ").append(verifiedBootState);
+                }
+            } else if (!verityMode.isEmpty()) {
+                status.append(" - ").append(verityMode);
+            }
+            
+            return status.toString();
+        } catch (Exception e) {
+            return "AVB 检测失败";
+        }
+    }
+    
+    // Get Bootloader lock status
+    private String getBootloaderLockStatus() {
+        try {
+            // Use reflection to access SystemProperties
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            
+            String unlocked = (String) getMethod.invoke(null, "ro.boot.flash.locked", "");
+            String bootloaderStatus = (String) getMethod.invoke(null, "ro.boot.bootloader", "");
+            
+            if (unlocked.equals("0")) {
+                return "已解锁 (Unlocked)";
+            } else if (unlocked.equals("1")) {
+                return "已锁定 (Locked)";
+            }
+            
+            // Alternative check
+            String verifiedBootState = (String) getMethod.invoke(null, "ro.boot.verifiedbootstate", "");
+            if (verifiedBootState.equals("green")) {
+                return "已锁定 (Locked)";
+            } else if (verifiedBootState.equals("orange") || verifiedBootState.equals("yellow")) {
+                return "已解锁 (Unlocked)";
+            }
+            
+            return "未知";
+        } catch (Exception e) {
+            return "检测失败";
+        }
+    }
+    
+    // Get active slot (A/B partition)
+    private String getActiveSlot() {
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            String slot = (String) getMethod.invoke(null, "ro.boot.slot_suffix", "");
+            if (slot.isEmpty()) {
+                return "单分区 (Non-A/B)";
+            } else {
+                return slot.replace("_", "").toUpperCase();
+            }
+        } catch (Exception e) {
+            return "未知";
+        }
+    }
+    
+    // Get Widevine DRM level
+    private String getWidevineLevel() {
+        try {
+            android.media.MediaDrm drm = new android.media.MediaDrm(new java.util.UUID(0xEDEF8BA979D64ACEL, 0xA3C827DCD51D21EDL));
+            String level = drm.getPropertyString("securityLevel");
+            drm.release();
+            return level;
+        } catch (Exception e) {
+            return "未知";
+        }
+    }
+    
+    // Get Widevine version
+    private String getWidevineVersion() {
+        try {
+            android.media.MediaDrm drm = new android.media.MediaDrm(new java.util.UUID(0xEDEF8BA979D64ACEL, 0xA3C827DCD51D21EDL));
+            String version = drm.getPropertyString("version");
+            drm.release();
+            return version;
+        } catch (Exception e) {
+            return "未知";
+        }
+    }
+    
+    // Get baseband version
+    private String getBasebandVersion() {
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            String baseband = (String) getMethod.invoke(null, "gsm.version.baseband", "");
+            if (baseband.isEmpty()) {
+                // 尝试其他属性
+                baseband = (String) getMethod.invoke(null, "ro.baseband", "");
+            }
+            return baseband.isEmpty() ? "未知" : baseband;
+        } catch (Exception e) {
+            return "未知";
+        }
+    }
+    
+    // v3.51.76: 获取真实机型名称（通过.market.name属性）
+    private String getMarketName() {
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            
+            // 尝试常见的market.name属性
+            String[] marketProps = {
+                "ro.vendor.oplus.market.name",
+                "ro.vivo.market.name",
+                "ro.oppo.market.name",
+                "ro.product.marketname",
+                "ro.product.device.marketname",
+                "ro.miui.ui.version.name"  // 小米MIUI
+            };
+            
+            for (String prop : marketProps) {
+                String marketName = (String) getMethod.invoke(null, prop, "");
+                if (!marketName.isEmpty()) {
+                    return marketName;
+                }
+            }
+            
+            // 如果没有找到market.name，返回 制造商 + 型号
+            return android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL;
+        } catch (Exception e) {
+            return android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL;
+        }
+    }
+    
+    // v3.51.78: 检测Project Treble支持
+    private boolean isTrebleSupported() {
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            String treble = (String) getMethod.invoke(null, "ro.treble.enabled", "false");
+            return "true".equals(treble);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    
+    // v3.51.78: 检测动态分区支持
+    private boolean isDynamicPartitionsSupported() {
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            String dynamic = (String) getMethod.invoke(null, "ro.boot.dynamic_partitions", "false");
+            return "true".equals(dynamic);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    
+    // v3.51.78: 检测无缝更新(A/B分区)支持
+    private boolean isSeamlessUpdateSupported() {
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            String abUpdate = (String) getMethod.invoke(null, "ro.build.ab_update", "false");
+            return "true".equals(abUpdate);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    
+    // v3.51.78: 获取首批发行Android版本
+    private String getFirstApiLevel() {
+        try {
+            // DEVICE_INITIAL_SDK_INT是API 28+才有的字段，使用反射访问
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                java.lang.reflect.Field field = android.os.Build.VERSION.class.getField("DEVICE_INITIAL_SDK_INT");
+                int firstApi = field.getInt(null);
+                if (firstApi > 0) {
+                    return "Android " + getAndroidVersionName(firstApi);
+                }
+            }
+        } catch (Exception e) {
+        }
+        return "未知";
+    }
+    
+    // v3.51.78: 根据API Level获取Android版本名
+    private String getAndroidVersionName(int apiLevel) {
+        switch (apiLevel) {
+            case 35: return "15 (Vanilla Ice Cream)";
+            case 34: return "14 (Upside Down Cake)";
+            case 33: return "13 (Tiramisu)";
+            case 32: return "12L (Snow Cone v2)";
+            case 31: return "12 (Snow Cone)";
+            case 30: return "11 (Red Velvet Cake)";
+            case 29: return "10 (Quince Tart)";
+            case 28: return "9 (Pie)";
+            case 27: return "8.1 (Oreo)";
+            case 26: return "8.0 (Oreo)";
+            default: return String.valueOf(apiLevel);
+        }
+    }
+    
+    // v3.51.78: 获取CPU名称
+    // v3.51.79: 获取CPU完整型号名称
+    private String getCpuName() {
+        String hardware = android.os.Build.HARDWARE;
+        
+        // 尝试从系统属性读取更友好的名称
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method getMethod = sysProps.getMethod("get", String.class, String.class);
+            
+            // 尝试常见的CPU名称属性
+            String[] cpuProps = {
+                "ro.soc.model",
+                "ro.board.platform",
+                "ro.product.board",
+                "ro.hardware.chipname"
+            };
+            
+            for (String prop : cpuProps) {
+                String cpuModel = (String) getMethod.invoke(null, prop, "");
+                if (!cpuModel.isEmpty() && !cpuModel.equalsIgnoreCase(hardware)) {
+                    return formatCpuName(cpuModel);
+                }
+            }
+        } catch (Exception e) {
+        }
+        
+        // 根据Hardware字段推断CPU型号
+        return formatCpuName(hardware);
+    }
+    
+    // v3.51.79: 格式化CPU名称
+    private String formatCpuName(String rawName) {
+        rawName = rawName.trim();
+        
+        // Qualcomm Snapdragon系列
+        if (rawName.toLowerCase().startsWith("sm") || rawName.toLowerCase().contains("qcom")) {
+            if (rawName.equalsIgnoreCase("sm8750")) {
+                return "Qualcomm Snapdragon 8 Elite";
+            } else if (rawName.equalsIgnoreCase("sm8650")) {
+                return "Qualcomm Snapdragon 8 Gen 3";
+            } else if (rawName.equalsIgnoreCase("sm8550")) {
+                return "Qualcomm Snapdragon 8 Gen 2";
+            } else if (rawName.equalsIgnoreCase("sm8450")) {
+                return "Qualcomm Snapdragon 8 Gen 1";
+            } else if (rawName.equalsIgnoreCase("sm8350")) {
+                return "Qualcomm Snapdragon 888";
+            } else if (rawName.startsWith("sm")) {
+                return "Qualcomm " + rawName.toUpperCase();
+            }
+        }
+        
+        // MediaTek系列
+        if (rawName.toLowerCase().startsWith("mt")) {
+            if (rawName.equalsIgnoreCase("mt6989")) {
+                return "MediaTek Dimensity 9400";
+            } else if (rawName.equalsIgnoreCase("mt6989")) {
+                return "MediaTek Dimensity 9300";
+            }
+            return "MediaTek " + rawName.toUpperCase();
+        }
+        
+        // Exynos系列
+        if (rawName.toLowerCase().contains("exynos")) {
+            return "Samsung " + rawName;
+        }
+        
+        return rawName;
+    }
+    
+    // v3.51.78: 获取CPU供应商
+    private String getCpuVendor() {
+        String hardware = android.os.Build.HARDWARE.toLowerCase();
+        if (hardware.contains("qcom") || hardware.contains("sm")) {
+            return "Qualcomm";
+        } else if (hardware.contains("exynos")) {
+            return "Samsung";
+        } else if (hardware.contains("mt") || hardware.contains("mediatek")) {
+            return "MediaTek";
+        } else if (hardware.contains("kirin")) {
+            return "HiSilicon";
+        } else if (hardware.contains("unisoc") || hardware.contains("spreadtrum")) {
+            return "Unisoc";
+        }
+        return "未知";
+    }
+    
+    // Get detailed screen information
+    private void populateScreenInfo(LinearLayout card) {
+        try {
+            WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            Display display = wm.getDefaultDisplay();
+            android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+            display.getRealMetrics(metrics);
+            android.graphics.Point size = new android.graphics.Point();
+            display.getRealSize(size);
+            
+            // Current resolution and refresh rate
+            addInfoRow(card, "当前分辨率", size.x + " x " + size.y, "", 0xff333333);
+            addInfoRow(card, "刷新率", String.format("%.1f Hz", display.getRefreshRate()), "", 0xff333333);
+            
+            // Screen size
+            float xdpi = metrics.xdpi;
+            float ydpi = metrics.ydpi;
+            if (xdpi > 0 && ydpi > 0) {
+                float widthInches = size.x / xdpi;
+                float heightInches = size.y / ydpi;
+                float diagonalInches = (float) Math.sqrt(widthInches * widthInches + heightInches * heightInches);
+                float diagonalMm = diagonalInches * 25.4f;
+                addInfoRow(card, "屏幕尺寸", String.format("%.2f\"", diagonalInches), String.format("%.0f mm", diagonalMm), 0xff333333);
+            }
+            
+            // DPI
+            String densityName = "hdpi";
+            if (metrics.densityDpi <= 120) densityName = "ldpi";
+            else if (metrics.densityDpi <= 160) densityName = "mdpi";
+            else if (metrics.densityDpi <= 240) densityName = "hdpi";
+            else if (metrics.densityDpi <= 320) densityName = "xhdpi";
+            else if (metrics.densityDpi <= 480) densityName = "xxhdpi";
+            else if (metrics.densityDpi <= 640) densityName = "xxxhdpi";
+            addInfoRow(card, "密度", metrics.densityDpi + " dpi", densityName, 0xff333333);
+            
+            // Aspect ratio
+            int gcd = gcd(size.x, size.y);
+            addInfoRow(card, "宽高比", (size.x / gcd) + ":" + (size.y / gcd), "", 0xff333333);
+            
+            // Supported modes
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Display.Mode[] modes = display.getSupportedModes();
+                
+                // Refresh rates
+                java.util.Set<String> rates = new java.util.TreeSet<>();
+                for (Display.Mode mode : modes) {
+                    rates.add(String.format("%.1f Hz", mode.getRefreshRate()));
+                }
+                if (!rates.isEmpty()) {
+                    addInfoRow(card, "支持的刷新率", String.join(", ", rates), "", 0xff757575);
+                }
+                
+                // Resolutions
+                java.util.Set<String> resolutions = new java.util.TreeSet<>((a, b) -> {
+                    int w1 = Integer.parseInt(a.split(" x ")[0]);
+                    int w2 = Integer.parseInt(b.split(" x ")[0]);
+                    return Integer.compare(w2, w1);
+                });
+                for (Display.Mode mode : modes) {
+                    resolutions.add(mode.getPhysicalWidth() + " x " + mode.getPhysicalHeight());
+                }
+                if (!resolutions.isEmpty()) {
+                    addInfoRow(card, "支持的分辨率", String.join(", ", resolutions), "", 0xff757575);
+                }
+            }
+            
+            // HDR
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    Display.HdrCapabilities hdrCaps = display.getHdrCapabilities();
+                    int[] hdrTypes = hdrCaps.getSupportedHdrTypes();
+                    java.util.List<String> hdrList = new java.util.ArrayList<>();
+                    for (int type : hdrTypes) {
+                        switch (type) {
+                            case Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION:
+                                hdrList.add("Dolby Vision");
+                                break;
+                            case Display.HdrCapabilities.HDR_TYPE_HDR10:
+                                hdrList.add("HDR10");
+                                break;
+                            case Display.HdrCapabilities.HDR_TYPE_HLG:
+                                hdrList.add("HLG");
+                                break;
+                            case Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS:
+                                hdrList.add("HDR10+");
+                                break;
+                        }
+                    }
+                    if (!hdrList.isEmpty()) {
+                        addInfoRow(card, "HDR支持", String.join(", ", hdrList), "", 0xff16805d);
+                    }
+                } catch (Exception e) {}
+            }
+            
+            // Wide color gamut
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    addInfoRow(card, "广色域", display.isWideColorGamut() ? "是" : "否", "", 0xff333333);
+                } catch (Exception e) {}
+            }
+            
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    
+    // 辅助方法：将页面包装在ScrollView中
+    private View wrapInScroll(View page) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(page);
+        return scroll;
+    }
+    
+    // 辅助方法：构建OTG页面包装器（带FAB）
+    private View buildOtgPageWrapper() {
+        FrameLayout otgRoot = new FrameLayout(this);
+        ScrollView pageScroll = new ScrollView(this);
+        pageScroll.setFillViewport(false);
+        pageScroll.addView(buildOtgPage());
+        otgRoot.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
+        
+        partitionFab = buildPartitionFab();
+        FrameLayout.LayoutParams fabLp = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+        fabLp.bottomMargin = dp(84);
+        fabLp.rightMargin = dp(16);
+        otgRoot.addView(partitionFab, fabLp);
+        partitionFab.setVisibility(otgCurrentTab == 0 ? View.VISIBLE : View.GONE);
+        
+        return otgRoot;
+    }
+    
+    private int gcd(int a, int b) {
+        return b == 0 ? a : gcd(b, a % b);
+    }
+    
     private String formatBytes(long bytes){
          if (bytes < 0) return t("大小读取失败", "Size unavailable");
          if (bytes == 0) return t("大小未知", "Unknown size");
         if (bytes >= 1024L * 1024L * 1024L) return String.format(java.util.Locale.US, "%.2f GB", bytes / 1073741824d);
         return String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576d);
+    }
+
+    
+    // 读取CPU核心数量
+    private int getCpuCoreCount() {
+        try {
+            return Runtime.getRuntime().availableProcessors();
+        } catch (Exception e) {
+            return 8;  // 默认8核
+        }
+    }
+    
+    // 读取单个CPU核心当前频率（KHz）
+    private int getCpuFrequency(int core) {
+        try {
+            String path = "/sys/devices/system/cpu/cpu" + core + "/cpufreq/scaling_cur_freq";
+            java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(path));
+            String freq = reader.readLine();
+            reader.close();
+            return Integer.parseInt(freq.trim());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+    
+    // 读取CPU核心最大频率（KHz）
+    private int getCpuMaxFrequency(int core) {
+        try {
+            String path = "/sys/devices/system/cpu/cpu" + core + "/cpufreq/cpuinfo_max_freq";
+            java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(path));
+            String freq = reader.readLine();
+            reader.close();
+            return Integer.parseInt(freq.trim());
+        } catch (Exception e) {
+            return 3000000;  // 默认3GHz
+        }
+    }
+    
+    // 更新CPU频率柱状图
+    private void updateCpuFrequencyBars(LinearLayout container) {
+        if (container == null) return;
+        
+        runOnUiThread(() -> {
+            int coreCount = getCpuCoreCount();
+            
+            // 首次构建所有核心视图
+            if (container.getChildCount() == 0) {
+                for (int i = 0; i < coreCount; i++) {
+                    LinearLayout coreRow = new LinearLayout(this);
+                    coreRow.setOrientation(LinearLayout.HORIZONTAL);
+                    coreRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                    coreRow.setPadding(0, dp(4), 0, dp(4));
+                    coreRow.setTag("cpu_core_" + i);
+                    
+                    // CPU标签
+                    TextView coreLabel = text("CPU" + i, 11, 0xff757575);
+                    coreLabel.setTypeface(android.graphics.Typeface.MONOSPACE);
+                    coreLabel.setTag("label");
+                    LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(dp(50), -2);
+                    coreRow.addView(coreLabel, labelLp);
+                    
+                    // 频率柱状图容器
+                    FrameLayout barContainer = new FrameLayout(this);
+                    barContainer.setTag("bar_container");
+                    LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(0, dp(14), 1);
+                    barLp.setMargins(dp(8), 0, dp(8), 0);
+                    
+                    // 背景条
+                    View bgBar = new View(this);
+                    GradientDrawable bgDrawable = new GradientDrawable();
+                    bgDrawable.setColor(0xFFE8E8E8);
+                    bgDrawable.setCornerRadius(dp(7));
+                    bgBar.setBackground(bgDrawable);
+                    barContainer.addView(bgBar, new FrameLayout.LayoutParams(-1, -1));
+                    
+                    // 频率条
+                    View freqBar = new View(this);
+                    freqBar.setTag("freq_bar");
+                    GradientDrawable freqDrawable = new GradientDrawable();
+                    freqDrawable.setColor(0xff16805d);
+                    freqDrawable.setCornerRadius(dp(7));
+                    freqBar.setBackground(freqDrawable);
+                    FrameLayout.LayoutParams freqBarLp = new FrameLayout.LayoutParams(0, -1);
+                    barContainer.addView(freqBar, freqBarLp);
+                    
+                    coreRow.addView(barContainer, barLp);
+                    
+                    // 频率数值
+                    TextView freqLabel = text("0 MHz", 11, 0xff333333);
+                    freqLabel.setTag("freq_text");
+                    freqLabel.setTypeface(android.graphics.Typeface.MONOSPACE);
+                    LinearLayout.LayoutParams freqLabelLp = new LinearLayout.LayoutParams(dp(85), -2);
+                    freqLabel.setGravity(android.view.Gravity.END);
+                    coreRow.addView(freqLabel, freqLabelLp);
+                    
+                    container.addView(coreRow);
+                }
+            }
+            
+            // 更新所有核心频率
+            for (int i = 0; i < Math.min(coreCount, container.getChildCount()); i++) {
+                View coreRow = container.getChildAt(i);
+                if (coreRow == null) continue;
+                
+                int currentFreq = getCpuFrequency(i);
+                int maxFreq = getCpuMaxFrequency(i);
+                float ratio = maxFreq > 0 ? (float) currentFreq / maxFreq : 0;
+                
+                // 更新频率条宽度和颜色（带动画）
+                FrameLayout barContainer = coreRow.findViewWithTag("bar_container");
+                if (barContainer != null) {
+                    View freqBar = barContainer.findViewWithTag("freq_bar");
+                    if (freqBar != null) {
+                        // 颜色渐变：绿色(低频) -> 蓝色(中频) -> 橙色(高频) -> 红色(超频)
+                        int color;
+                        if (ratio < 0.3f) {
+                            color = 0xff16805d;  // 绿色
+                        } else if (ratio < 0.6f) {
+                            color = 0xff4C8EF5;  // 蓝色
+                        } else if (ratio < 0.85f) {
+                            color = 0xffF39C12;  // 橙色
+                        } else {
+                            color = 0xffE74C3C;  // 红色
+                        }
+                        
+                        GradientDrawable drawable = (GradientDrawable) freqBar.getBackground();
+                        drawable.setColor(color);
+                        
+                        // 平滑动画更新宽度
+                        int targetWidth = (int) (barContainer.getWidth() * ratio);
+                        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) freqBar.getLayoutParams();
+                        if (lp.width != targetWidth) {
+                            freqBar.animate()
+                                .scaleX(ratio)
+                                .setDuration(300)
+                                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                                .start();
+                            lp.width = targetWidth;
+                            freqBar.setLayoutParams(lp);
+                        }
+                    }
+                }
+                
+                // 更新频率文本
+                TextView freqText = coreRow.findViewWithTag("freq_text");
+                if (freqText != null) {
+                    String text = currentFreq > 0 ? String.format("%d MHz", currentFreq / 1000) : "离线";
+                    freqText.setText(text);
+                }
+            }
+        });
+    }
+    
+    // 启动CPU频率监控
+    private void startCpuFrequencyMonitor(LinearLayout container) {
+        if (cpuFreqHandler == null) {
+            cpuFreqHandler = new Handler(android.os.Looper.getMainLooper());
+        }
+        
+        cpuFreqUpdateTask = new Runnable() {
+            @Override
+            public void run() {
+                if (container != null && container.isAttachedToWindow()) {
+                    updateCpuFrequencyBars(container);
+                    cpuFreqHandler.postDelayed(this, 1000);  // 每秒更新
+                }
+            }
+        };
+        
+        cpuFreqHandler.postDelayed(cpuFreqUpdateTask, 1000);
+    }
+    
+    // 停止CPU频率监控
+    private void stopCpuFrequencyMonitor() {
+        if (cpuFreqHandler != null && cpuFreqUpdateTask != null) {
+            cpuFreqHandler.removeCallbacks(cpuFreqUpdateTask);
+        }
+    }
+    
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        stopCpuFrequencyMonitor();
     }
       private void chooseReplacement(String targetName, String backingImage, String backingSlot, String imagePath){
           replacementPartition = targetName;
@@ -6910,5 +8488,404 @@ public class MainActivity extends BaseActivity {
          @Override public int getOpacity(){ return android.graphics.PixelFormat.TRANSLUCENT; }
      }
      private void confirm(String t,String m,final Runnable r){ new AlertDialog.Builder(this).setTitle(t).setMessage(m).setPositiveButton("继续",(d,w)->r.run()).setNegativeButton("取消",null).show(); }
-    private void toast(String s){ Toast.makeText(this,s,Toast.LENGTH_LONG).show(); }
+     private void toast(String s){ Toast.makeText(this,s,Toast.LENGTH_LONG).show(); }
+     
+     /** v3.10.61：圆形安全评分视图（中心显示分数，外圈彩色进度环） */
+     private static class SecurityScoreView extends View {
+         private Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+         private int score = 0;
+         private int targetScore = 0;
+         private android.animation.ValueAnimator animator;
+         
+         SecurityScoreView(android.content.Context ctx) {
+             super(ctx);
+         }
+         
+         void setScore(int s) {
+             targetScore = Math.max(0, Math.min(100, s));
+             if (animator != null) animator.cancel();
+             animator = android.animation.ValueAnimator.ofInt(score, targetScore);
+             animator.setDuration(1200);
+             animator.setInterpolator(new android.view.animation.DecelerateInterpolator(2f));
+             animator.addUpdateListener(a -> {
+                 score = (int) a.getAnimatedValue();
+                 invalidate();
+             });
+             animator.start();
+         }
+         
+         @Override
+         protected void onDraw(Canvas canvas) {
+             super.onDraw(canvas);
+             int w = getWidth();
+             int h = getHeight();
+             int cx = w / 2;
+             int cy = h / 2;
+             int radius = Math.min(w, h) / 2 - 40;
+             
+             // 背景圆环（浅灰）
+             paint.setStyle(Paint.Style.STROKE);
+             paint.setStrokeWidth(28);
+             paint.setColor(0x22ffffff);
+             canvas.drawCircle(cx, cy, radius, paint);
+             
+             // 彩色进度环（根据分数变色）
+             paint.setStrokeCap(Paint.Cap.ROUND);
+             int color = score >= 80 ? 0xff16805d : score >= 60 ? 0xfff39c12 : 0xffbd4a4a;
+             paint.setColor(color);
+             float sweep = score * 3.6f;
+             canvas.drawArc(cx - radius, cy - radius, cx + radius, cy + radius, -90, sweep, false, paint);
+             
+             // 中心分数文字
+             paint.setStyle(Paint.Style.FILL);
+             paint.setTextAlign(Paint.Align.CENTER);
+             paint.setColor(0xffffffff);
+             paint.setTextSize(84);
+             paint.setTypeface(android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL));
+             canvas.drawText(String.valueOf(score), cx, cy + 28, paint);
+             
+             // 底部"安全评分"标签
+             paint.setTextSize(24);
+             paint.setColor(0xccffffff);
+             canvas.drawText("安全评分", cx, cy + 70, paint);
+         }
+         
+         @Override
+         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+             int size = MeasureSpec.getSize(widthMeasureSpec);
+             setMeasuredDimension(size, size);
+         }
+      }
+      
+      /** v3.51.81: 加载 SoC 数据库 */
+      private void loadSocsDatabase() {
+          try {
+              InputStream is = getAssets().open("socs.json");
+              byte[] buffer = new byte[is.available()];
+              is.read(buffer);
+              is.close();
+              String json = new String(buffer, "UTF-8");
+              socsDatabase = new JSONObject(json);
+              
+              // v3.51.82: 输出调试信息
+              android.util.Log.d("SoC-Debug", "=== Device Info ===");
+              android.util.Log.d("SoC-Debug", "HARDWARE: " + android.os.Build.HARDWARE);
+              android.util.Log.d("SoC-Debug", "BOARD: " + android.os.Build.BOARD);
+              android.util.Log.d("SoC-Debug", "DEVICE: " + android.os.Build.DEVICE);
+              android.util.Log.d("SoC-Debug", "PRODUCT: " + android.os.Build.PRODUCT);
+              android.util.Log.d("SoC-Debug", "MODEL: " + android.os.Build.MODEL);
+              android.util.Log.d("SoC-Debug", "MANUFACTURER: " + android.os.Build.MANUFACTURER);
+              if (android.os.Build.VERSION.SDK_INT >= 31) {
+                  android.util.Log.d("SoC-Debug", "SOC_MANUFACTURER: " + android.os.Build.SOC_MANUFACTURER);
+                  android.util.Log.d("SoC-Debug", "SOC_MODEL: " + android.os.Build.SOC_MODEL);
+              }
+              
+              // 根据当前硬件查找SoC信息
+              lookupCurrentSoc();
+          } catch (Throwable e) {
+              android.util.Log.e("MainActivity", "Failed to load socs.json", e);
+          }
+      }
+      
+      /** v3.51.81: 查找当前设备的SoC信息 */
+      private void lookupCurrentSoc() {
+          if (socsDatabase == null) return;
+          try {
+              // v3.51.82: 优先使用BOARD（通常是精确的SoC型号，如SM8550）
+              String[] keys = {
+                  android.os.Build.BOARD,                                      // 优先：SM8550、exynos1080等
+                  android.os.Build.SOC_MANUFACTURER + " " + android.os.Build.SOC_MODEL,
+                  getCpuName(),
+                  android.os.Build.HARDWARE                                     // 最后：qcom、exynos等通用名
+              };
+              
+              // v3.51.86: 输出所有尝试的键
+              android.util.Log.d("SoC-Lookup", "=== Trying keys ===");
+              for (int i = 0; i < keys.length; i++) {
+                  android.util.Log.d("SoC-Lookup", "[" + i + "] " + keys[i]);
+              }
+              
+              for (String key : keys) {
+                  if (key == null || key.isEmpty()) continue;
+                  
+                  android.util.Log.d("SoC-Lookup", "Trying key: '" + key + "'");
+                  
+                  // 1. 精确匹配
+                  if (socsDatabase.has(key)) {
+                      currentSocInfo = socsDatabase.getJSONObject(key);
+                      android.util.Log.d("SoC-Lookup", "✓ MATCHED (exact): " + key);
+                      return;
+                  }
+                  
+                  // 2. 大小写不敏感匹配
+                  java.util.Iterator<String> iter = socsDatabase.keys();
+                  while (iter.hasNext()) {
+                      String dbKey = iter.next();
+                      if (dbKey.equalsIgnoreCase(key)) {
+                          currentSocInfo = socsDatabase.getJSONObject(dbKey);
+                          android.util.Log.d("SoC-Lookup", "✓ MATCHED (case-insensitive): " + dbKey);
+                          return;
+                      }
+                  }
+                  
+                  // 3. 去空格匹配
+                  String normalized = key.replaceAll("\\s+", "").toLowerCase();
+                  if (normalized.length() < 3) continue; // 太短的跳过模糊匹配
+                  
+                  iter = socsDatabase.keys();
+                  while (iter.hasNext()) {
+                      String dbKey = iter.next();
+                      String normalizedKey = dbKey.replaceAll("\\s+", "").toLowerCase();
+                      if (normalizedKey.equals(normalized)) {
+                          currentSocInfo = socsDatabase.getJSONObject(dbKey);
+                          android.util.Log.d("SoC-Lookup", "✓ MATCHED (normalized): " + dbKey);
+                          return;
+                      }
+                  }
+                  
+                  android.util.Log.d("SoC-Lookup", "✗ Not matched: " + key);
+              }
+              android.util.Log.w("SoC-Lookup", "✗✗✗ SoC NOT FOUND after trying all keys");
+          } catch (Throwable e) {
+              android.util.Log.e("MainActivity", "Failed to lookup SoC info", e);
+          }
+      }
+      
+      /** v3.51.81: 获取SoC制程工艺 */
+      private String getSocFab() {
+          if (currentSocInfo != null) {
+              try {
+                  String fab = currentSocInfo.optString("FAB", "").trim();
+                  // v3.51.88: 通用键的FAB为空，尝试从处理器型号推断制程
+                  if (!fab.isEmpty()) return fab;
+              } catch (Throwable ignored) {}
+          }
+          // v3.51.88: 从getCpuName()返回的处理器型号推断制程
+          return inferFabFromCpuName(getCpuName());
+      }
+      
+      /** v3.51.88: 根据处理器型号推断制程工艺 */
+      private String inferFabFromCpuName(String cpuName) {
+          String lower = cpuName.toLowerCase();
+          
+          // v3.51.89: 输出调试信息
+          android.util.Log.d("FAB-Infer", "Trying to infer FAB from: '" + cpuName + "' (lowercase: '" + lower + "')");
+          
+          // Qualcomm Snapdragon
+          if (lower.contains("8 elite") || lower.contains("8elite")) {
+              android.util.Log.d("FAB-Infer", "Matched: 8 Elite → 3nm");
+              return "3 nm";
+          }
+          if (lower.contains("8 gen 3") || lower.contains("sm8650")) {
+              android.util.Log.d("FAB-Infer", "Matched: 8 Gen 3 → 4nm");
+              return "4 nm";
+          }
+          if (lower.contains("8 gen 2") || lower.contains("sm8550")) {
+              android.util.Log.d("FAB-Infer", "Matched: 8 Gen 2 → 4nm");
+              return "4 nm";
+          }
+          if (lower.contains("8 gen 1") || lower.contains("sm8450")) {
+              android.util.Log.d("FAB-Infer", "Matched: 8 Gen 1 → 4nm");
+              return "4 nm";
+          }
+          if (lower.contains("888") || lower.contains("sm8350")) {
+              android.util.Log.d("FAB-Infer", "Matched: 888 → 5nm");
+              return "5 nm";
+          }
+          if (lower.contains("870") || lower.contains("865")) {
+              android.util.Log.d("FAB-Infer", "Matched: 870/865 → 7nm");
+              return "7 nm";
+          }
+          
+          // MediaTek Dimensity
+          if (lower.contains("9400")) return "3 nm";
+          if (lower.contains("9300") || lower.contains("9200")) return "4 nm";
+          if (lower.contains("9000")) return "4 nm";
+          if (lower.contains("8200") || lower.contains("8100")) return "5 nm";
+          
+          // Samsung Exynos
+          if (lower.contains("2400") || lower.contains("2500")) return "4 nm";
+          if (lower.contains("2200") || lower.contains("2100")) return "5 nm";
+          
+          // Apple (如果有)
+          if (lower.contains("a18") || lower.contains("a17")) return "3 nm";
+          if (lower.contains("a16") || lower.contains("a15")) return "4 nm";
+          
+          android.util.Log.w("FAB-Infer", "No match found, returning '未知'");
+          return "未知";
+      }
+      
+      /** v3.51.81: 获取SoC完整名称 */
+      private String getSocFullName() {
+          if (currentSocInfo != null) {
+              try {
+                  String name = currentSocInfo.optString("NAME", "").trim();
+                  if (!name.isEmpty()) return name;
+              } catch (Throwable ignored) {}
+          }
+          return getCpuName();
+      }
+      
+      /** v3.51.81: 获取SoC供应商 */
+      private String getSocVendor() {
+          if (currentSocInfo != null) {
+              try {
+                  String vendor = currentSocInfo.optString("VENDOR", "").trim();
+                  if (!vendor.isEmpty()) return vendor;
+              } catch (Throwable ignored) {}
+          }
+          return getCpuVendor();
+      }
+      
+      /** v3.51.84: 根据手机品牌获取Logo资源ID（自动识别） */
+      private int getBrandLogoResource() {
+          String manufacturer = android.os.Build.MANUFACTURER.toLowerCase();
+          String brand = android.os.Build.BRAND.toLowerCase();
+          String model = android.os.Build.MODEL.toLowerCase();
+          
+          // 优先判断manufacturer
+          if (manufacturer.contains("xiaomi") || brand.contains("xiaomi") || brand.contains("redmi") || brand.contains("poco")) {
+              return getResources().getIdentifier("ic_xiaomi", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("oneplus") || brand.contains("oneplus")) {
+              return getResources().getIdentifier("ic_oneplus", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("oppo") || brand.contains("oppo") || brand.contains("realme")) {
+              // realme是OPPO子品牌，但有独立Logo
+              if (brand.contains("realme")) {
+                  return getResources().getIdentifier("ic_realme", "drawable", getPackageName());
+              }
+              return getResources().getIdentifier("ic_oppo", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("vivo") || brand.contains("vivo") || brand.contains("iqoo")) {
+              return getResources().getIdentifier("ic_vivo", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("huawei") || brand.contains("huawei") || brand.contains("honor")) {
+              if (brand.contains("honor")) {
+                  return getResources().getIdentifier("ic_honor", "drawable", getPackageName());
+              }
+              return getResources().getIdentifier("ic_huawei", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("samsung") || brand.contains("samsung")) {
+              return getResources().getIdentifier("ic_samsung", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("google") || brand.contains("google") || brand.contains("pixel")) {
+              return getResources().getIdentifier("ic_google", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("motorola") || brand.contains("motorola") || brand.contains("moto")) {
+              return getResources().getIdentifier("ic_motorola", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("sony") || brand.contains("sony")) {
+              return getResources().getIdentifier("ic_sony", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("lg") || brand.contains("lg")) {
+              return getResources().getIdentifier("ic_lg", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("asus") || brand.contains("asus") || brand.contains("zenfone") || brand.contains("rog")) {
+              return getResources().getIdentifier("ic_asus", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("nokia") || brand.contains("nokia")) {
+              return getResources().getIdentifier("ic_nokia", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("lenovo") || brand.contains("lenovo")) {
+              return getResources().getIdentifier("ic_lenovo", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("zte") || brand.contains("zte") || brand.contains("nubia")) {
+              return getResources().getIdentifier("ic_zte", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("meizu") || brand.contains("meizu")) {
+              return getResources().getIdentifier("ic_meizu", "drawable", getPackageName());
+          }
+          if (manufacturer.contains("htc") || brand.contains("htc")) {
+              return getResources().getIdentifier("ic_htc", "drawable", getPackageName());
+          }
+          
+          // 没有匹配的品牌，返回0（不显示Logo）
+          return 0;
+      }
+      
+      /** v3.51.81: 根据供应商/硬件名获取Logo资源ID */
+      private int getCpuLogoResource() {
+          String hardware = android.os.Build.HARDWARE.toLowerCase();
+          String vendor = getSocVendor().toLowerCase();
+          String cpuName = getCpuName().toLowerCase();
+          
+          // 优先判断hardware（最准确）
+          // 高通骁龙
+          if (hardware.contains("qcom") || hardware.contains("sm") || hardware.contains("sdm")) {
+              return getResources().getIdentifier("ic_snapdragon", "drawable", getPackageName());
+          }
+          // 联发科
+          if (hardware.contains("mt") && !hardware.contains("exynos")) {
+              return getResources().getIdentifier("ic_mediatek", "drawable", getPackageName());
+          }
+          // 三星Exynos
+          if (hardware.contains("exynos") || hardware.contains("s5e")) {
+              return getResources().getIdentifier("ic_exynos", "drawable", getPackageName());
+          }
+          // 华为麒麟
+          if (hardware.contains("kirin") || hardware.contains("hi36") || hardware.contains("hi37")) {
+              return getResources().getIdentifier("ic_kirin", "drawable", getPackageName());
+          }
+          // 紫光展锐
+          if (hardware.contains("unisoc") || hardware.contains("ums") || hardware.contains("spreadtrum")) {
+              return getResources().getIdentifier("ic_unisoc", "drawable", getPackageName());
+          }
+          // 瑞芯微
+          if (hardware.contains("rk") || hardware.contains("rockchip")) {
+              return getResources().getIdentifier("ic_rockchip", "drawable", getPackageName());
+          }
+          // 全志
+          if (hardware.contains("sun") && (hardware.contains("50") || hardware.contains("8"))) {
+              return getResources().getIdentifier("ic_allwinner", "drawable", getPackageName());
+          }
+          
+          // 再判断vendor
+          if (vendor.contains("qualcomm")) {
+              return getResources().getIdentifier("ic_snapdragon", "drawable", getPackageName());
+          }
+          if (vendor.contains("mediatek")) {
+              return getResources().getIdentifier("ic_mediatek", "drawable", getPackageName());
+          }
+          if (vendor.contains("samsung")) {
+              return getResources().getIdentifier("ic_exynos", "drawable", getPackageName());
+          }
+          if (vendor.contains("hisilicon")) {
+              return getResources().getIdentifier("ic_kirin", "drawable", getPackageName());
+          }
+          if (vendor.contains("unisoc")) {
+              return getResources().getIdentifier("ic_unisoc", "drawable", getPackageName());
+          }
+          if (vendor.contains("rockchip")) {
+              return getResources().getIdentifier("ic_rockchip", "drawable", getPackageName());
+          }
+          if (vendor.contains("allwinner")) {
+              return getResources().getIdentifier("ic_allwinner", "drawable", getPackageName());
+          }
+          if (vendor.contains("intel")) {
+              return getResources().getIdentifier("ic_intel", "drawable", getPackageName());
+          }
+          if (vendor.contains("amd")) {
+              return getResources().getIdentifier("ic_amd", "drawable", getPackageName());
+          }
+          if (vendor.contains("amlogic")) {
+              return getResources().getIdentifier("ic_amlogic", "drawable", getPackageName());
+          }
+          if (vendor.contains("marvell")) {
+              return getResources().getIdentifier("ic_marvell", "drawable", getPackageName());
+          }
+          if (vendor.contains("realtek")) {
+              return getResources().getIdentifier("ic_realtek", "drawable", getPackageName());
+          }
+          
+          // 最后判断CPU名称
+          if (cpuName.contains("snapdragon") || cpuName.contains("qualcomm")) {
+              return getResources().getIdentifier("ic_snapdragon", "drawable", getPackageName());
+          }
+          
+          // 默认通用CPU图标
+          return getResources().getIdentifier("ic_cpu_light", "drawable", getPackageName());
+      }
+      
+      /** v3.10.62：六边形雷达图（环境检测可视化） */
 }

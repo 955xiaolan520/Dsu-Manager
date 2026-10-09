@@ -43,6 +43,10 @@ public final class ThanksActivity extends BaseActivity {
                     "本应用的 GSI 安装流程参考并使用了 DSU-Sideloader 项目的相关方案", "https://github.com/VegaBobo/DSU-Sideloader"},
             {"🌟", "yangFenTuoZi",
                     "感谢开发 Dsu 功能 img 无损替换功能", "https://www.coolapk.com/u/15035178"},
+            {"📊", "DevCheck by flar2",
+                    "设备检测功能使用了 DevCheck 的 native 库和 SoC 数据库，在此特别感谢", "https://play.google.com/store/apps/details?id=flar2.devcheck"},
+            {"🔬", "SoC Database",
+                    "处理器品牌 Logo 和 SoC 信息数据库来自 DevCheck 项目", ""},
             {"👤", "作者：小你可兰",
                     "Dsu GSI 管理器 v" + BuildConfig.VERSION_NAME, ""},
     };
