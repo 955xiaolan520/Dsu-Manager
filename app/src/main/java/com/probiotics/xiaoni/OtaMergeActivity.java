@@ -14,7 +14,6 @@ import android.graphics.Typeface;
 import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -584,32 +583,10 @@ public class OtaMergeActivity extends BaseActivity {
     }
 
     private Drawable createXiaomiGradientBackground() {
-        return new LayerDrawable(new Drawable[]{
-            createLinearGradient(0xFFDCE6ED, 0xFF859BAA, true),
-            createRadialGradient(0xA84D9FA7, 0x003895A8, 0.98f, 0.03f),
-            createRadialGradient(0x8F8873C4, 0x008873C4, 0.04f, 0.92f),
-            createRadialGradient(0x96D28F62, 0x00D28F62, 0.98f, 0.88f),
-            createRadialGradient(0x6E579EC1, 0x00579EC1, 0.02f, 0.36f)
-        });
-    }
-
-    private GradientDrawable createLinearGradient(int startColor, int endColor, boolean vertical) {
-        GradientDrawable drawable = new GradientDrawable(
-            vertical ? GradientDrawable.Orientation.TOP_BOTTOM : GradientDrawable.Orientation.LEFT_RIGHT,
-            new int[]{startColor, endColor}
-        );
-        drawable.setDither(true);
-        return drawable;
-    }
-
-    private GradientDrawable createRadialGradient(int centerColor, int edgeColor, float centerX, float centerY) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setShape(GradientDrawable.RADIAL_GRADIENT);
-        drawable.setGradientType(GradientDrawable.RADIAL_GRADIENT);
-        drawable.setColors(new int[]{centerColor, edgeColor});
-        drawable.setGradientCenter(centerX, centerY);
-        drawable.setGradientRadius(1000);
-        return drawable;
+        return new CornerAccentDrawable(0xffdce6ed, 0xff859baa,
+                new int[]{0xff3f9da5, 0xff8d71bd, 0xffd28d55, 0xff548bb4},
+                new float[][]{{0.98f, 0.015f}, {0.02f, 0.82f}, {0.97f, 0.97f}, {0.05f, 0.30f}},
+                new int[]{dp(300), dp(250), dp(280), dp(210)});
     }
 
     private int dp(int dp) {

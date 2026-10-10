@@ -8091,23 +8091,23 @@ public class MainActivity extends BaseActivity {
 
     /** 每个功能页的背景只画在当前页面范围内，且使用与主页不同的角落布局。 */
     private Drawable createFeatureAccentBackdrop(int primary, int secondary, int tertiary, boolean reverse) {
-        GradientDrawable base = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xffdce7ed, 0xff8ba3b3});
-        GradientDrawable a = featureAccentSpot(primary, reverse ? 0.03f : 0.98f, 0.03f, dp(310));
-        GradientDrawable b = featureAccentSpot(secondary, reverse ? 0.98f : 0.03f, 0.92f, dp(340));
-        GradientDrawable c = featureAccentSpot(tertiary, reverse ? 0.04f : 0.97f, 0.86f, dp(330));
-        GradientDrawable d = featureAccentSpot(primary, reverse ? 0.97f : 0.05f, 0.48f, dp(230));
-        return new LayerDrawable(new Drawable[]{base, a, b, c, d});
-    }
-
-    private GradientDrawable featureAccentSpot(int color, float centerX, float centerY, int radiusPx) {
-        GradientDrawable spot = new GradientDrawable();
-        spot.setShape(GradientDrawable.OVAL);
-        spot.setGradientType(GradientDrawable.RADIAL_GRADIENT);
-        spot.setColors(new int[]{0x6a000000 | (color & 0x00ffffff), 0x003895a8});
-        spot.setGradientCenter(centerX, centerY);
-        spot.setGradientRadius(radiusPx);
-        return spot;
+        float[][] centers;
+        if (primary == 0xff3b95aa) { // 检测：左上主色，右下呼应
+            centers = new float[][]{{0.015f, 0.02f}, {0.98f, 0.96f}, {0.02f, 0.70f}, {0.98f, 0.22f}};
+        } else if (primary == 0xff568fb1) { // 设置：右上主色，底边错位点缀
+            centers = new float[][]{{0.98f, 0.015f}, {0.03f, 0.88f}, {0.97f, 0.73f}, {0.02f, 0.26f}};
+        } else if (primary == 0xff8a74bd) { // 更多：左上/右下对角扩散
+            centers = new float[][]{{0.02f, 0.04f}, {0.97f, 0.95f}, {0.04f, 0.78f}, {0.97f, 0.30f}};
+        } else if (primary == 0xff338fa5) { // OTG：右上主色，底角双层
+            centers = new float[][]{{0.98f, 0.02f}, {0.02f, 0.96f}, {0.97f, 0.83f}, {0.03f, 0.40f}};
+        } else {
+            centers = reverse
+                    ? new float[][]{{0.015f, 0.02f}, {0.98f, 0.94f}, {0.03f, 0.82f}, {0.98f, 0.28f}}
+                    : new float[][]{{0.985f, 0.02f}, {0.02f, 0.93f}, {0.98f, 0.88f}, {0.03f, 0.34f}};
+        }
+        return new CornerAccentDrawable(0xffdce7ed, 0xff8ba3b3,
+                new int[]{primary, secondary, tertiary, secondary}, centers,
+                new int[]{dp(270), dp(280), dp(255), dp(205)});
     }
     
     private int gcd(int a, int b) {
