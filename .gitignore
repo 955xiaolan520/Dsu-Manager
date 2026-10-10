@@ -1,5 +1,8 @@
 .tools/
 app/build/
+**/build/
+**/.cxx/
+**/.kotlin/
 app/release-keystore.jks
 *.iml
 .gradle/

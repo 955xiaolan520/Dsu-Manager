@@ -7,12 +7,22 @@
     </item>
     <item android:top="-180dp" android:right="-100dp">
         <shape android:shape="oval">
-            <gradient android:type="radial" android:gradientRadius="300dp" android:startColor="#d0ecfac8" android:endColor="#007b9f00" />
+            <gradient android:type="radial" android:gradientRadius="300dp" android:startColor="#9635a8c4" android:centerColor="#5835a8c4" android:endColor="#0035a8c4" />
         </shape>
     </item>
     <item android:bottom="-220dp" android:left="-140dp">
         <shape android:shape="oval">
-            <gradient android:type="radial" android:gradientRadius="340dp" android:startColor="#a6ddd5b8" android:endColor="#007c6d00" />
+            <gradient android:type="radial" android:gradientRadius="340dp" android:startColor="#826e82c5" android:centerColor="#426e82c5" android:endColor="#006e82c5" />
+        </shape>
+    </item>
+    <item android:width="220dp" android:height="220dp" android:gravity="top|left" android:top="-72dp" android:left="-64dp">
+        <shape android:shape="oval">
+            <gradient android:type="radial" android:gradientRadius="190dp" android:startColor="#7048a88a" android:centerColor="#3848a88a" android:endColor="#0048a88a" />
+        </shape>
+    </item>
+    <item android:width="230dp" android:height="230dp" android:gravity="bottom|right" android:bottom="-76dp" android:right="-58dp">
+        <shape android:shape="oval">
+            <gradient android:type="radial" android:gradientRadius="190dp" android:startColor="#70ba9460" android:centerColor="#38ba9460" android:endColor="#00ba9460" />
         </shape>
     </item>
 </layer-list>

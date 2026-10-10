@@ -45,6 +45,8 @@ public class FileBrowserDialog {
     private final Dialog dialog;
     private final String[] exts;          // null = 全部文件；endsWith 匹配（带点，如 ".img"）
     private final OnFilePicked cb;
+    private final boolean directoryPicker;
+    private final Runnable cancelCallback;
     private final Handler main = new Handler(Looper.getMainLooper());
     private String curDir;
     private TextView pathView;
@@ -61,20 +63,62 @@ public class FileBrowserDialog {
 
     private FileBrowserDialog(Activity act, String title, String[] exts,
                               String startDir, OnFilePicked cb) {
+        this(act, title, exts, startDir, cb, false);
+    }
+
+    private FileBrowserDialog(Activity act, String title, String[] exts,
+                              String startDir, OnFilePicked cb, boolean directoryPicker) {
+        this(act, title, exts, startDir, cb, directoryPicker, null);
+    }
+
+    private FileBrowserDialog(Activity act, String title, String[] exts,
+                              String startDir, OnFilePicked cb, boolean directoryPicker,
+                              Runnable cancelCallback) {
         this.act = act;
         this.exts = exts;
         this.cb = cb;
+        this.directoryPicker = directoryPicker;
+        this.cancelCallback = cancelCallback;
         this.curDir = startDir != null && startDir.startsWith("/") ? startDir
                 : "/storage/emulated/0";
         this.dialog = new Dialog(act);
         dialog.setCancelable(true);
         buildUi(title);
+        dialog.setOnCancelListener(ignored -> {
+            if (this.cancelCallback != null) this.cancelCallback.run();
+        });
     }
 
     /** 显示文件浏览器。exts 为 null 时显示全部文件 */
     public static void show(Activity act, String title, String[] exts,
                             String startDir, OnFilePicked cb) {
         new FileBrowserDialog(act, title, exts, startDir, cb).open();
+    }
+
+    /** Show the built-in browser in file-picking mode and report cancellation when dismissed. */
+    public static void showFilePicker(Activity act, String title, String[] exts,
+                                      String startDir, OnFilePicked cb, Runnable onCancel) {
+        new FileBrowserDialog(act, title, exts, startDir, cb, false, onCancel).open();
+    }
+
+    /** Browse a location without selecting a file or changing any saved directory preference. */
+    public static void showLocationBrowser(Activity act, String title, String startDir, Runnable onClosed) {
+        FileBrowserDialog browser = new FileBrowserDialog(act, title, null, startDir, path -> { }, false, null);
+        browser.open();
+        browser.dialog.setOnDismissListener(ignored -> {
+            if (onClosed != null) onClosed.run();
+        });
+    }
+
+    /** Show the built-in browser in directory-picking mode and return the current absolute path. */
+    public static void showDirectoryPicker(Activity act, String title,
+                                           String startDir, OnFilePicked cb) {
+        new FileBrowserDialog(act, title, null, startDir, cb, true).open();
+    }
+
+    public static void showDirectoryPicker(Activity act, String title,
+                                           String startDir, OnFilePicked cb, Runnable onCancel) {
+        new FileBrowserDialog(act, title, null, startDir, cb, true, onCancel).open();
     }
 
     private void open() {
@@ -84,8 +128,10 @@ public class FileBrowserDialog {
         dialog.show();
         Window w2 = dialog.getWindow();
         if (w2 != null) {
-            w2.setLayout((int) (act.getResources().getDisplayMetrics().widthPixels * 0.94f),
-                    dp(580));
+            int screenHeight = act.getResources().getDisplayMetrics().heightPixels;
+            int dialogHeight = Math.min(dp(650), (int) (screenHeight * 0.80f));
+            w2.setLayout((int) (act.getResources().getDisplayMetrics().widthPixels * 0.92f),
+                    dialogHeight);
         }
         load(curDir);
     }
@@ -97,9 +143,10 @@ public class FileBrowserDialog {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(14), dp(16), dp(14));
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xF2e9f0f7);
+        bg.setColors(new int[]{0xE5D4E2EA, 0xE6C7D9E4, 0xE6B9CCD8});
+        bg.setOrientation(GradientDrawable.Orientation.TL_BR);
         bg.setCornerRadius(dp(24));
-        bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+        bg.setStroke(Math.max(1, dp(1)), 0xB8FFFFFF);
         panel.setBackground(bg);
 
         // ---- 标题行 ----
@@ -128,7 +175,10 @@ public class FileBrowserDialog {
         closeBg.setCornerRadius(dp(12));
         close.setBackground(closeBg);
         close.setStateListAnimator(null);
-        close.setOnClickListener(v -> dialog.dismiss());
+        close.setOnClickListener(v -> {
+            dialog.dismiss();
+            if (cancelCallback != null) cancelCallback.run();
+        });
         titleRow.addView(close, new LinearLayout.LayoutParams(dp(32), dp(32)));
         panel.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
 
@@ -198,6 +248,25 @@ public class FileBrowserDialog {
         loadingHint.setTextColor(0xff5a6b82);
         loadingHint.setPadding(dp(4), dp(10), 0, 0);
 
+        if (directoryPicker) {
+            Button choose = new Button(act, null, 0);
+            choose.setText("选择此文件夹");
+            choose.setAllCaps(false);
+            choose.setTextColor(0xff17334f);
+            choose.setGravity(Gravity.CENTER);
+            choose.setBackgroundResource(com.probiotics.xiaoni.R.drawable.liquid_glass_panel);
+            choose.setStateListAnimator(null);
+            choose.setOnClickListener(v -> {
+                Haptics.perform(v);
+                String selected = curDir;
+                dialog.dismiss();
+                cb.onPicked(selected);
+            });
+            LinearLayout.LayoutParams chooseLp = new LinearLayout.LayoutParams(-1, dp(44));
+            chooseLp.topMargin = dp(10);
+            panel.addView(choose, chooseLp);
+        }
+
         // ---- 底部取消 ----
         Button cancel = new Button(act, null, 0);
         cancel.setText(tr("取消", "Cancel"));
@@ -211,7 +280,10 @@ public class FileBrowserDialog {
         cancelBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
         cancel.setBackground(cancelBg);
         cancel.setStateListAnimator(null);
-        cancel.setOnClickListener(v -> dialog.dismiss());
+        cancel.setOnClickListener(v -> {
+            dialog.dismiss();
+            if (cancelCallback != null) cancelCallback.run();
+        });
         LinearLayout.LayoutParams cLp = new LinearLayout.LayoutParams(-1, dp(44));
         cLp.topMargin = dp(10);
         panel.addView(cancel, cLp);

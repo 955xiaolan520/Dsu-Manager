@@ -290,7 +290,7 @@ public final class DnaActivity extends BaseActivity {
         if (resourceId > 0) statusBarHeight = getResources().getDimensionPixelSize(resourceId);
 
         FrameLayout root = new FrameLayout(this);
-        root.setBackground(createGradientBackground());
+        root.setBackgroundResource(R.drawable.liquid_backdrop);
         root.setPadding(0, statusBarHeight + dp(10), 0, 0);
 
         ScrollView scroll = new ScrollView(this);

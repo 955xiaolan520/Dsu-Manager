@@ -5,8 +5,11 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -54,6 +57,8 @@ public final class Aria2Downloader {
     private final Listener listener;
     private final int threads;
     private final long chunkMB;
+    private final Map<String, String> requestHeaders;
+    private final long speedLimitBytesPerSecond;
 
     private final AtomicBoolean paused = new AtomicBoolean(false);
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
@@ -66,12 +71,22 @@ public final class Aria2Downloader {
 
     public Aria2Downloader(Context context, String url, File output, Listener listener,
                            int threads, long chunkMB) {
+        this(context, url, output, listener, threads, chunkMB, Collections.emptyMap(), 0L);
+    }
+
+    /** Host integration overload: preserve YunX authentication headers while using this app's aria2c. */
+    public Aria2Downloader(Context context, String url, File output, Listener listener,
+                           int threads, long chunkMB, Map<String, String> requestHeaders,
+                           long speedLimitBytesPerSecond) {
         this.context = context.getApplicationContext();
         this.url = url;
         this.output = output;
         this.listener = listener;
         this.threads = Math.max(1, threads);
         this.chunkMB = Math.max(1, chunkMB);
+        this.requestHeaders = requestHeaders == null
+                ? Collections.emptyMap() : new HashMap<>(requestHeaders);
+        this.speedLimitBytesPerSecond = Math.max(0L, speedLimitBytesPerSecond);
     }
 
     public void pause() {
@@ -320,14 +335,42 @@ public final class Aria2Downloader {
         args.add("--retry-wait=3");
         args.add("--disable-ipv6=true");
         args.add("--check-certificate=false");
-        args.add("--user-agent=" + USER_AGENT);
+        if (speedLimitBytesPerSecond > 0) {
+            args.add("--max-overall-download-limit=" + speedLimitBytesPerSecond);
+        }
+        String userAgent = headerValue("User-Agent");
+        if (userAgent == null || userAgent.isBlank()
+                || userAgent.indexOf('\r') >= 0 || userAgent.indexOf('\n') >= 0) userAgent = USER_AGENT;
+        args.add("--user-agent=" + (userAgent == null ? USER_AGENT : userAgent));
         // 节点 Referer 规则：cdnorg/阿里云需 miui referer，vivo 需自家 referer
-        String referer = refererFor(cleanUrl);
+        String referer = headerValue("Referer");
+        if (referer != null && (referer.indexOf('\r') >= 0 || referer.indexOf('\n') >= 0)) referer = null;
+        if (referer == null || referer.isBlank()) referer = refererFor(cleanUrl);
         if (referer != null) args.add("--referer=" + referer);
+        for (Map.Entry<String, String> entry : requestHeaders.entrySet()) {
+            String name = entry.getKey();
+            String value = entry.getValue();
+            if (name == null || value == null || name.isBlank()) continue;
+            if (name.equalsIgnoreCase("User-Agent") || name.equalsIgnoreCase("Referer")
+                    || name.equalsIgnoreCase("Range") || name.equalsIgnoreCase("Host")
+                    || name.equalsIgnoreCase("Content-Length")) continue;
+            if (!name.matches("[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+                    || value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) continue;
+            args.add("--header=" + name + ": " + value);
+        }
         args.add("--dir=" + dir.getAbsolutePath());
         args.add("--out=" + output.getName());
         args.add(cleanUrl);
         return args;
+    }
+
+    private String headerValue(String wantedName) {
+        for (Map.Entry<String, String> entry : requestHeaders.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(wantedName)) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     private static String refererFor(String url) {

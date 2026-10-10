@@ -12,7 +12,10 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -24,7 +27,7 @@ import org.json.JSONObject;
  *  - 每个任务独立通知（槽位 42/43/44）、独立断点、独立进度与暂停/继续/取消；
  *  - 每个任务携带来源页面标记（EXTRA_PAGE）：小米 / vivo / OPPO 查询页只显示自己页
  *    发起的下载框，其他页任务以折叠条提示「还有 N 个任务在下载」；
- *  - 任务状态统一持久化到「download_tasks」（JSON），页面恢复/对账的唯一数据源。
+ *  - 调度器状态写入内部 runtime 快照；Dsu 与 YunX 对用户可见的队列/历史分别分区持久化。
  *
  * 通知栏：每任务实时展示文件名、进度条、百分比、速度、剩余时间，支持 暂停/继续/取消。
  */
@@ -49,10 +52,24 @@ public final class DownloadService extends Service {
     public static final String EXTRA_PAGE = "page";
     /** v3.8.8：任务唯一标识 = 输出文件绝对路径。暂停/继续/取消指令据此定位任务。 */
     public static final String EXTRA_TASK_ID = "task_id";
-    /** v3.8.8：多任务持久化（JSON 数组，服务与页面共享的唯一任务数据源）。 */
+    /** Encrypted JSON map from the YunX resolver; encrypted with the app Keystore before task persistence. */
+    public static final String EXTRA_HEADERS_ENCRYPTED = "headers_encrypted";
+    /** Optional top-level directory grouping for files originating from a YunX folder download. */
+    public static final String EXTRA_FOLDER_ROOT = "folder_root";
+    /** Source partition: "yunx" for parser downloads, "dsu" for host downloads. */
+    public static final String EXTRA_SOURCE = "source";
+    public static final String SOURCE_DSU = "dsu";
+    public static final String SOURCE_YUNX = "yunx";
+    /** Runtime scheduler snapshot; user-facing queues below remain source-separated. */
+    public static final String RUNTIME_TASKS_PREFS = "download_runtime_tasks";
+    /** Dsu host queue; deliberately excludes YunX parser tasks. */
     public static final String TASKS_PREFS = "download_tasks";
-    /** 下载历史（下载管理页数据源）：name / path / size / time / status（done|cancelled|failed） */
+    /** YunX parser queue, rendered by the same shared UI but stored independently. */
+    public static final String YUNX_TASKS_PREFS = "yunx_download_tasks";
+    /** Dsu host history: name / path / size / time / status / source. */
     public static final String HISTORY_PREFS = "download_history";
+    /** YunX parser history, independent from the Dsu host history. */
+    public static final String YUNX_HISTORY_PREFS = "yunx_download_history";
 
     // v3.8.6：全新通知渠道（旧渠道「rom_download」在幽灵通知时代可能已被屏蔽，弃用并删除）
     private static final String CHANNEL = "rom_download_v2";
@@ -98,6 +115,9 @@ public final class DownloadService extends Service {
         final String pkg;         // 包类型文案（卡刷包 / vivo OTA / OPlus OTA…）
         final int threads;
         final long chunkMB;
+        final String headersEncrypted;
+        final String folderRoot;
+        final String source;
         final Object pauseLock = new Object();
         volatile boolean paused;
         volatile boolean cancelled;
@@ -113,6 +133,20 @@ public final class DownloadService extends Service {
         int lastPercent = -1;
 
         Task(String id, String address, File output, String page, String pkg, int threads, long chunkMB) {
+            this(id, address, output, page, pkg, threads, chunkMB, "");
+        }
+
+        Task(String id, String address, File output, String page, String pkg, int threads, long chunkMB,
+             String headersEncrypted) {
+            this(id, address, output, page, pkg, threads, chunkMB, headersEncrypted, "");
+        }
+        Task(String id, String address, File output, String page, String pkg, int threads, long chunkMB,
+             String headersEncrypted, String folderRoot) {
+            this(id, address, output, page, pkg, threads, chunkMB, headersEncrypted, folderRoot,
+                    inferSource(null, pkg));
+        }
+        Task(String id, String address, File output, String page, String pkg, int threads, long chunkMB,
+             String headersEncrypted, String folderRoot, String source) {
             this.id = id;
             this.address = address;
             // v3.40.11：GitHub 系链接镜像优先（国内直连能连上但常被限速到 KB/s 级且不报错，
@@ -128,7 +162,16 @@ public final class DownloadService extends Service {
             this.pkg = pkg;
             this.threads = threads;
             this.chunkMB = chunkMB;
+            this.headersEncrypted = headersEncrypted == null ? "" : headersEncrypted;
+            this.folderRoot = folderRoot == null ? "" : folderRoot;
+            this.source = inferSource(source, pkg);
         }
+    }
+
+    private static String inferSource(String source, String pkg) {
+        if (SOURCE_YUNX.equalsIgnoreCase(source)) return SOURCE_YUNX;
+        if (SOURCE_DSU.equalsIgnoreCase(source)) return SOURCE_DSU;
+        return pkg != null && pkg.startsWith("网盘 ·") ? SOURCE_YUNX : SOURCE_DSU;
     }
 
     private final List<Task> tasks = new ArrayList<>();   // 全部任务（活跃 + 待下载）
@@ -211,7 +254,10 @@ public final class DownloadService extends Service {
                     intent.getStringExtra(EXTRA_PAGE) == null ? "" : intent.getStringExtra(EXTRA_PAGE),
                     intent.getStringExtra(EXTRA_PACKAGE) == null ? "下载" : intent.getStringExtra(EXTRA_PACKAGE),
                     intent.getIntExtra("download_threads", 16),
-                    intent.getLongExtra("download_chunk_mb", 8));
+                    intent.getLongExtra("download_chunk_mb", 8),
+                    intent.getStringExtra(EXTRA_HEADERS_ENCRYPTED),
+                    intent.getStringExtra(EXTRA_FOLDER_ROOT),
+                    inferSource(intent.getStringExtra(EXTRA_SOURCE), intent.getStringExtra(EXTRA_PACKAGE)));
             synchronized (listLock) { tasks.add(task); }
             startOrQueue(task);
             ensureForeground();   // 有活跃任务必须满足 startForegroundService 5 秒契约
@@ -240,7 +286,10 @@ public final class DownloadService extends Service {
                         intent.getStringExtra(EXTRA_PAGE) == null ? "" : intent.getStringExtra(EXTRA_PAGE),
                         intent.getStringExtra(EXTRA_PACKAGE) == null ? "下载" : intent.getStringExtra(EXTRA_PACKAGE),
                         intent.getIntExtra("download_threads", 16),
-                        intent.getLongExtra("download_chunk_mb", 8));
+                        intent.getLongExtra("download_chunk_mb", 8),
+                        intent.getStringExtra(EXTRA_HEADERS_ENCRYPTED),
+                        intent.getStringExtra(EXTRA_FOLDER_ROOT),
+                        inferSource(intent.getStringExtra(EXTRA_SOURCE), intent.getStringExtra(EXTRA_PACKAGE)));
                 synchronized (listLock) { tasks.add(task); }
                 startOrQueue(task);
                 ensureForeground();
@@ -320,6 +369,9 @@ public final class DownloadService extends Service {
             task.cancelled = false;
             task.lastPercent = -1;
             task.lastNotifyAt = 0;
+            // Persist before the worker starts; the manager Activity can open immediately after
+            // startForegroundService(), before the first progress callback arrives.
+            persistTasks();
             task.worker = new Thread(() -> runTask(task), "dsu-download-" + slot);
             task.worker.start();
         }
@@ -359,11 +411,26 @@ public final class DownloadService extends Service {
         broadcastTask(task, "下载已取消", -1, -1);
     }
 
+    /** Decode encrypted drive headers only in memory immediately before launching aria2c. */
+    private Map<String, String> decryptRequestHeaders(String encrypted) throws Exception {
+        if (encrypted == null || encrypted.isEmpty()) return Collections.emptyMap();
+        String json = com.yunx.app.data.security.DownloadRequestVault.decryptHeaders(encrypted);
+        JSONObject object = new JSONObject(json);
+        Map<String, String> headers = new HashMap<>();
+        java.util.Iterator<String> keys = object.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            String value = object.optString(key, "");
+            if (!key.isEmpty() && !value.isEmpty()) headers.put(key, value);
+        }
+        return headers;
+    }
+
     // ---------- 任务工作线程（每任务一个，逻辑同 v3.8.6 单任务引擎） ----------
 
     private void runTask(Task task) {
-        if (task.address == null || !task.address.matches("https?://.+/.+(?:[?#].*)?")) {
-            broadcastTask(task, "下载地址无效，缺少完整 ROM 文件名", task.output.length(), -1);
+        if (!isValidHttpAddress(task.address)) {
+            broadcastTask(task, "下载地址无效，请重新获取完整 HTTP(S) 直链", task.output.length(), -1);
             endTask(task, "下载地址无效", false);
             return;
         }
@@ -373,6 +440,14 @@ public final class DownloadService extends Service {
         task.eta = -1;
         task.lastPercent = -1;
         task.lastNotifyAt = 0;
+        final Map<String, String> requestHeaders;
+        try {
+            requestHeaders = decryptRequestHeaders(task.headersEncrypted);
+        } catch (Exception error) {
+            broadcastTask(task, "下载认证信息无法解密，请重新获取下载链接", -1, -1);
+            endTask(task, "下载认证信息失效", false);
+            return;
+        }
         broadcastTask(task, "正在下载: " + task.output.getName(), task.output.length(), -1);
         notifyTaskNow(task);
         while (!task.cancelled) {
@@ -408,11 +483,11 @@ public final class DownloadService extends Service {
                     completed[0] = true;
                     Aria2Downloader.deleteCheckpointFiles(completedFile);
                     // v3.8.2 需求保留：仅下载成功才写入历史
-                    recordHistory(completedFile.getName(), completedFile.getAbsolutePath(),
-                            completedFile.length(), "done");
+                    recordHistory(DownloadService.this, completedFile.getName(), completedFile.getAbsolutePath(),
+                            completedFile.length(), "done", task.folderRoot, task.source);
                     broadcastTask(task, "下载完成", completedFile.length(), completedFile.length());
                 }
-            }, task.threads, task.chunkMB);
+            }, task.threads, task.chunkMB, requestHeaders, 0L);
             task.downloader = engine;
             engine.run();
             task.downloader = null;
@@ -473,9 +548,14 @@ public final class DownloadService extends Service {
         int slot = task.slot;
         synchronized (listLock) { tasks.remove(task); }
         persistTasks();
+        if (!completed) {
+            String status = finalText != null && finalText.startsWith("下载已取消") ? "cancelled" : "failed";
+            recordHistory(this, task.output.getName(), task.output.getAbsolutePath(),
+                    task.output.exists() ? task.output.length() : 0L, status, task.folderRoot, task.source);
+        }
         if (slot >= 0) {
             try { getSystemService(NotificationManager.class).cancel(NOTE_IDS[slot]); } catch (Exception ignored) { }
-            postFinalNotification(FINAL_BASE + slot, finalText);
+            postFinalNotification(FINAL_BASE + slot, task, finalText, completed);
         }
         Task next = firstPendingTask();
         if (next != null) activate(next);
@@ -488,6 +568,18 @@ public final class DownloadService extends Service {
             // 活跃为 0 但仍有排队（理论不可达：activate 已接续）→ 兜底激活
             Task pending = firstPendingTask();
             if (pending != null) { activate(pending); ensureForeground(); }
+        }
+    }
+
+    private static boolean isValidHttpAddress(String address) {
+        if (address == null || address.trim().isEmpty() || address.matches(".*\\s+.*")) return false;
+        try {
+            android.net.Uri uri = android.net.Uri.parse(address);
+            String scheme = uri.getScheme();
+            return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    && uri.getHost() != null && !uri.getHost().trim().isEmpty();
+        } catch (Exception ignored) {
+            return false;
         }
     }
 
@@ -530,14 +622,16 @@ public final class DownloadService extends Service {
         }
     }
 
-    /** 任务列表持久化（页面恢复/对账的唯一数据源，见 DownloadTaskStore） */
+    /** 保存全量调度快照，并分别镜像到宿主与 YunX 的独立可见任务队列。 */
     private void persistTasks() {
         try {
-            JSONArray array = new JSONArray();
+            JSONArray runtime = new JSONArray();
+            JSONArray dsuQueue = new JSONArray();
+            JSONArray yunxQueue = new JSONArray();
             List<Task> snapshot;
             synchronized (listLock) { snapshot = new ArrayList<>(tasks); }
             for (Task task : snapshot) {
-                array.put(new JSONObject()
+                JSONObject row = new JSONObject()
                         .put("id", task.id)
                         .put("address", task.address)
                         .put("output", task.output.getAbsolutePath())
@@ -545,15 +639,25 @@ public final class DownloadService extends Service {
                         .put("pkg", task.pkg)
                         .put("threads", task.threads)
                         .put("chunk", task.chunkMB)
+                        .put("headers_encrypted", task.headersEncrypted)
+                        .put("folder_root", task.folderRoot)
+                        .put("source", task.source)
                         .put("state", task.pending ? "pending" : task.paused ? "paused" : "downloading")
                         .put("message", task.message)
                         .put("done", task.done)
                         .put("total", task.total)
                         .put("speed", task.speed)
-                        .put("eta", task.eta));
+                        .put("eta", task.eta);
+                runtime.put(row);
+                if (SOURCE_YUNX.equals(task.source)) yunxQueue.put(row);
+                else dsuQueue.put(row);
             }
+            getSharedPreferences(RUNTIME_TASKS_PREFS, MODE_PRIVATE).edit()
+                    .putString("items", runtime.toString()).apply();
             getSharedPreferences(TASKS_PREFS, MODE_PRIVATE).edit()
-                    .putString("items", array.toString()).apply();
+                    .putString("items", dsuQueue.toString()).apply();
+            getSharedPreferences(YUNX_TASKS_PREFS, MODE_PRIVATE).edit()
+                    .putString("items", yunxQueue.toString()).apply();
         } catch (Exception ignored) { }
     }
 
@@ -562,18 +666,27 @@ public final class DownloadService extends Service {
         synchronized (listLock) {
             if (!tasks.isEmpty()) { broadcastAllTasks(); return; }
             try {
-                JSONArray array = new JSONArray(getSharedPreferences(TASKS_PREFS, MODE_PRIVATE)
-                        .getString("items", "[]"));
+                String saved = getSharedPreferences(RUNTIME_TASKS_PREFS, MODE_PRIVATE)
+                        .getString("items", null);
+                if (saved == null) {
+                    // Upgrade path from older builds whose single visible queue also held YunX tasks.
+                    saved = getSharedPreferences(TASKS_PREFS, MODE_PRIVATE).getString("items", "[]");
+                }
+                JSONArray array = new JSONArray(saved);
                 for (int i = 0; i < array.length(); i++) {
                     JSONObject item = array.getJSONObject(i);
                     String output = item.optString("output", "");
                     String address = item.optString("address", "");
                     if (output.isEmpty() || address.isEmpty()) continue;
+                    String pkg = item.optString("pkg", "下载");
                     Task task = new Task(output, address, new File(output),
                             item.optString("page", ""),
-                            item.optString("pkg", "下载"),
+                            pkg,
                             item.optInt("threads", 16),
-                            item.optLong("chunk", 8));
+                            item.optLong("chunk", 8),
+                            item.optString("headers_encrypted", ""),
+                            item.optString("folder_root", ""),
+                            inferSource(item.optString("source", ""), pkg));
                     task.pending = "pending".equals(item.optString("state", "downloading"));
                     task.paused = "paused".equals(item.optString("state", "downloading"));
                     task.message = item.optString("message", "正在准备下载");
@@ -671,7 +784,7 @@ public final class DownloadService extends Service {
      * 正文「9% · 921.6MB / 9.00GB · 58.7MB/s · 剩余 2分30秒」，进度条 + 暂停/取消按钮。
      */
     private Notification buildTaskNotification(Task task) {
-        Intent open = new Intent(this, DownloadManagerActivity.class);
+        Intent open = managerIntent(task);
         PendingIntent pending = PendingIntent.getActivity(this, NOTE_IDS[Math.max(0, task.slot)], open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         long done = task.done, total = task.total;
@@ -717,18 +830,37 @@ public final class DownloadService extends Service {
     }
 
     /** 发布任务最终状态通知（下载已取消/完成/失败） */
-    private void postFinalNotification(int id, String text) {
-        Intent open = new Intent(this, DownloadManagerActivity.class);
+    private void postFinalNotification(int id, Task task, String text, boolean completed) {
+        Intent open = managerIntent(task);
         PendingIntent pending = PendingIntent.getActivity(this, id, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        long actualSize = task.output.exists() ? task.output.length() : Math.max(0, task.done);
+        String fileName = task.output.getName();
+        String title = completed ? "下载完成：" + fileName
+                : (text != null && text.startsWith("下载已取消") ? "下载已取消：" : "下载失败：") + fileName;
+        String body = completed
+                ? "文件大小：" + Aria2Downloader.formatBytes(actualSize)
+                : (text == null || text.trim().isEmpty()
+                    ? (SOURCE_YUNX.equals(task.source) ? "请打开网盘解析的下载页查看详情" : "请打开 Dsu 下载管理查看详情")
+                    : text);
         Notification done = new Notification.Builder(this, CHANNEL)
-                .setContentTitle("Dsu 管理器下载")
-                .setContentText(text)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(new Notification.BigTextStyle().bigText(body))
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentIntent(pending)
                 .setAutoCancel(true)
                 .build();
         try { getSystemService(NotificationManager.class).notify(id, done); } catch (Exception ignored) { }
+    }
+
+    private Intent managerIntent(Task task) {
+        if (SOURCE_YUNX.equals(task.source)) {
+            return new Intent(this, com.yunx.app.MainActivity.class)
+                    .putExtra(com.yunx.app.MainActivity.EXTRA_OPEN_TAB,
+                            com.yunx.app.MainActivity.TAB_DOWNLOAD);
+        }
+        return new Intent(this, DownloadManagerActivity.class);
     }
 
     private void createChannel() {
@@ -746,23 +878,33 @@ public final class DownloadService extends Service {
 
     public static void recordHistory(android.content.Context context,
             String name, String path, long size, String status) {
+        recordHistory(context, name, path, size, status, "", SOURCE_DSU);
+    }
+
+    public static void recordHistory(android.content.Context context,
+            String name, String path, long size, String status, String folderRoot) {
+        recordHistory(context, name, path, size, status, folderRoot, SOURCE_DSU);
+    }
+
+    public static void recordHistory(android.content.Context context,
+            String name, String path, long size, String status, String folderRoot, String source) {
         try {
-            SharedPreferences prefs = context.getSharedPreferences(HISTORY_PREFS, MODE_PRIVATE);
+            String normalizedSource = inferSource(source, "");
+            String prefsName = SOURCE_YUNX.equals(normalizedSource) ? YUNX_HISTORY_PREFS : HISTORY_PREFS;
+            SharedPreferences prefs = context.getSharedPreferences(prefsName, MODE_PRIVATE);
             JSONArray array = new JSONArray(prefs.getString("items", "[]"));
             JSONObject item = new JSONObject();
             item.put("name", name == null ? "" : name)
                     .put("path", path == null ? "" : path)
                     .put("size", size)
                     .put("time", System.currentTimeMillis())
-                    .put("status", status);
+                    .put("status", status)
+                    .put("source", normalizedSource);
+            if (folderRoot != null && !folderRoot.trim().isEmpty()) item.put("folder_root", folderRoot);
             array.put(item);
             while (array.length() > 50) array.remove(0);
             prefs.edit().putString("items", array.toString()).apply();
         } catch (Exception ignored) { }
-    }
-
-    private void recordHistory(String name, String path, long size, String status) {
-        recordHistory(this, name, path, size, status);
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }

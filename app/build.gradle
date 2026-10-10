@@ -1,6 +1,7 @@
 plugins { 
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
 android { namespace 'com.probiotics.xiaoni'; compileSdk 37
@@ -11,8 +12,8 @@ android { namespace 'com.probiotics.xiaoni'; compileSdk 37
     kotlinOptions {
         jvmTarget = '17'
     }
-    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 35510; versionName '3.55.10' }
-    def releaseKey = file('my-release-key.jks').exists() ? file('my-release-key.jks') : file('release-keystore.jks')
+    defaultConfig { applicationId 'com.probiotics.xiaoni'; minSdk 29; targetSdk 37; versionCode 35550; versionName '3.55.50' }
+    def releaseKey = rootProject.file('release-keystore.jks').exists() ? rootProject.file('release-keystore.jks') : (file('my-release-key.jks').exists() ? file('my-release-key.jks') : file('release-keystore.jks'))
     signingConfigs { release { storeFile releaseKey; storePassword 'changeit'; keyAlias 'tianming-release'; keyPassword 'changeit' } }
     signingConfigs.release {
         enableV1Signing true
@@ -21,7 +22,7 @@ android { namespace 'com.probiotics.xiaoni'; compileSdk 37
     }
     // v3.41.11：启用 R8 压缩 + 资源收缩（APK 减重；17 个 DNA CLI 工具已移至云端下载）
     buildTypes { release { minifyEnabled true; shrinkResources true; signingConfig signingConfigs.release; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
-    buildFeatures { aidl true; buildConfig true; viewBinding true }
+    buildFeatures { aidl true; buildConfig true; viewBinding true; compose true }
     packagingOptions { jniLibs { useLegacyPackaging true } }
     externalNativeBuild { cmake { path file('src/main/cpp/CMakeLists.txt'); version '3.22.1' } }
     sourceSets {
@@ -49,13 +50,20 @@ android { namespace 'com.probiotics.xiaoni'; compileSdk 37
 }
 
 dependencies {
+    implementation project(':yunx')
+    implementation platform(libs.androidx.compose.bom)
+    implementation libs.androidx.activity.compose
+    implementation libs.androidx.ui
+    implementation libs.androidx.ui.graphics
+    implementation libs.androidx.material3
+    implementation 'androidx.compose.material:material-icons-extended'
     implementation 'com.github.topjohnwu.libsu:core:6.0.0'
     implementation 'com.github.topjohnwu.libsu:service:6.0.0'
     implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:4.3'
     implementation 'org.apache.commons:commons-compress:1.27.1'
     implementation 'org.tukaani:xz:1.10'
     implementation 'com.termux.termux-app:terminal-view:0.118.0'
-    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.2.10'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'androidx.core:core:1.12.0'

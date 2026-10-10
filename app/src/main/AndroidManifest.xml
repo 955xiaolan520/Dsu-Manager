@@ -29,7 +29,7 @@
             <data android:scheme="file" />
         </intent>
     </queries>
-    <application android:theme="@style/AppTheme" android:label="Dsu 管理器" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true" android:requestLegacyExternalStorage="true" android:extractNativeLibs="true" android:enableOnBackInvokedCallback="false">
+    <application android:name=".DsuManagerApplication" android:theme="@style/AppTheme" android:label="Dsu 管理器" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true" android:requestLegacyExternalStorage="true" android:extractNativeLibs="true" android:enableOnBackInvokedCallback="false">
         <activity android:name=".launch.LaunchActivity" android:exported="false" android:theme="@style/Theme.Launch" />
         <activity android:name=".OnboardingActivity" android:screenOrientation="portrait" android:exported="true" android:theme="@style/AppTheme">
             <intent-filter>
@@ -40,6 +40,7 @@
         <activity android:name=".SettingsActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".RomActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".DownloadManagerActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".DsuDirectoryPickerActivity" android:screenOrientation="portrait" android:exported="false" android:theme="@style/AppTheme" />
         <activity android:name=".VivoActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".OPlusActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".OPlusLookupActivity" android:screenOrientation="portrait" android:exported="false" />

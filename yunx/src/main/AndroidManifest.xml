@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  YunX (云析) embedded module. Copyright (C) 2026 CYQawa.
+  Distributed under GNU AGPL-3.0; see /LICENSE and /THIRD_PARTY_NOTICES.md.
+  Adapted for Dsu-Manager: the module deliberately does not declare an Application,
+  launcher activity, network-security policy, or FileProvider. It uses the host app's
+  application lifecycle and FileProvider.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <application>
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:label="@string/yunx_feature_name"
+            android:theme="@style/Theme.ComposeEmptyActivity" />
+        <activity
+            android:name=".crash.CrashActivity"
+            android:exported="false"
+            android:process=":yunx_crash"
+            android:theme="@style/Theme.ComposeEmptyActivity" />
+        <service
+            android:name=".data.download.DownloadService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+</manifest>

@@ -344,7 +344,6 @@ public final class RomActivity extends BaseActivity {
         results.setOrientation(LinearLayout.VERTICAL);
         results.setPadding(0, dp(6), 0, 0);
         content.addView(results, new LinearLayout.LayoutParams(-1, -2));
-        
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(android.graphics.Color.TRANSPARENT);

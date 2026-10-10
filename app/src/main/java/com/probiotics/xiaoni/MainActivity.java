@@ -3743,12 +3743,13 @@ public class MainActivity extends BaseActivity {
            });
            titleRow.addView(downloadManager, new LinearLayout.LayoutParams(-2, dp(44)));
            page.addView(titleRow, new LinearLayout.LayoutParams(-1, dp(48)));
-           TextView subtitle = text(t("小米 / Redmi / POCO 系统更新查询与下载", "Xiaomi / Redmi / POCO update lookup and downloads"), 13, 0xffe5edf7);
+           TextView subtitle = text(t("网盘解析与各品牌 ROM 工具", "Netdisk parsing and ROM tools"), 13, 0xffe5edf7);
             page.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
+             page.addView(romVendorCard("网盘分享解析", "多网盘链接解析 · aria2c 多线程下载", R.drawable.vendor_glass_yunx, "yunx"));
              page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.vendor_glass_blue, "xiaomi"));
              page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.vendor_glass_purple, "vivo"));
               page.addView(romVendorCard("OPPO / 一加 / 真我", "ColorOS · 官方系统更新查询", R.drawable.vendor_glass_orange, "oppo"));
-              page.addView(romVendorCard("提取镜像", "在线直链 / 本地 ROM 包 · payload.bin 分区镜像提取", R.drawable.vendor_glass_green, "extract"));
+             page.addView(romVendorCard("提取镜像", "在线直链 / 本地 ROM 包 · payload.bin 分区镜像提取", R.drawable.vendor_glass_green, "extract"));
              page.addView(romVendorCard("OTA 合并工具", "通用增量包合并 · 小米 / OPPO / vivo 等全机型支持", R.drawable.vendor_glass_cyan, "otamerge"));
              return page;
         }
@@ -3791,8 +3792,9 @@ public class MainActivity extends BaseActivity {
                                    : "vivo".equals(vendorId) ? VivoActivity.class
                                    : "extract".equals(vendorId) ? PayloadDumperActivity.class
                                    : "otamerge".equals(vendorId) ? OtaMergeActivity.class
+                                   : "yunx".equals(vendorId) ? com.yunx.app.MainActivity.class
                                    : RomActivity.class);
-                  if (!"extract".equals(vendorId) && !"otamerge".equals(vendorId)) intent.putExtra("vendor", vendorId);
+                  if (!"extract".equals(vendorId) && !"otamerge".equals(vendorId) && !"yunx".equals(vendorId)) intent.putExtra("vendor", vendorId);
                   startActivity(intent);
                   // 不同厂商使用不同的炸裂转场动画
                   if ("oppo".equals(vendorId)) {
@@ -3807,6 +3809,9 @@ public class MainActivity extends BaseActivity {
                 } else if ("otamerge".equals(vendorId)) {
                     // OTA合并: 缩放淡入
                     overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
+                } else if ("yunx".equals(vendorId)) {
+                    // 网盘解析：底部滑入
+                    overridePendingTransition(R.anim.slide_up_in, R.anim.slide_up_out);
                 } else {
                     // 小米: 缩放 + 淡入
                     overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
