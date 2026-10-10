@@ -896,24 +896,46 @@ object DnaTools {
      * 页面销毁时本次会话已结束，无引用。作废 memo：下次进入页面重新按需放行/拷贝。
      */
     @JvmStatic
+    @Synchronized
     fun releaseJniCache(ctx: Context): Long {
+        // 必须与 resolveJniReadable 串行：退出页面时不能一边 rm 一边让后台 cp
+        // 又把 root 属主副本重新创建出来。
         var freed = 0L
+        var removed = 0L
         for (name in arrayOf("payload_jni_input", "bin_parse_input")) {
             for (base in arrayOf(ctx.cacheDir, ctx.filesDir)) {
                 val f = File(base, name)
-                if (f.exists()) {
-                    freed += treeSize(f)
-                    runCatching { f.deleteRecursively() }
-                    // root 属主残留（app 视图 EACCES）经 su 兜底删除
-                    if (f.exists()) runCatching {
-                        RootShell.exec("rm -rf '" + f.absolutePath + "'", timeoutMs = 120000)
-                    }
+                val path = f.absolutePath
+                // app 对 root 属主文件可能得到 exists=false，因此不能把 su 删除放在
+                // File.exists() 分支里；无条件执行 Java 删除 + root 删除，并以 root
+                // 的最终 test 结果作为是否真的清理成功的依据。
+                val before = runCatching {
+                    if (f.exists()) treeSize(f) else rootTreeSize(path)
+                }.getOrDefault(0L)
+                runCatching { f.deleteRecursively() }
+                val result = runCatching {
+                    RootShell.exec("rm -rf '" + path + "' && [ ! -e '" + path + "' ]", timeoutMs = 120000)
+                }.getOrNull()
+                val gone = result?.code == 0 && !rootPathExists(path)
+                if (gone) {
+                    removed += before
                 }
             }
         }
         jniReadableMemo = null
-        return freed
+        return removed
     }
+
+    /** root 视角统计缓存副本大小；应用视角不可见时仍能得到真实值。 */
+    private fun rootTreeSize(path: String): Long = runCatching {
+        RootShell.exec("du -sb '" + path + "' 2>/dev/null | awk '{print $1}'", timeoutMs = 30000)
+            .stdout.trim().toLongOrNull() ?: 0L
+    }.getOrDefault(0L)
+
+    /** root 视角确认路径是否仍存在，避免“提示已清理但应用详情仍有缓存”。 */
+    private fun rootPathExists(path: String): Boolean = runCatching {
+        RootShell.exec("[ -e '" + path + "' ]", timeoutMs = 10000).code == 0
+    }.getOrDefault(true)
 
     /**
      * v3.40.17：确保 app 进程（JNI）可写 /sdcard 下的输出目录。

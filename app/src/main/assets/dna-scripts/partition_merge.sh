@@ -1,24 +1,34 @@
-project=$(cat $TMPDIR/DNA.ini)
-DNA_PRO=$DNA_DIR/$project
-DNA_TMP=$DNA_TMP/$project
+#!/system/bin/sh
+# PDNA canonical paths; DNA_* is accepted only as a legacy fallback.
+set -u
+PDNA_DIR="${PDNA_DIR:-${DNA_DIR:-/sdcard/PDNA}}"
+PDNA_TMP="${PDNA_TMP:-${DNA_TMP:-/data/PDNA}}"
+PDNA_PRO="${PDNA_PRO:-}"
+PDNA_DRO="${PDNA_DRO:-}"
+TMPDIR="${TMPDIR:-/data/local/tmp}"
+project="${PDNA_PROJECT:-}"
+[ -n "$project" ] || [ ! -f "$TMPDIR/PDNA.ini" ] || project=$(cat "$TMPDIR/PDNA.ini")
+[ -n "$project" ] || [ ! -f "$TMPDIR/DNA.ini" ] || project=$(cat "$TMPDIR/DNA.ini")
+PDNA_PRO="${PDNA_PRO:-$PDNA_DIR/$project}"
+PDNA_TMP="$PDNA_TMP/$project"
 
-systemdir="$DNA_TMP/system/system"
-configdir="$DNA_TMP/config"
-dynamic_fs_dir="$DNA_TMP/dynamic_fs"
+systemdir="$PDNA_TMP/system/system"
+configdir="$PDNA_TMP/config"
+dynamic_fs_dir="$PDNA_TMP/dynamic_fs"
 target_fs="$configdir/system_fs_config"
 target_contexts="$configdir/system_file_contexts"
 
-rm -rf $DNA_TMP/dynamic_fs
-mkdir -p $DNA_TMP/dynamic_fs
+rm -rf $PDNA_TMP/dynamic_fs
+mkdir -p $PDNA_TMP/dynamic_fs
 
 for partition in $partition_name ;do
   [ ! -d $systemdir ] && continue && echo "system.img未解包，请解包后继续"
-  [ ! -d $DNA_TMP/$partition ] && continue && echo "$partition.img未解包，请解包后继续"
+  [ ! -d $PDNA_TMP/$partition ] && continue && echo "$partition.img未解包，请解包后继续"
   echo "> 合并 ${partition} 分区"
-  if [ -d $DNA_TMP/$partition ];then
+  if [ -d $PDNA_TMP/$partition ];then
     rm -rf $systemdir/$partition
-    rm -rf $DNA_TMP/$partition/lost+found
-    mv $DNA_TMP/$partition $systemdir/
+    rm -rf $PDNA_TMP/$partition/lost+found
+    mv $PDNA_TMP/$partition $systemdir/
     rm -rf "$systemdir/../$partition"
     ln -s "/system/$partition" "$systemdir/../$partition"
   fi

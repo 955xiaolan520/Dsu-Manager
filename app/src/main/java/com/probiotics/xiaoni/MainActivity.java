@@ -725,7 +725,17 @@ public class MainActivity extends BaseActivity {
                                  new int[][]{{android.R.attr.state_pressed}}, new int[]{0x40FFFFFF}),
                          glass, null);
          card.setBackground(ripple);
-         card.setElevation(dp(8));
+         // LayerDrawable/RippleDrawable 的默认 outline 可能退化为矩形，导致四角出现直角阴影。
+         // 显式提供与背景一致的圆角轮廓，裁剪和 elevation 都使用同一几何形状。
+         if (android.os.Build.VERSION.SDK_INT >= 21) {
+             card.setClipToOutline(true);
+             card.setOutlineProvider(new android.view.ViewOutlineProvider() {
+                 @Override public void getOutline(View view, android.graphics.Outline outline) {
+                     outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(22));
+                 }
+             });
+         }
+         card.setElevation(0f);
          card.setOnClickListener(v -> {
              Haptics.perform(v);
              action(index);
@@ -805,7 +815,7 @@ public class MainActivity extends BaseActivity {
            addNavigationItem(items, t("OTG", "OTG"), 3, v -> selectTab(3));
           addNavigationItem(items, t("检测", "Check"), 4, v -> selectTab(4));
           liquidIndicator = new LiquidGlassIndicator(this);
-          liquidIndicator.setElevation(dp(4));
+          liquidIndicator.setElevation(0f);
           navigation.addView(liquidIndicator, new FrameLayout.LayoutParams(dp(62), dp(48)));
          // v3.51.76: 不要硬编码tab=0，等待初始化后通过animateNavigation设置
          // navigation.post(() -> moveLiquidIndicator(0, false));
@@ -2132,7 +2142,7 @@ public class MainActivity extends BaseActivity {
           settingsBg.setCornerRadius(dp(22));
           settingsBg.setStroke(Math.max(1, dp(2)), 0xE6FFFFFF);
           settingsEntry.setBackground(settingsBg);
-          settingsEntry.setElevation(dp(6));
+          settingsEntry.setElevation(0f);
           settingsEntry.setOnClickListener(v -> {
               Haptics.perform(v);
               dnaSettingsMode = true;
@@ -2151,7 +2161,7 @@ public class MainActivity extends BaseActivity {
           pinnedBg.setCornerRadius(dp(18));
           pinnedBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
           pinnedCard.setBackground(pinnedBg);
-          pinnedCard.setElevation(dp(4));
+          pinnedCard.setElevation(0f);
           TextView pinnedTitle = text("📌 " + t("置顶提示", "Pinned"), 14, 0xff6b3d00);
           pinnedTitle.setTypeface(null, 1);
           pinnedTitle.setPadding(0, 0, 0, dp(5));
@@ -2182,7 +2192,7 @@ public class MainActivity extends BaseActivity {
           statusBg.setCornerRadius(dp(18));
           statusBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
           statusCard.setBackground(statusBg);
-          statusCard.setElevation(dp(4));
+          statusCard.setElevation(0f);
           
           // 第一行：ROOT 状态 + 工具链文件下载状态
           LinearLayout firstRow = new LinearLayout(this);
@@ -2280,7 +2290,7 @@ public class MainActivity extends BaseActivity {
           projectBg.setCornerRadius(dp(18));
           projectBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
           projectCard.setBackground(projectBg);
-          projectCard.setElevation(dp(4));
+          projectCard.setElevation(0f);
           LinearLayout currentRow = new LinearLayout(this);
           currentRow.setOrientation(LinearLayout.HORIZONTAL);
           currentRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -2420,7 +2430,7 @@ public class MainActivity extends BaseActivity {
           noticeBg.setCornerRadius(dp(18));
           noticeBg.setStroke(Math.max(1, dp(1)), 0x66FF8A8A);
           noticeCard.setBackground(noticeBg);
-          noticeCard.setElevation(dp(4));
+          noticeCard.setElevation(0f);
           TextView noticeTitle = text("⚠ " + t("声明", "Notice"), 14, 0xffC03A2B);
           noticeTitle.setTypeface(null, 1);
           noticeTitle.setPadding(0, 0, 0, dp(6));
@@ -2491,7 +2501,7 @@ public class MainActivity extends BaseActivity {
                                   new int[][]{{android.R.attr.state_pressed}}, new int[]{0x3335A8C4}),
                           cardBg, null);
           card.setBackground(ripple);
-          card.setElevation(dp(4));
+          card.setElevation(0f);
           card.setOnClickListener(v -> {
               Haptics.perform(v);
               openDnaMode(mode, filter, anim);
@@ -3738,7 +3748,7 @@ public class MainActivity extends BaseActivity {
            dlMgrBg.setCornerRadius(dp(22));
            dlMgrBg.setStroke(Math.max(1, dp(2)), 0xE6FFFFFF);
            downloadManager.setBackground(dlMgrBg);
-           downloadManager.setElevation(dp(6));
+           downloadManager.setElevation(0f);
            downloadManager.setOnClickListener(v -> {
                Haptics.perform(v);
                startActivity(new Intent(this, DownloadManagerActivity.class));
@@ -3764,7 +3774,7 @@ public class MainActivity extends BaseActivity {
            card.setPadding(dp(18), dp(16), dp(18), dp(16));
            // 品牌液态玻璃框（同首页 logo 框结构：品牌渐变底 + 白描边 + 顶部高光）
            card.setBackgroundResource(glassBackground);
-           card.setElevation(dp(7));
+           card.setElevation(0f);
            TextView title = text(heading, 19, Color.WHITE);
            title.setTypeface(null, 1);
            card.addView(title, new LinearLayout.LayoutParams(-1, dp(34)));
@@ -3788,7 +3798,7 @@ public class MainActivity extends BaseActivity {
            enterBg.setCornerRadius(dp(23));
            enterBg.setStroke(Math.max(1, dp(1)), 0xFFFFFFFF);
            enter.setBackground(enterBg);
-           enter.setElevation(dp(5));
+           enter.setElevation(0f);
               enter.setOnClickListener(v -> {
                   Haptics.perform(v);
                    Intent intent = new Intent(this,
@@ -3970,7 +3980,7 @@ public class MainActivity extends BaseActivity {
               otgTabItems.addView(otgTabs[i], tabLp);
           }
           otgTabIndicator = new LiquidGlassIndicator(this);
-          otgTabIndicator.setElevation(dp(4));
+          otgTabIndicator.setElevation(0f);
           tabs.addView(otgTabIndicator, new FrameLayout.LayoutParams(dp(62), dp(48)));
           LinearLayout.LayoutParams tabsLp = new LinearLayout.LayoutParams(-1, dp(68));
           tabsLp.setMargins(0, 0, 0, dp(10));
@@ -5301,7 +5311,7 @@ public class MainActivity extends BaseActivity {
           glass.setStroke(dp(1), stroke);
           button.setBackground(glass);
           button.setTextColor(selected ? 0xff102d3b : 0xff344c5e);
-          button.setElevation(dp(1));
+          button.setElevation(0f);
       }
 
       private List<AdbManager.PartitionInfo> allPartitions = new ArrayList<>();
@@ -5789,7 +5799,7 @@ public class MainActivity extends BaseActivity {
           fab.setPadding(dp(22), dp(14), dp(22), dp(14));
           fab.setTypeface(null, 1);
           fab.setStateListAnimator(null);
-          fab.setElevation(dp(6));
+          fab.setElevation(0f);
           fab.setOnClickListener(v -> executePartitionOperation());
           return fab;
       }
@@ -7156,10 +7166,8 @@ public class MainActivity extends BaseActivity {
                 background.setCornerRadius(dp(16)); // 16dp 圆角
                 row.setBackground(background);
                 
-                // 添加阴影效果
-                if (android.os.Build.VERSION.SDK_INT >= 21) {
-                    row.setElevation(dp(4));
-                }
+                // 不使用平台 elevation：圆角进度框不应在四角产生黑色延长阴影。
+                row.setElevation(0f);
                 
                 LinearLayout topRow = new LinearLayout(this);
                 topRow.setOrientation(LinearLayout.HORIZONTAL);

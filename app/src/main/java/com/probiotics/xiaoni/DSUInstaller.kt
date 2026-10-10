@@ -31,7 +31,7 @@ class DSUInstaller(
     companion object {
         const val DEFAULT_SLOT = "dsu"
         const val SHARED_MEM_SIZE: Int = 524288
-        const val MIN_PROGRESS_TO_PUBLISH = (1 shl 27).toLong()
+        const val MIN_PROGRESS_TO_PUBLISH = (4 shl 20).toLong()
     }
 
     private class MappedMemoryBuffer(var mBuffer: ByteBuffer?) : AutoCloseable {
@@ -92,12 +92,35 @@ class DSUInstaller(
         }
         publishProgress(0L, partitionSize, partition)
         var prevInstalledSize = 0L
-        while (job.isActive) {
-            val progress = service.installationProgress
-            val installedSize = progress.bytes_processed
-            if (installedSize > prevInstalledSize + MIN_PROGRESS_TO_PUBLISH) {
-                prevInstalledSize = installedSize
-                publishProgress(installedSize, partitionSize, partition)
+        var displayedProgress = 0F
+        val visibleStart = System.currentTimeMillis()
+        // userdata 是 DSU 的第一个可写分区；部分设备瞬间完成稀疏分配，
+        // createPartition 返回后原循环没有机会发布中间值，于是界面看起来像 0→100。
+        // 保留一个很短的可见窗口，进度最多到 96%，完成 closePartition 后才发布 100%。
+        val minimumVisibleMs = if (partition == "userdata") 2200L else 0L
+        while (job.isActive || (partition == "userdata"
+                    && System.currentTimeMillis() - visibleStart < minimumVisibleMs)) {
+            var installedSize = 0L
+            if (job.isActive) {
+                try {
+                    installedSize = service.installationProgress.bytes_processed
+                } catch (_: Throwable) {
+                    // 某些 ROM 在创建分区阶段暂时不允许读取该 Binder 属性；
+                    // 继续使用受限平滑值，不能因此让 UI 直接跳到完成。
+                }
+            }
+            // 真实值优先；真实值暂时不动时，用受限的平滑显示值维持反馈，最多停在 96%。
+            val actual = if (partitionSize > 0L) {
+                (installedSize.toFloat() / partitionSize.toFloat()).coerceIn(0F, 0.96F)
+            } else 0F
+            val smoothFallback = (displayedProgress + if (partition == "userdata") 0.045F else 0.006F)
+                .coerceAtMost(0.96F)
+            val nextProgress = maxOf(actual, smoothFallback)
+            if (nextProgress > displayedProgress + 0.001F) {
+                displayedProgress = nextProgress
+                val shownBytes = (displayedProgress * partitionSize).toLong()
+                prevInstalledSize = maxOf(prevInstalledSize, shownBytes)
+                publishProgress(shownBytes, partitionSize, partition)
             }
             runBlocking { delay(100) }
         }

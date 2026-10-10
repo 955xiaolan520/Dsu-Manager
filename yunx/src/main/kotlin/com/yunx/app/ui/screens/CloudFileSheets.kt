@@ -384,7 +384,7 @@ private fun ActionMenu(
         modifier = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 32.dp)
+            .padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 124.dp)
     ) {
         // 标题
         FileSheetHeader(file = file)

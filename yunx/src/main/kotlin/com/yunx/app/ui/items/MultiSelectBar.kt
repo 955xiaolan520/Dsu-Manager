@@ -68,7 +68,9 @@ internal fun MultiSelectBar(
             expanded = true,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = 12.dp, vertical = 16.dp),
+                // Dsu 的原生底部导航位于宿主 Activity 的最上层，不能只依赖系统导航栏 inset。
+                // 预留导航栏高度 + 安全间距，避免长按后的下载/分享/删除工具栏重叠。
+                .padding(start = 12.dp, end = 12.dp, top = 16.dp, bottom = 104.dp),
             colors = FloatingToolbarDefaults.standardFloatingToolbarColors(
                 toolbarContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh
             ),

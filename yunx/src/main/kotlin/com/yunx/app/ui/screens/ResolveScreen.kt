@@ -417,7 +417,7 @@ fun ResolveScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(top = if (dsuEmbeddedStyle) 96.dp else 16.dp, start = 16.dp, end = 16.dp)
         ) {
             animatedSuggestion?.let { suggestion ->
                 val shareParsed = ShareLinkParser.parse(suggestion)
@@ -982,7 +982,7 @@ private fun HomeShortcutTile(
                         else -> MaterialTheme.typography.labelSmall
                     },
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = Color(0xFF123C4A),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(horizontal = 4.dp)
@@ -1088,15 +1088,18 @@ private fun ClipboardSuggestCard(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        )
+            // Dsu 蓝灰背景上不能使用主题默认的浅色半透明容器，否则文字和按钮边界会消失。
+            containerColor = Color(0xF2E8F3F5)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xCCFFFFFF))
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Outlined.Link,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    tint = Color(0xFF123C4A)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
@@ -1104,12 +1107,12 @@ private fun ClipboardSuggestCard(
                         text = "检测到 $platformName 分享链接",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = Color(0xFF123C4A)
                     )
                     Text(
                         text = "是否粘贴到解析框并开始解析？",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = Color(0xFF123C4A)
                     )
                 }
             }
@@ -1120,14 +1123,14 @@ private fun ClipboardSuggestCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("忽略", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("忽略", color = Color(0xFF123C4A))
                 }
                 Spacer(modifier = Modifier.width(4.dp))
                 Button(
                     onClick = onPaste,
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
+                        containerColor = Color(0xFF176B78),
+                        contentColor = Color.White
                     )
                 ) {
                     Text("粘贴并解析")

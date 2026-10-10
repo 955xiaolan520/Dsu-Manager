@@ -1,20 +1,28 @@
-systemdir="$DNA_DRO/system"
-configdir="$DNA_DRO/config"
-dynamic_fs_dir="$DNA_DRO/dynamic_fs"
+#!/system/bin/sh
+# PDNA canonical paths; DNA_* is accepted only as a legacy fallback.
+set -u
+PDNA_DIR="${PDNA_DIR:-${DNA_DIR:-/sdcard/PDNA}}"
+PDNA_TMP="${PDNA_TMP:-${DNA_TMP:-/data/PDNA}}"
+PDNA_PRO="${PDNA_PRO:-}"
+PDNA_DRO="${PDNA_DRO:-}"
+TMPDIR="${TMPDIR:-/data/local/tmp}"
+systemdir="$PDNA_DRO/system"
+configdir="$PDNA_DRO/config"
+dynamic_fs_dir="$PDNA_DRO/dynamic_fs"
 target_fs="$configdir/system_fs_config"
 target_contexts="$configdir/system_file_contexts"
 
-rm -rf $DNA_DRO/dynamic_fs
-mkdir -p $DNA_DRO/dynamic_fs
+rm -rf $PDNA_DRO/dynamic_fs
+mkdir -p $PDNA_DRO/dynamic_fs
 
-for partition in $(ls $DNA_DRO | grep my_);do
+for partition in $(ls $PDNA_DRO | grep my_);do
   [ ! -d $systemdir ] && continue && echo "system.img未解包，请解包后继续"
-  [ ! -d $DNA_DRO/$partition ] && continue && echo "$partition.img未解包，请解包后继续"
+  [ ! -d $PDNA_DRO/$partition ] && continue && echo "$partition.img未解包，请解包后继续"
   echo "> 合并 ${partition} 分区"
-  if [ -d $DNA_DRO/$partition ];then
+  if [ -d $PDNA_DRO/$partition ];then
     rm -rf $systemdir/$partition
-    rm -rf $DNA_DRO/$partition/lost+found
-    mv $DNA_DRO/$partition $systemdir/
+    rm -rf $PDNA_DRO/$partition/lost+found
+    mv $PDNA_DRO/$partition $systemdir/
   fi
   
   if [ -f $configdir/${partition}_file_contexts ];then

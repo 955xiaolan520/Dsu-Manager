@@ -64,6 +64,19 @@ public final class DnaBinActivity extends BaseActivity {
     private CheckBox deleteSource;
 
     private int dp(int n) { return (int) (n * getResources().getDisplayMetrics().density + 0.5f); }
+    private void addCornerAccent(FrameLayout root, int color, int size, int gravity, int x, int y) {
+        View blob = new View(this);
+        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                new int[]{(color & 0x00ffffff) | 0x6a000000, (color & 0x00ffffff) | 0x08000000});
+        gd.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        blob.setBackground(gd);
+        blob.setAlpha(0.72f);
+        blob.setClickable(false);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(size), dp(size), gravity);
+        lp.leftMargin = dp(x); lp.rightMargin = dp(x); lp.topMargin = dp(y); lp.bottomMargin = dp(y);
+        root.addView(blob, lp);
+    }
     private String t(String zh, String en) {
         return getResources().getConfiguration().locale.getLanguage().startsWith("zh") ? zh : en;
     }
@@ -188,6 +201,11 @@ public final class DnaBinActivity extends BaseActivity {
         content.setPadding(dp(16), dp(6), dp(16), dp(20));
         page.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(page, new FrameLayout.LayoutParams(-1, -1));
+        // 与 DNA 主页面一致的低透明角落色块：位于滚动内容之上但不拦截触摸。
+        addCornerAccent(root, 0xff35a8c4, 150, Gravity.TOP | Gravity.END, -42, sb + dp(36));
+        addCornerAccent(root, 0xff8e6fc7, 92, Gravity.TOP | Gravity.START, -34, sb + dp(210));
+        addCornerAccent(root, 0xff2f9c8f, 110, Gravity.BOTTOM | Gravity.END, -28, dp(90));
+        addCornerAccent(root, 0xffe08a39, 78, Gravity.BOTTOM | Gravity.START, -26, dp(145));
         setContentView(root);
 
         // ---- 标题栏 ----

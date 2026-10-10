@@ -21,6 +21,9 @@ package com.yunx.app.ui.components
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -68,7 +71,7 @@ internal fun OperationSheet(
         containerColor = MaterialTheme.colorScheme.surface
     ) {
         CompositionLocalProvider(LocalFileOperationBusy provides busy) {
-            Column(Modifier.weight(1f, fill = false)) { content() }
+            Column(Modifier.weight(1f, fill = false).navigationBarsPadding().padding(bottom = 18.dp)) { content() }
             SnackbarHost(rememberGlobalSnackbarHostState())
         }
     }

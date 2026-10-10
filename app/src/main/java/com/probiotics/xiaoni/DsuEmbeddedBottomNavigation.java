@@ -59,7 +59,7 @@ public final class DsuEmbeddedBottomNavigation extends FrameLayout {
         for (int i = 0; i < LABELS.length; i++) addNavigationItem(i);
 
         indicator = new LiquidGlassIndicator(context);
-        indicator.setElevation(dp(4));
+        indicator.setElevation(0f);
         indicator.setClickable(false);
         indicator.setFocusable(false);
         indicator.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);

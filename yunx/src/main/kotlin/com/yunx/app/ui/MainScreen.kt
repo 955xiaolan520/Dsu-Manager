@@ -1436,16 +1436,16 @@ fun MainScreen(
                                     .padding(horizontal = 30.dp)
                                     .navigationBarsPadding()
                                     .padding(bottom = 16.dp)
-                                    .shadow(16.dp, RoundedCornerShape(32.dp), clip = false)
+                                    .clip(RoundedCornerShape(32.dp))
+                                    .shadow(16.dp, RoundedCornerShape(32.dp), clip = true)
                             )
                             // 顶层叠加：背景渐层、卡片和滚动内容都不会再把边缘色面盖掉。
                             DsuCornerAccents(tabAccent)
                             DsuGlassSnackbarHost(
                                 hostState = snackbarHostState,
                                 modifier = Modifier
-                                    .align(Alignment.TopCenter)
-                                    .statusBarsPadding()
-                                    .padding(top = 88.dp, start = 12.dp, end = 12.dp)
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 112.dp, start = 12.dp, end = 12.dp)
                             )
                         }
                     }
@@ -1512,7 +1512,8 @@ fun MainScreen(
                                 hostState = snackbarHostState,
                                 modifier = Modifier
                                     .align(Alignment.TopCenter)
-                                    .padding(top = 10.dp, start = 12.dp, end = 12.dp)
+                                    .statusBarsPadding()
+                                    .padding(top = 78.dp, start = 12.dp, end = 12.dp)
                             )
                         }
                     }
