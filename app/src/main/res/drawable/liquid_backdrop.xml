@@ -12,7 +12,7 @@
         </shape>
     </item>
     <!-- 左上：青绿轻扩散 -->
-    <item android:width="270dp" android:height="285dp" android:gravity="top|left" android:top="-94dp" android:left="-86dp">
+    <item android:width="270dp" android:height="285dp" android:gravity="top|left" android:top="-124dp" android:left="-111dp">
         <shape android:shape="oval">
             <gradient android:type="radial" android:gradientRadius="260dp" android:startColor="#8C48A88A" android:centerColor="#5048A88A" android:endColor="#0048A88A" />
         </shape>

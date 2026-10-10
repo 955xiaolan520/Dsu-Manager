@@ -1220,8 +1220,8 @@ public class MainActivity extends BaseActivity {
             scroll.setFillViewport(false);
             scroll.setClipToPadding(false);
             scroll.setPadding(0, dp(8), 0, dp(92));
-            // v3.51.93: 检测页使用渐变背景
-            scroll.setBackgroundResource(R.drawable.check_page_gradient_bg);
+            // 页面由 MainActivity 根容器统一绘制玻璃色域；避免滚动子页重复铺底造成错位。
+            scroll.setBackgroundColor(Color.TRANSPARENT);
             
             LinearLayout content = new LinearLayout(this);
             content.setOrientation(LinearLayout.VERTICAL);
@@ -2101,7 +2101,6 @@ public class MainActivity extends BaseActivity {
           LinearLayout page = new LinearLayout(this);
           page.setOrientation(LinearLayout.VERTICAL);
           page.setPadding(dp(18), dp(22), dp(18), dp(30));
-          page.setBackgroundResource(R.drawable.liquid_backdrop);
           // 标题行：DNA 工具箱（左）+ 设置入口（右）——与 ROM 页「下载管理」同款蓝绿渐变胶囊
           LinearLayout titleRow = new LinearLayout(this);
           titleRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -3707,7 +3706,6 @@ public class MainActivity extends BaseActivity {
            LinearLayout page = new LinearLayout(this);
            page.setOrientation(LinearLayout.VERTICAL);
            page.setPadding(dp(18), dp(22), dp(18), dp(30));
-           page.setBackgroundResource(R.drawable.liquid_backdrop);
            // 标题行：ROM 更新中心（左）+ 下载管理入口（右，图二）
            LinearLayout titleRow = new LinearLayout(this);
            titleRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -3899,7 +3897,7 @@ public class MainActivity extends BaseActivity {
          LinearLayout page = new LinearLayout(this);
          page.setOrientation(LinearLayout.VERTICAL);
          page.setPadding(dp(18), dp(14), dp(18), dp(96));
-          page.setBackgroundResource(R.drawable.liquid_backdrop);
+          // 背景由 Activity 根容器绘制一次；该滚动子页透明继承根色域。
          page.setOnApplyWindowInsetsListener((view, insets) -> {
              view.setPadding(dp(18), dp(14) + insets.getSystemWindowInsetTop(), dp(18), dp(96) + insets.getSystemWindowInsetBottom());
              return insets;
@@ -3915,7 +3913,7 @@ public class MainActivity extends BaseActivity {
           LinearLayout content = new LinearLayout(this);
           content.setOrientation(LinearLayout.VERTICAL);
           content.setPadding(dp(18), dp(10), dp(18), dp(22));
-          content.setBackgroundResource(R.drawable.liquid_backdrop);
+          // 背景由 Activity 根容器绘制一次，避免子页再次铺底导致角落错位。
 
           // 顶部标题
           LinearLayout title = new LiquidGlassPanel(this, 14f);
@@ -5782,7 +5780,7 @@ public class MainActivity extends BaseActivity {
           LinearLayout content = new LinearLayout(this);
           content.setOrientation(LinearLayout.VERTICAL);
           content.setPadding(dp(20), dp(18), dp(20), dp(32));
-           content.setBackgroundResource(R.drawable.liquid_backdrop);
+          // 背景由 Activity 根容器绘制一次，子页保持透明以露出四角与底部色域。
 
           TextView title = new TextView(this);
           title.setText("更多功能");
