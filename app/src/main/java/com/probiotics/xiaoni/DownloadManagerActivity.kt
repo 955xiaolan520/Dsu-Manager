@@ -139,7 +139,6 @@ private fun DsuDownloadManagerPage(onBack: () -> Unit) {
                 }
             }
     ) {
-        DsuCornerAccents(Color(0xFF6E82C5))
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -158,6 +157,7 @@ private fun DsuDownloadManagerPage(onBack: () -> Unit) {
                 source = DsuDownloadListSource.Dsu
             )
         }
+        DsuCornerAccents(Color(0xFF6E82C5))
         DsuGlassSnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier

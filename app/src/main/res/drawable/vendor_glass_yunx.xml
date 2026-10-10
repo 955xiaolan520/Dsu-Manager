@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- YunX 网盘分享解析：紫蓝渐变玻璃卡片 -->
+<!-- YunX 网盘分享解析：深青绿渐变玻璃卡片，与 vivo 紫色入口区分 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape>
-            <gradient android:angle="135" android:startColor="#4C1D95" android:centerColor="#6D28D9" android:endColor="#2563EB" />
+            <gradient android:angle="135" android:startColor="#0F4C5C" android:centerColor="#0F766E" android:endColor="#2AAE9A" />
             <corners android:radius="28dp" />
         </shape>
     </item>

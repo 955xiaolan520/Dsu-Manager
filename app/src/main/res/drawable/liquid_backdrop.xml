@@ -5,24 +5,46 @@
             <gradient android:angle="315" android:startColor="#c6d9e5" android:centerColor="#a5bfd0" android:endColor="#7f9db1" />
         </shape>
     </item>
-    <item android:top="-180dp" android:right="-100dp">
+    <!-- 标题右上：青蓝主色从深到浅，向状态栏与内容区扩散 -->
+    <item android:width="360dp" android:height="360dp" android:gravity="top|right" android:top="-118dp" android:right="-112dp">
         <shape android:shape="oval">
-            <gradient android:type="radial" android:gradientRadius="300dp" android:startColor="#9635a8c4" android:centerColor="#5835a8c4" android:endColor="#0035a8c4" />
+            <gradient android:type="radial" android:gradientRadius="330dp" android:startColor="#B835A8C4" android:centerColor="#7135A8C4" android:endColor="#0035A8C4" />
         </shape>
     </item>
-    <item android:bottom="-220dp" android:left="-140dp">
+    <!-- 左上：青绿轻扩散 -->
+    <item android:width="270dp" android:height="285dp" android:gravity="top|left" android:top="-94dp" android:left="-86dp">
         <shape android:shape="oval">
-            <gradient android:type="radial" android:gradientRadius="340dp" android:startColor="#826e82c5" android:centerColor="#426e82c5" android:endColor="#006e82c5" />
+            <gradient android:type="radial" android:gradientRadius="260dp" android:startColor="#8C48A88A" android:centerColor="#5048A88A" android:endColor="#0048A88A" />
         </shape>
     </item>
-    <item android:width="220dp" android:height="220dp" android:gravity="top|left" android:top="-72dp" android:left="-64dp">
+    <!-- 左下：蓝紫扩散 -->
+    <item android:width="330dp" android:height="340dp" android:gravity="bottom|left" android:bottom="-116dp" android:left="-98dp">
         <shape android:shape="oval">
-            <gradient android:type="radial" android:gradientRadius="190dp" android:startColor="#7048a88a" android:centerColor="#3848a88a" android:endColor="#0048a88a" />
+            <gradient android:type="radial" android:gradientRadius="310dp" android:startColor="#9B6E82C5" android:centerColor="#586E82C5" android:endColor="#006E82C5" />
         </shape>
     </item>
-    <item android:width="230dp" android:height="230dp" android:gravity="bottom|right" android:bottom="-76dp" android:right="-58dp">
+    <!-- 右下：琥珀色扩散 -->
+    <item android:width="310dp" android:height="325dp" android:gravity="bottom|right" android:bottom="-104dp" android:right="-88dp">
         <shape android:shape="oval">
-            <gradient android:type="radial" android:gradientRadius="190dp" android:startColor="#70ba9460" android:centerColor="#38ba9460" android:endColor="#00ba9460" />
+            <gradient android:type="radial" android:gradientRadius="295dp" android:startColor="#86BA9460" android:centerColor="#4DBA9460" android:endColor="#00BA9460" />
+        </shape>
+    </item>
+    <!-- 左侧中段：青色过渡 -->
+    <item android:width="210dp" android:height="250dp" android:gravity="center_vertical|left" android:left="-128dp">
+        <shape android:shape="oval">
+            <gradient android:type="radial" android:gradientRadius="210dp" android:startColor="#6647AFC0" android:centerColor="#3D47AFC0" android:endColor="#0047AFC0" />
+        </shape>
+    </item>
+    <!-- 右侧中段：蓝紫过渡 -->
+    <item android:width="210dp" android:height="250dp" android:gravity="center_vertical|right" android:right="-128dp">
+        <shape android:shape="oval">
+            <gradient android:type="radial" android:gradientRadius="210dp" android:startColor="#667F78C7" android:centerColor="#3D7F78C7" android:endColor="#007F78C7" />
+        </shape>
+    </item>
+    <!-- 底部中央：悬浮导航附近也有柔和色彩延展 -->
+    <item android:width="230dp" android:height="210dp" android:gravity="bottom|center_horizontal" android:bottom="-148dp">
+        <shape android:shape="oval">
+            <gradient android:type="radial" android:gradientRadius="205dp" android:startColor="#5B5D9DB6" android:centerColor="#385D9DB6" android:endColor="#005D9DB6" />
         </shape>
     </item>
 </layer-list>

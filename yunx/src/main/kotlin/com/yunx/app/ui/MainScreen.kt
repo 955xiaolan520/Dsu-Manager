@@ -811,6 +811,7 @@ fun MainScreen(
             onBack = { showQuarkLogin = false },
             onSaved = { showQuarkLogin = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF35A8C4))
         return
     }
 
@@ -821,6 +822,7 @@ fun MainScreen(
             onBack = { showUCLogin = false },
             onSaved = { showUCLogin = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF48A88A))
         return
     }
 
@@ -843,6 +845,7 @@ fun MainScreen(
                 showXunleiWebLogin = true
             }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF6E82C5))
         return
     }
 
@@ -853,6 +856,7 @@ fun MainScreen(
             onBack = { showXunleiWebLogin = false },
             onSaved = { showXunleiWebLogin = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF5A9DC2))
         return
     }
 
@@ -877,6 +881,7 @@ fun MainScreen(
                 showXunleiLogin = true // 返回登录页短信步骤
             }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF8580C2))
         return
     }
 
@@ -887,6 +892,7 @@ fun MainScreen(
             onBack = { showBaiduLogin = false },
             onSaved = { showBaiduLogin = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF35A8C4))
         return
     }
 
@@ -897,6 +903,7 @@ fun MainScreen(
             onBack = { showC139Login = false },
             onSaved = { showC139Login = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFFBA9460))
         return
     }
 
@@ -907,6 +914,7 @@ fun MainScreen(
             onBack = { showPan123Login = false },
             onSaved = { showPan123Login = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF8580C2))
         return
     }
 
@@ -917,6 +925,7 @@ fun MainScreen(
             onBack = { showPan115Login = false },
             onSaved = { showPan115Login = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF48A88A))
         return
     }
 
@@ -927,6 +936,7 @@ fun MainScreen(
             onBack = { showGuangYaLogin = false },
             onSaved = { showGuangYaLogin = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFFBA9460))
         return
     }
 
@@ -937,6 +947,7 @@ fun MainScreen(
             onBack = { showILanzouLogin = false },
             onSaved = { showILanzouLogin = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF5DA6B4))
         return
     }
 
@@ -947,6 +958,7 @@ fun MainScreen(
             onBack = { showLanzouLogin = false },
             onSaved = { showLanzouLogin = false }
         )
+        if (embeddedMode) DsuCornerAccents(Color(0xFF6E82C5))
         return
     }
 
@@ -1307,7 +1319,6 @@ fun MainScreen(
                                 )
                             )
                     ) {
-                        DsuCornerAccents(tabAccent)
                         Box(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
@@ -1427,6 +1438,8 @@ fun MainScreen(
                                     .padding(bottom = 16.dp)
                                     .shadow(16.dp, RoundedCornerShape(32.dp), clip = false)
                             )
+                            // 顶层叠加：背景渐层、卡片和滚动内容都不会再把边缘色面盖掉。
+                            DsuCornerAccents(tabAccent)
                             DsuGlassSnackbarHost(
                                 hostState = snackbarHostState,
                                 modifier = Modifier
@@ -1824,8 +1837,9 @@ private fun OverlayPage(
                 ) else Modifier.background(MaterialTheme.colorScheme.surface)
             )
     ) {
-        if (embeddedMode) DsuCornerAccents(accent)
         content()
+        // 各二级页面内部含不透明 Scaffold/Surface；色域置顶后整页各边缘都保持可见。
+        if (embeddedMode) DsuCornerAccents(accent)
     }
 }
 
@@ -1872,6 +1886,11 @@ fun DsuCornerAccents(accent: Color) {
             Modifier.align(Alignment.BottomStart).offset(x = 24.dp, y = (-226).dp).size(88.dp),
             accent,
             centerAlpha = 0.30f
+        )
+        CornerTintPatch(
+            Modifier.align(Alignment.BottomCenter).offset(y = (-78).dp).size(124.dp),
+            accent,
+            centerAlpha = 0.28f
         )
     }
 }
