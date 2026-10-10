@@ -585,11 +585,11 @@ public class OtaMergeActivity extends BaseActivity {
 
     private Drawable createXiaomiGradientBackground() {
         return new LayerDrawable(new Drawable[]{
-            createRadialGradient(0xFFB8D4F8, 0, 0.5f, 0.0f),
-            createRadialGradient(0xFF98C1E9, 0, 0.25f, 0.25f),
-            createRadialGradient(0xFFA8CBE9, 0, 0.75f, 0.25f),
-            createLinearGradient(0xFFC8D8E8, 0xFF697588, true),
-            createRadialGradient(0xFF5A7A94, 0, 0.5f, 0.8f)
+            createLinearGradient(0xFFDCE6ED, 0xFF859BAA, true),
+            createRadialGradient(0xA84D9FA7, 0x003895A8, 0.98f, 0.03f),
+            createRadialGradient(0x8F8873C4, 0x008873C4, 0.04f, 0.92f),
+            createRadialGradient(0x96D28F62, 0x00D28F62, 0.98f, 0.88f),
+            createRadialGradient(0x6E579EC1, 0x00579EC1, 0.02f, 0.36f)
         });
     }
 

@@ -1220,8 +1220,8 @@ public class MainActivity extends BaseActivity {
             scroll.setFillViewport(false);
             scroll.setClipToPadding(false);
             scroll.setPadding(0, dp(8), 0, dp(92));
-            // 页面由 MainActivity 根容器统一绘制玻璃色域；避免滚动子页重复铺底造成错位。
-            scroll.setBackgroundColor(Color.TRANSPARENT);
+            // 检测页使用独立色域布局，卡片本身保持半透明，露出角落渐变。
+            scroll.setBackground(createFeatureAccentBackdrop(0xff3b95aa, 0xff7b70b5, 0xffc9965c, true));
             
             LinearLayout content = new LinearLayout(this);
             content.setOrientation(LinearLayout.VERTICAL);
@@ -1667,8 +1667,8 @@ public class MainActivity extends BaseActivity {
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setPadding(dp(16), dp(14), dp(16), dp(14));
-            // v3.51.92: 恢复白色卡片背景
-            card.setBackgroundResource(R.drawable.white_card_bg);
+            // 检测信息使用 DNA 半透明玻璃卡，不再铺纯白底。
+            card.setBackgroundResource(R.drawable.dna_check_glass_card);
             
             // 标题行（图标 + 文字 + 设置按钮）
             LinearLayout titleRow = new LinearLayout(this);
@@ -2066,11 +2066,12 @@ public class MainActivity extends BaseActivity {
             
             return bar;
         }
-         private void refreshMorePage() {
+      private void refreshMorePage() {
           if (pageHost == null) return;
           pageHost.removeAllViews();
           ScrollView pageScroll = new ScrollView(this);
           pageScroll.setFillViewport(true);
+          pageScroll.setBackground(createFeatureAccentBackdrop(0xff8a74bd, 0xff42a0a8, 0xffd28c58, false));
           pageScroll.addView(buildMorePage());
           pageHost.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
       }
@@ -2081,6 +2082,11 @@ public class MainActivity extends BaseActivity {
           View next = dnaSettingsMode ? buildSettingsPage() : buildDnaPage();
           ScrollView pageScroll = new ScrollView(this);
           pageScroll.setFillViewport(true);
+          if (dnaSettingsMode) {
+              pageScroll.setBackground(createFeatureAccentBackdrop(0xff568fb1, 0xff8b73b9, 0xff50a28c, true));
+          } else {
+              pageScroll.setBackgroundColor(Color.TRANSPARENT);
+          }
           pageScroll.addView(next);
           pageHost.removeAllViews();
           pageHost.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
@@ -5013,16 +5019,14 @@ public class MainActivity extends BaseActivity {
               Button btn = new Button(this);
               btn.setText(modeLabels[i]);
               btn.setTextSize(14);
-              btn.setTextColor(i == 0 ? Color.WHITE : 0xff000000);
-              btn.setBackgroundResource(i == 0 ? R.drawable.button_blue : R.drawable.liquid_glass_panel);
+              styleOtgModeButton(btn, i, i == 0);
               btn.setPadding(dp(24), dp(12), dp(24), dp(12));
               btn.setTypeface(null, i == 0 ? 1 : 0);
               LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(0, -2, 1f);
               if (i > 0) btnLp.leftMargin = dp(12);
               btn.setOnClickListener(v -> {
                   for (int j = 0; j < modeButtons.length; j++) {
-                      modeButtons[j].setTextColor(j == index ? Color.WHITE : 0xff000000);
-                      modeButtons[j].setBackgroundResource(j == index ? R.drawable.button_blue : R.drawable.liquid_glass_panel);
+                      styleOtgModeButton(modeButtons[j], j, j == index);
                       modeButtons[j].setTypeface(null, j == index ? 1 : 0);
                   }
                   rebuildPartitionList(index == 0);
@@ -5284,6 +5288,20 @@ public class MainActivity extends BaseActivity {
           loadPartitionList(partitionList, true);
 
           return panel;
+      }
+
+      private void styleOtgModeButton(Button button, int index, boolean selected) {
+          int accent = index == 0 ? 0xff338fa5 : 0xffc58b50;
+          int fillStart = selected ? (0x9a000000 | (accent & 0x00ffffff)) : 0x3dffffff;
+          int fillEnd = selected ? (0x5b000000 | (accent & 0x00ffffff)) : 0x2879a6bb;
+          int stroke = selected ? (0xb0000000 | (accent & 0x00ffffff)) : 0x887da2b5;
+          GradientDrawable glass = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                  new int[]{fillStart, fillEnd});
+          glass.setCornerRadius(dp(18));
+          glass.setStroke(dp(1), stroke);
+          button.setBackground(glass);
+          button.setTextColor(selected ? 0xff102d3b : 0xff344c5e);
+          button.setElevation(dp(1));
       }
 
       private List<AdbManager.PartitionInfo> allPartitions = new ArrayList<>();
@@ -8054,8 +8072,10 @@ public class MainActivity extends BaseActivity {
     // 辅助方法：构建OTG页面包装器（带FAB）
     private View buildOtgPageWrapper() {
         FrameLayout otgRoot = new FrameLayout(this);
+        otgRoot.setBackground(createFeatureAccentBackdrop(0xff338fa5, 0xff8170bd, 0xffd09350, false));
         ScrollView pageScroll = new ScrollView(this);
         pageScroll.setFillViewport(false);
+        pageScroll.setBackgroundColor(Color.TRANSPARENT);
         pageScroll.addView(buildOtgPage());
         otgRoot.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
         
@@ -8067,6 +8087,27 @@ public class MainActivity extends BaseActivity {
         partitionFab.setVisibility(otgCurrentTab == 0 ? View.VISIBLE : View.GONE);
         
         return otgRoot;
+    }
+
+    /** 每个功能页的背景只画在当前页面范围内，且使用与主页不同的角落布局。 */
+    private Drawable createFeatureAccentBackdrop(int primary, int secondary, int tertiary, boolean reverse) {
+        GradientDrawable base = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xffdce7ed, 0xff8ba3b3});
+        GradientDrawable a = featureAccentSpot(primary, reverse ? 0.03f : 0.98f, 0.03f, dp(310));
+        GradientDrawable b = featureAccentSpot(secondary, reverse ? 0.98f : 0.03f, 0.92f, dp(340));
+        GradientDrawable c = featureAccentSpot(tertiary, reverse ? 0.04f : 0.97f, 0.86f, dp(330));
+        GradientDrawable d = featureAccentSpot(primary, reverse ? 0.97f : 0.05f, 0.48f, dp(230));
+        return new LayerDrawable(new Drawable[]{base, a, b, c, d});
+    }
+
+    private GradientDrawable featureAccentSpot(int color, float centerX, float centerY, int radiusPx) {
+        GradientDrawable spot = new GradientDrawable();
+        spot.setShape(GradientDrawable.OVAL);
+        spot.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        spot.setColors(new int[]{0x6a000000 | (color & 0x00ffffff), 0x003895a8});
+        spot.setGradientCenter(centerX, centerY);
+        spot.setGradientRadius(radiusPx);
+        return spot;
     }
     
     private int gcd(int a, int b) {

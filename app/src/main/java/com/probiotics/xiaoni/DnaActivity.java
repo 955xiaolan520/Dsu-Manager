@@ -4,7 +4,9 @@ import android.app.Dialog;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -290,7 +292,7 @@ public final class DnaActivity extends BaseActivity {
         if (resourceId > 0) statusBarHeight = getResources().getDimensionPixelSize(resourceId);
 
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundResource(R.drawable.liquid_backdrop);
+        root.setBackground(createGradientBackground());
         root.setPadding(0, statusBarHeight + dp(10), 0, 0);
 
         ScrollView scroll = new ScrollView(this);
@@ -2413,9 +2415,51 @@ public final class DnaActivity extends BaseActivity {
     }
 
     private android.graphics.drawable.Drawable createGradientBackground() {
-        return new GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xffccdbe8, 0xff7e9cb4});
+        int[] palette = modeAccentPalette();
+        GradientDrawable base = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xffdce7ee, 0xff8299aa});
+        float[][] anchors;
+        if (MODE_BIN.equals(mode)) {
+            anchors = new float[][]{{0.99f, 0.02f}, {0.03f, 0.80f}, {0.98f, 0.88f}, {0.52f, 0.98f}};
+        } else if (MODE_SUPER_UNPACK.equals(mode)) {
+            anchors = new float[][]{{0.02f, 0.05f}, {0.98f, 0.34f}, {0.97f, 0.96f}, {0.04f, 0.90f}};
+        } else if (MODE_EXTRACT.equals(mode) && "dat".equalsIgnoreCase(filter)) {
+            anchors = new float[][]{{0.05f, 0.02f}, {0.96f, 0.08f}, {0.02f, 0.96f}, {0.98f, 0.90f}};
+        } else if (MODE_REPACK.equals(mode) || MODE_SUPER_PACK.equals(mode)) {
+            anchors = new float[][]{{0.98f, 0.04f}, {0.02f, 0.20f}, {0.06f, 0.96f}, {0.96f, 0.92f}};
+        } else {
+            anchors = new float[][]{{0.02f, 0.04f}, {0.98f, 0.12f}, {0.96f, 0.94f}, {0.04f, 0.86f}};
+        }
+        Drawable[] layers = new Drawable[]{
+                base,
+                accentSpot(palette[0], anchors[0][0], anchors[0][1], 330),
+                accentSpot(palette[1], anchors[1][0], anchors[1][1], 310),
+                accentSpot(palette[2], anchors[2][0], anchors[2][1], 350),
+                accentSpot(palette[0], anchors[3][0], anchors[3][1], 250)
+        };
+        return new LayerDrawable(layers);
+    }
+
+    private int[] modeAccentPalette() {
+        if (MODE_BIN.equals(mode)) return new int[]{0xff158ca3, 0xff7559b5, 0xffd18b4c};
+        if (MODE_SUPER_UNPACK.equals(mode)) return new int[]{0xffc77b49, 0xff397eaa, 0xff8b6fc0};
+        if (MODE_EXTRACT.equals(mode) && "dat".equalsIgnoreCase(filter)) return new int[]{0xff328e70, 0xffc36f86, 0xff4a83b4};
+        if (MODE_REPACK.equals(mode) || MODE_SUPER_PACK.equals(mode)) return new int[]{0xff4d9c7c, 0xffd19a54, 0xff5486bd};
+        if (MODE_CONVERT.equals(mode) || MODE_SPARSE.equals(mode)) return new int[]{0xff7d69bd, 0xff348fa4, 0xffd08a55};
+        if (MODE_ZST.equals(mode)) return new int[]{0xff338fb1, 0xffc47758, 0xff687fbe};
+        if (MODE_CHUNK.equals(mode)) return new int[]{0xffbc688d, 0xff368c9a, 0xffc99a4f};
+        return new int[]{0xff3296a8, 0xff6e78bd, 0xffca8953};
+    }
+
+    private GradientDrawable accentSpot(int color, float centerX, float centerY, int radiusDp) {
+        GradientDrawable spot = new GradientDrawable();
+        spot.setShape(GradientDrawable.OVAL);
+        spot.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        spot.setColors(new int[]{(0x72000000 | (color & 0x00ffffff)), 0x00329ab4});
+        spot.setGradientCenter(centerX, centerY);
+        spot.setGradientRadius(dp(radiusDp));
+        return spot;
     }
 
     @Override
