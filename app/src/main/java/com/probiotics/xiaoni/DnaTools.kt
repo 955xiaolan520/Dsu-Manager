@@ -318,7 +318,7 @@ object DnaTools {
             "br" -> files.filter { it.nameEnds(".br") }
             "dat" -> files.filter { it.nameEnds(".new.dat") || it.nameEnds(".dat") }
             "img" -> files.filter { it.nameEnds(".img") }
-            "zst" -> files.filter { it.nameEnds(".zst") || it.nameEnds(".zstd") }
+            "zst" -> files.filter { it.nameEnds(".img") || it.nameEnds(".zst") }
             "zip" -> files.filter { it.nameEnds(".zip") || it.nameEnds(".zip2") }
             "bin" -> files.filter { it.nameEnds("payload.bin") }
             // v3.30.13：分解 bin 同时列出 OTA zip（payload_extract 原生支持 zip 内 payload.bin）
@@ -399,7 +399,7 @@ object DnaTools {
     // DNA 辅助脚本来自 APK assets；执行前同步覆盖私有目录副本，确保 DNA_DIR→PDNA_DIR 路径更新生效。
     private val SCRIPTS = arrayOf(
         "del_vbmeta.sh", "patch_selinux.sh", "my_partition_merge.sh", "partition_merge.sh",
-        "merge_superchunk.sh"
+        "merge_superchunk.sh", "zstd_img.sh"
     )
 
     /** 释放原版 sh 到 filesDir/dna-scripts/ 并返回目录（执行时 export 参数后 source） */

@@ -1444,7 +1444,7 @@ public final class DnaActivity extends BaseActivity {
             case "img": return new String[]{".img"};
             case "br": return new String[]{".br"};
             case "dat": return new String[]{".new.dat", ".dat"};
-            case "zst": return new String[]{".zst", ".zstd"};
+            case "zst": return new String[]{".img", ".zst"};
             case "zip": return new String[]{".zip", ".zip2"};
             case "bin_zip": return new String[]{"payload.bin", ".zip", ".zip2"};
             default: return null;
@@ -3057,17 +3057,31 @@ public final class DnaActivity extends BaseActivity {
             }
             case MODE_ZST: {
                 if (targets.isEmpty()) { toast(t("请选择文件", "Pick files first")); return null; }
-                // 原版 zstd_img.sh：解压 zstd -d -k -f，压缩 zstd -$level -T4 -f，输出 $DNA_PRO/out
+                // 原版 zstd_img.sh 使用 ZST 文件名列表与 DNA_PRO；当前资产只将路径变量适配为 PDNA_PRO。
+                // 原脚本按 $PDNA_PRO/$i 访问文件，故限定当前工程内的文件名，并拒绝空格文件名以免循环拆分错位。
+                String projectRoot = projectPath();
+                StringBuilder zstNames = new StringBuilder();
+                for (String path : targets) {
+                    if (!path.startsWith(projectRoot + "/")) {
+                        toast(t("zst-img 互转请选择当前工程目录中的文件", "Choose zst/img files from the current project folder"));
+                        return null;
+                    }
+                    String name = new File(path).getName();
+                    if (name.matches(".*\\s+.*")) {
+                        toast(t("原版脚本不支持带空格的文件名，请先重命名", "The original script cannot process names containing spaces; rename the file first"));
+                        return null;
+                    }
+                    if (zstNames.length() > 0) zstNames.append(' ');
+                    zstNames.append(name);
+                }
                 String del = zstDeleteSource != null && zstDeleteSource.isChecked() ? "yes" : "no";
                 String level = String.valueOf(zstLevel != null ? seekValue(zstLevel, 0) : 3);
-                cmd.append("mkdir -p ").append(DnaTools.quote(projectPath() + "/out")).append("; for __f in");
-                for (String p : targets) cmd.append(" ").append(DnaTools.quote(p));
-                cmd.append("; do __n=$(basename \"$__f\"); case \"$__n\" in ")
-                        .append("*.zst|*.zstd) __o=${__n%.*}; zstd -d -f -T4 \"$__f\" -o ")
-                        .append(DnaTools.quote(projectPath() + "/out")).append("/\"$__o\" && echo \"> 解压: $__n\";; ")
-                        .append("*) zstd -").append(level).append(" -T4 -f \"$__f\" -o ")
-                        .append(DnaTools.quote(projectPath() + "/out")).append("/\"$__n.zst\" && echo \"> 压缩: $__n.zst\";; esac; ")
-                        .append("if [ \"").append(del).append("\" = \"yes\" ]; then rm -f \"$__f\"; fi; done");
+                String script = new File(DnaTools.scriptsDir(this), "zstd_img.sh").getAbsolutePath();
+                cmd.append("export PDNA_PRO=").append(DnaTools.quote(projectRoot))
+                        .append("; export ZST=").append(DnaTools.quote(zstNames.toString()))
+                        .append("; export level=").append(level)
+                        .append("; export silence=").append("yes".equals(del) ? "1" : "0")
+                        .append("; . ").append(DnaTools.quote(script));
                 return cmd.toString();
             }
             case MODE_CHUNK: {
