@@ -1,15 +1,7 @@
 # Dsu-Manager 3.55.15 正式版
 
-**版本：** 3.55.15（versionCode 36011）
-**目标平台：** Android 17 / API 37
-**基于：** 3.55.13 正式版
-
 ## 🚨 置顶更新：紧急修复 ZsT-img 互转功能小更新
 
 修复 DNA「zst-img 互转」文件识别和脚本路径适配：工程列表与文件选择器现在识别 `.img`、`.zst` 后缀；按当前 PDNA 工程路径调用 zstd 转换脚本，支持 `.img` 压缩为 `.zst`，以及 `.zst` 解压为 `.img`。原脚本处理逻辑保持不变，仅将 `DNA_PRO` 路径变量适配为 `PDNA_PRO`，并由界面传入所选文件、压缩等级和删除源文件选项。
 
 **其他功能与 3.55.13 正式版保持一致。**
-
-## 构建信息
-
-Release 构建，compileSdk / targetSdk 为 37；构建命令：`./gradlew --no-daemon assembleRelease`。
