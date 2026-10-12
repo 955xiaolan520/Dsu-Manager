@@ -3804,10 +3804,6 @@ public class MainActivity extends BaseActivity {
            enter.setElevation(0f);
               enter.setOnClickListener(v -> {
                   Haptics.perform(v);
-                  if ("yunx".equals(vendorId)) {
-                      showNetdiskInternalTestingDialog();
-                      return;
-                  }
                    Intent intent = new Intent(this,
                            "oppo".equals(vendorId) ? OPlusLookupActivity.class
                                    : "vivo".equals(vendorId) ? VivoActivity.class
