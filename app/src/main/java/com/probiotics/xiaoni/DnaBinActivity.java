@@ -202,10 +202,11 @@ public final class DnaBinActivity extends BaseActivity {
         page.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(page, new FrameLayout.LayoutParams(-1, -1));
         // 与 DNA 主页面一致的低透明角落色块：位于滚动内容之上但不拦截触摸。
-        addCornerAccent(root, 0xff35a8c4, 150, Gravity.TOP | Gravity.END, -42, sb + dp(36));
-        addCornerAccent(root, 0xff8e6fc7, 92, Gravity.TOP | Gravity.START, -34, sb + dp(210));
-        addCornerAccent(root, 0xff2f9c8f, 110, Gravity.BOTTOM | Gravity.END, -28, dp(90));
-        addCornerAccent(root, 0xffe08a39, 78, Gravity.BOTTOM | Gravity.START, -26, dp(145));
+        root.setBackground(new CornerAccentDrawable(
+                        0xffdce7ee, 0xff8299aa,
+                        new int[]{0xff3296a8, 0xff6e78bd, 0xffca8953, 0xff4d9c7c},
+                        new float[][]{{0.04f, 0.02f}, {0.97f, 0.18f}, {0.96f, 0.98f}, {0.03f, 0.84f}},
+                        new int[]{dp(280), dp(250), dp(300), dp(220)}));
         setContentView(root);
 
         // ---- 标题栏 ----
@@ -399,7 +400,7 @@ public final class DnaBinActivity extends BaseActivity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(12), dp(10), dp(12), dp(10));
         android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xEdf4f8fc);
+        bg.setColor(0xB8e6eef4);
         bg.setCornerRadius(dp(18));
         bg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
         card.setBackground(bg);

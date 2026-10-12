@@ -79,6 +79,7 @@ import com.yunx.app.ui.rememberGlobalSnackbarHostState
 import com.yunx.app.ui.theme.ComposeEmptyActivityTheme
 import org.json.JSONArray
 import java.io.File
+import java.net.URLDecoder
 
 /**
  * Dsu 下载管理的独立页面：复用 YunX 下载组件的 UI 与交互，
@@ -347,7 +348,7 @@ private fun submitDsuManualDownload(context: Context, url: String, suppliedName:
             SnackbarController.show("无法创建 Download/DsuManager 目录")
             return false
         }
-        val fromUrl = Uri.parse(url).lastPathSegment.orEmpty().ifBlank { URLUtil.guessFileName(url, null, null) }
+        val fromUrl = guessDsuDownloadName(url)
         val rawName = suppliedName.trim().ifBlank { fromUrl }
         val cleaned = rawName.substringAfterLast('/').substringAfterLast('\\')
             .map { ch -> if (ch.code < 32 || ch in "\\/:*?\"<>|") '_' else ch }
@@ -392,3 +393,27 @@ private fun submitDsuManualDownload(context: Context, url: String, suppliedName:
         false
     }
 }
+
+/**
+ * 从直链推断下载文件名：动态下载接口常把真实路径放在 file/filename/name 参数中，
+ * 不能只使用 URL 的最后一段（例如 download.php）。
+ */
+private fun guessDsuDownloadName(url: String): String {
+    val uri = Uri.parse(url)
+    val queryCandidates = listOf("file", "filename", "file_name", "name", "path")
+        .mapNotNull { key -> runCatching { uri.getQueryParameter(key) }.getOrNull() }
+        .map { value -> decodeDownloadComponent(value) }
+        .map { value -> value.substringAfterLast('/').substringAfterLast('\\') }
+        .filter { value -> value.isNotBlank() && !value.equals("download.php", true) }
+    val pathName = uri.lastPathSegment.orEmpty()
+        .substringAfterLast('/')
+        .substringAfterLast('\\')
+        .takeIf { it.isNotBlank() && !it.equals("download.php", true) }
+    return (queryCandidates.firstOrNull() ?: pathName
+        ?: URLUtil.guessFileName(url, null, null))
+        .ifBlank { "download_${System.currentTimeMillis()}.bin" }
+}
+
+private fun decodeDownloadComponent(value: String): String = runCatching {
+    URLDecoder.decode(value, "UTF-8")
+}.getOrDefault(value).trim()

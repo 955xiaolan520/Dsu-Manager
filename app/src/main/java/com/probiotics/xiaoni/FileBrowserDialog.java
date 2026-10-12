@@ -512,7 +512,7 @@ public class FileBrowserDialog {
 
     private String fileIcon(String name) {
         String n = name.toLowerCase(Locale.ROOT);
-        if (n.endsWith(".img") || n.endsWith(".raw")) return "🧱";
+        if (n.endsWith(".img") || n.endsWith(".raw")) return "◈";
         if (n.endsWith(".zip") || n.endsWith(".zip2")) return "📦";
         if (n.endsWith("payload.bin")) return "🧬";
         if (n.endsWith(".zst") || n.endsWith(".zstd") || n.endsWith(".gz")

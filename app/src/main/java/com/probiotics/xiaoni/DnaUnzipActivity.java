@@ -56,6 +56,21 @@ public final class DnaUnzipActivity extends BaseActivity {
     }
     private void toast(String m) { Toast.makeText(this, m, Toast.LENGTH_SHORT).show(); }
 
+    /** 与 DNA 其他二级页面统一的低透明角落色块，不拦截内容触摸。 */
+    private void addCornerAccent(FrameLayout root, int color, int size, int gravity, int x, int y) {
+        View blob = new View(this);
+        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                new int[]{(color & 0x00ffffff) | 0x6a000000, (color & 0x00ffffff) | 0x08000000});
+        gd.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        blob.setBackground(gd);
+        blob.setAlpha(0.72f);
+        blob.setClickable(false);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(size), dp(size), gravity);
+        lp.leftMargin = dp(x); lp.rightMargin = dp(x); lp.topMargin = dp(y); lp.bottomMargin = dp(y);
+        root.addView(blob, lp);
+    }
+
     @Override
     public boolean dispatchTouchEvent(MotionEvent e) {
         Haptics.onTouch(getWindow().getDecorView(), e);
@@ -125,6 +140,11 @@ public final class DnaUnzipActivity extends BaseActivity {
         content.setPadding(dp(16), dp(6), dp(16), dp(20));
         page.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(page, new FrameLayout.LayoutParams(-1, -1));
+        root.setBackground(new CornerAccentDrawable(
+                        0xffdce7ee, 0xff8299aa,
+                        new int[]{0xff3296a8, 0xff6e78bd, 0xffca8953, 0xff4d9c7c},
+                        new float[][]{{0.04f, 0.02f}, {0.97f, 0.18f}, {0.96f, 0.98f}, {0.03f, 0.84f}},
+                        new int[]{dp(280), dp(250), dp(300), dp(220)}));
         setContentView(root);
 
         // ---- 标题栏 ----
@@ -379,7 +399,7 @@ public final class DnaUnzipActivity extends BaseActivity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(12), dp(10), dp(12), dp(10));
         android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xEdf4f8fc);
+        bg.setColor(0xB8e6eef4);
         bg.setCornerRadius(dp(18));
         bg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
         card.setBackground(bg);

@@ -332,7 +332,7 @@ public final class DnaOtaActivity extends BaseActivity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(12), dp(10), dp(12), dp(10));
         android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xEdf4f8fc);
+        bg.setColor(0xB8e6eef4);
         bg.setCornerRadius(dp(18));
         bg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
         card.setBackground(bg);
@@ -378,9 +378,11 @@ public final class DnaOtaActivity extends BaseActivity {
         int rid = getResources().getIdentifier("status_bar_height", "dimen", "android");
         if (rid > 0) sb = getResources().getDimensionPixelSize(rid);
         FrameLayout root = new FrameLayout(this);
-        root.setBackground(new android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xffd7e3f0, 0xff8fa8c4}));
+        root.setBackground(new CornerAccentDrawable(
+                0xffdce7ee, 0xff8299aa,
+                new int[]{0xff3296a8, 0xff6e78bd, 0xffca8953, 0xff4d9c7c},
+                new float[][]{{0.04f, 0.02f}, {0.97f, 0.18f}, {0.96f, 0.98f}, {0.03f, 0.84f}},
+                new int[]{dp(280), dp(250), dp(300), dp(220)}));
         root.setPadding(0, sb + dp(8), 0, 0);
 
         ScrollView page = new ScrollView(this);

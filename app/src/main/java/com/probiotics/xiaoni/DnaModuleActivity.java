@@ -68,6 +68,21 @@ public final class DnaModuleActivity extends BaseActivity {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
     }
 
+    /** 与 DNA 其他二级页面统一的低透明角落色块，不拦截内容触摸。 */
+    private void addCornerAccent(FrameLayout root, int color, int size, int gravity, int x, int y) {
+        View blob = new View(this);
+        GradientDrawable gd = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{(color & 0x00ffffff) | 0x6a000000, (color & 0x00ffffff) | 0x08000000});
+        gd.setShape(GradientDrawable.OVAL);
+        blob.setBackground(gd);
+        blob.setAlpha(0.72f);
+        blob.setClickable(false);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(size), dp(size), gravity);
+        lp.leftMargin = dp(x); lp.rightMargin = dp(x); lp.topMargin = dp(y); lp.bottomMargin = dp(y);
+        root.addView(blob, lp);
+    }
+
     /** 插件安装目录（沿用 v3.28.8 路径，已导入插件无需重装） */
     private File moduleRoot() {
         File dir = new File(getFilesDir(), "dna-module");
@@ -102,6 +117,11 @@ public final class DnaModuleActivity extends BaseActivity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(8), dp(16), dp(16));
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
+        root.setBackground(new CornerAccentDrawable(
+                        0xffdce7ee, 0xff8299aa,
+                        new int[]{0xff3296a8, 0xff6e78bd, 0xffca8953, 0xff4d9c7c},
+                        new float[][]{{0.04f, 0.02f}, {0.97f, 0.18f}, {0.96f, 0.98f}, {0.03f, 0.84f}},
+                        new int[]{dp(280), dp(250), dp(300), dp(220)}));
 
         // ---- 标题栏：圆返回键 + 标题 + PDNA 徽章 + 导入按钮 ----
         LinearLayout titleBar = new LinearLayout(this);
@@ -245,7 +265,7 @@ public final class DnaModuleActivity extends BaseActivity {
         consoleCard.setVisibility(View.GONE);
         GradientDrawable consoleBg = new GradientDrawable();
         // v3.30.28：控制台换浅色磨砂底（对齐解压ROM页面，弃用黑色终端风）
-        consoleBg.setColor(0xEdf4f8fc);
+        consoleBg.setColor(0xB8e6eef4);
         consoleBg.setCornerRadius(dp(18));
         consoleBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
         consoleCard.setBackground(consoleBg);
@@ -617,7 +637,15 @@ public final class DnaModuleActivity extends BaseActivity {
 
     // ============ 执行 ============
 
-    /** 执行插件脚本：校验工程 → 控制台流式输出（$MODDIR 注入 + cd $DNA_DRO） */
+    /**
+     * 执行插件脚本：校验工程 → 控制台流式输出。
+     *
+     * 插件生态同时存在两套变量命名：旧版脚本使用 START_DIR/module、DNA_PRO/DNA_DRO，
+     * 新版脚本使用 MODDIR、PDNA_PRO/PDNA_DRO。此前这里只注入 MODDIR，导致旧脚本中的
+     * START_DIR 为空（资源路径退化为 /module/...），而 PDNA_DRO 为空（目标路径退化为
+     * /vendor、/odm、/config，最终触发只读系统分区错误）。这里统一注入两套变量，并在
+     * files/module 建立指向当前 dna-module 的兼容映射，不要求用户重新打包插件。
+     */
     private void runScript(File mod, String rel, File sh) {
         if (running.get()) { toast(t("正在执行其他脚本，请先停止", "A script is running, stop it first")); return; }
         String project = DnaTools.currentProject(this);
@@ -633,8 +661,21 @@ public final class DnaModuleActivity extends BaseActivity {
         consoleStop.setText(t("■ 停止执行", "■ Stop"));
         // v3.28.12：执行时自动把页面滚到控制台（此前控制台在页尾，用户看不到已开始执行）
         pageScroll.post(() -> pageScroll.smoothScrollTo(0, consoleCard.getBottom() + dp(8)));
-        final String command = "export MODDIR=" + DnaTools.quote(mod.getAbsolutePath())
-                + "; cd \"$DNA_DRO\" 2>/dev/null || true; sh " + DnaTools.quote(sh.getAbsolutePath());
+        final String filesDir = getFilesDir().getAbsolutePath();
+        final String moduleRoot = moduleRoot().getAbsolutePath();
+        final String compatModule = new File(getFilesDir(), "module").getAbsolutePath();
+        final String command = "export START_DIR=" + DnaTools.quote(filesDir)
+                + "; export MODDIR=" + DnaTools.quote(mod.getAbsolutePath())
+                + "; export MODULE_DIR=" + DnaTools.quote(mod.getAbsolutePath())
+                + "; export DNA_MODULE=" + DnaTools.quote(moduleRoot)
+                + "; export PDNA_PRO=\"$DNA_PRO\""
+                + "; export PDNA_DRO=\"$DNA_DRO\""
+                + "; if [ -L " + DnaTools.quote(compatModule) + " ]; then rm -f "
+                + DnaTools.quote(compatModule) + "; fi"
+                + "; if [ ! -e " + DnaTools.quote(compatModule) + " ]; then ln -s "
+                + DnaTools.quote(moduleRoot) + " " + DnaTools.quote(compatModule) + "; fi"
+                + "; cd \"$DNA_DRO\" 2>/dev/null || { echo '✗ PDNA_DRO 不存在，已拒绝执行插件'; exit 126; }"
+                + "; sh " + DnaTools.quote(sh.getAbsolutePath());
         mainHandler.post(() -> consoleText.append("$ sh " + rel + "\n"));
         new Thread(() -> {
             DnaTools.Result result = DnaTools.run(this, command,

@@ -1,6 +1,7 @@
 package com.probiotics.xiaoni;
 
 import android.app.Dialog;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -22,6 +23,7 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -64,6 +66,7 @@ public final class DnaActivity extends BaseActivity {
     public static final String MODE_MERGE_MY = "mergeMy";
     public static final String MODE_MERGE_SUPER = "mergeSuper";
     public static final String MODE_MERGE_PART = "mergePart";
+    public static final String MODE_HYBRID = "hybrid";
 
     private static final int PICK_FILE = 2001;
 
@@ -71,6 +74,7 @@ public final class DnaActivity extends BaseActivity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
+    private volatile long hybridStartedAt;
 
     private String mode;
     private String filter = "";
@@ -99,6 +103,12 @@ public final class DnaActivity extends BaseActivity {
     private View progressFill;
     private Button runButton;
     private EditText manualInput;
+    private EditText hybridName, hybridVersion, hybridDevice, hybridPort, hybridAuthor, hybridPortVersion, hybridSourceInput;
+    private SegmentGroup hybridTemplate;
+    private CheckBox hybridCleanWork;
+    private TextView hybridTemplateSummary, hybridToolsStatus;
+    private String hybridSelectedSourceDir = "";
+    private String hybridBuiltinFolder = "images";
 
     // 行视图记录（工程文件）
     private final List<Row> fileRows = new ArrayList<>();
@@ -177,6 +187,7 @@ public final class DnaActivity extends BaseActivity {
         private final List<TextView> pills = new ArrayList<>();
         private int selected;
         private final int accent;
+        private Runnable onSelectionChanged;
         SegmentGroup(LinearLayout parent, String label, String[] options, int init, int accentColor) {
             accent = accentColor;
             LinearLayout labelRow = new LinearLayout(DnaActivity.this);
@@ -241,7 +252,9 @@ public final class DnaActivity extends BaseActivity {
                 }
                 pill.animate().scaleX(on ? 1.03f : 1f).scaleY(on ? 1.03f : 1f).setDuration(120).start();
             }
+            if (onSelectionChanged != null) onSelectionChanged.run();
         }
+        void setOnSelectionChanged(Runnable listener) { onSelectionChanged = listener; }
         int selected() { return selected; }
     }
 
@@ -265,6 +278,7 @@ public final class DnaActivity extends BaseActivity {
         getWindow().setStatusBarColor(0x00000000);
         getWindow().setNavigationBarColor(0x220b131f);
         ensureNoteChannel();
+        if (MODE_HYBRID.equals(mode)) HybridTools.ensureDirectories();
         buildUi();
         refreshProjectFiles();
     }
@@ -281,6 +295,28 @@ public final class DnaActivity extends BaseActivity {
 
     private String projectPath() {
         return project != null ? DnaTools.WORK_ROOT + "/" + project : DnaTools.WORK_ROOT;
+    }
+
+    private String hybridImageFolder() {
+        return "images";
+    }
+
+    private String hybridSourceFolder() {
+        return hybridBuiltinFolder;
+    }
+
+    private String hybridSourcePath() {
+        if (!hybridSelectedSourceDir.isEmpty()) return hybridSelectedSourceDir;
+        return HybridTools.WORK_ROOT + ("probiotics".equals(hybridSourceFolder())
+                ? "/twrp/probiotics" : "/twrp1/images");
+    }
+
+    private String hybridWorkPath() {
+        return HybridTools.WORK_ROOT + "/twrp1";
+    }
+
+    private String hybridDestinationPath() {
+        return hybridWorkPath() + "/" + hybridImageFolder();
     }
 
     // ============ UI 构建 ============
@@ -411,7 +447,7 @@ public final class DnaActivity extends BaseActivity {
         LinearLayout.LayoutParams projLp = new LinearLayout.LayoutParams(-1, -2);
         projLp.bottomMargin = dp(10);
         // v3.30.12：根目录扫描模式（vbmeta/宽容）与工程无关，隐藏工程横幅
-        if (!rootScanMode()) {
+        if (!rootScanMode() && !MODE_HYBRID.equals(mode)) {
             content.addView(projectCard, projLp);
             refreshProjectView();
         }
@@ -427,26 +463,42 @@ public final class DnaActivity extends BaseActivity {
         descLp.bottomMargin = dp(10);
         content.addView(desc, descLp);
 
+        if (MODE_HYBRID.equals(mode)) {
+            LinearLayout toolsCard = buildHybridToolsCard();
+            LinearLayout.LayoutParams toolsLp = new LinearLayout.LayoutParams(-1, -2);
+            toolsLp.bottomMargin = dp(10);
+            content.addView(toolsCard, toolsLp);
+        }
+
         // ---- 文件卡：标题行 + 内嵌文件列表 + 手动路径 ----
         LinearLayout pickCard = glass();
         pickCard.setOrientation(LinearLayout.VERTICAL);
         pickCard.setPadding(dp(12), dp(10), dp(12), dp(12));
-        LinearLayout pickHead = new LinearLayout(this);
-        pickHead.setOrientation(LinearLayout.HORIZONTAL);
-        pickHead.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout pickTitleRow = new LinearLayout(this);
+        pickTitleRow.setOrientation(LinearLayout.HORIZONTAL);
+        pickTitleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView pickTitle = new TextView(this);
         // v3.30.12：根目录扫描模式列 /sdcard/PDMA 根目录文件（非工程目录）
-        pickTitle.setText(rootScanMode() ? t("PDNA 文件（/sdcard/PDNA）", "PDNA files (root)") : t("工程文件", "Project files"));
+        pickTitle.setText(MODE_HYBRID.equals(mode) ? t("镜像来源  ·  文件夹", "Images · folder")
+                : rootScanMode() ? t("PDNA 文件（/sdcard/PDNA）", "PDNA files (root)") : t("工程文件", "Project files"));
         pickTitle.setTextSize(15);
         pickTitle.setTypeface(null, 1);
         pickTitle.setTextColor(0xff17334f);
-        pickHead.addView(pickTitle, new LinearLayout.LayoutParams(0, -2, 1f));
+        pickTitle.setPadding(0, dp(2), 0, dp(3));
+        pickTitleRow.addView(pickTitle, new LinearLayout.LayoutParams(-1, -2));
+        pickCard.addView(pickTitleRow, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout pickActions = new LinearLayout(this);
+        pickActions.setOrientation(LinearLayout.HORIZONTAL);
+        pickActions.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams actionRowLp = new LinearLayout.LayoutParams(-1, dp(38));
+        actionRowLp.topMargin = dp(5);
         fileCountView = new TextView(this);
         fileCountView.setTextSize(11.5f);
         fileCountView.setTypeface(null, 1);
         fileCountView.setTextColor(0xff2f9c8f);
         fileCountView.setPadding(0, 0, dp(10), 0);
-        pickHead.addView(fileCountView, new LinearLayout.LayoutParams(-2, -2));
+        pickActions.addView(fileCountView, new LinearLayout.LayoutParams(0, -2, 1f));
         // v3.28.7：多选模式加「全选 / 清空」（分解 / 合成 / 转换等可批量处理全部文件）
         if (multiPick()) {
             Button fileAllBtn = new Button(this);
@@ -466,9 +518,9 @@ public final class DnaActivity extends BaseActivity {
                 for (Row r : fileRows) picked.add(r.name);
                 refreshFileRows();
             });
-            pickHead.addView(fileAllBtn, new LinearLayout.LayoutParams(dp(52), dp(32)));
+            pickActions.addView(fileAllBtn, new LinearLayout.LayoutParams(dp(52), dp(32)));
             Button fileNoneBtn = new Button(this);
-            fileNoneBtn.setText(t("清空", "None"));
+            fileNoneBtn.setText(t("取消全选", "Deselect all"));
             fileNoneBtn.setAllCaps(false);
             fileNoneBtn.setTextSize(12);
             fileNoneBtn.setMinWidth(0);
@@ -485,7 +537,7 @@ public final class DnaActivity extends BaseActivity {
                 picked.clear();
                 refreshFileRows();
             });
-            pickHead.addView(fileNoneBtn, fileNoneLp);
+            pickActions.addView(fileNoneBtn, fileNoneLp);
         }
         Button refresh = new Button(this);
         refresh.setText("⟳");
@@ -502,9 +554,9 @@ public final class DnaActivity extends BaseActivity {
             Haptics.perform(v);
             refreshProjectFiles();
         });
-        pickHead.addView(refresh, new LinearLayout.LayoutParams(dp(38), dp(34)));
+        pickActions.addView(refresh, new LinearLayout.LayoutParams(dp(38), dp(34)));
         Button pickSaf = new Button(this);
-        pickSaf.setText("＋");
+        pickSaf.setText("📁");
         pickSaf.setTextSize(15);
         pickSaf.setAllCaps(false);
         pickSaf.setMinWidth(0);
@@ -518,12 +570,62 @@ public final class DnaActivity extends BaseActivity {
         pickSaf.setStateListAnimator(null);
         pickSaf.setOnClickListener(v -> {
             Haptics.perform(v);
-            // v3.30.15：内置文件浏览器替换系统 SAF 选择器（层级深、找文件麻烦）
-            FileBrowserDialog.show(this, t("选择文件", "Pick file"), browseExts(),
-                    DnaTools.WORK_ROOT, path -> onBrowserPicked(path));
+            if (MODE_HYBRID.equals(mode)) {
+                FileBrowserDialog.showDirectoryPicker(this, t("选择要打包的目录", "Choose package folder"),
+                        hybridSourcePath(), path -> { hybridSelectedSourceDir = path; refreshProjectFiles(); });
+            } else {
+                FileBrowserDialog.show(this, t("选择文件", "Pick file"), browseExts(),
+                        DnaTools.WORK_ROOT, path -> onBrowserPicked(path));
+            }
         });
-        pickHead.addView(pickSaf, safLp);
-        pickCard.addView(pickHead, new LinearLayout.LayoutParams(-1, -2));
+        pickActions.addView(pickSaf, safLp);
+        pickCard.addView(pickActions, actionRowLp);
+        if (MODE_HYBRID.equals(mode)) {
+            LinearLayout folderRow = new LinearLayout(this);
+            folderRow.setOrientation(LinearLayout.HORIZONTAL);
+            folderRow.setGravity(Gravity.CENTER_VERTICAL);
+            TextView folderHint = new TextView(this);
+            folderHint.setText(t("默认镜像文件夹", "Image folder"));
+            folderHint.setTextSize(11.5f);
+            folderHint.setTextColor(0xff5a6b82);
+            folderRow.addView(folderHint, new LinearLayout.LayoutParams(0, dp(38), 1f));
+            Button imagesFolder = new Button(this);
+            imagesFolder.setText("images");
+            imagesFolder.setAllCaps(false);
+            imagesFolder.setTextSize(12);
+            imagesFolder.setGravity(Gravity.CENTER);
+            imagesFolder.setMinWidth(0);
+            imagesFolder.setMinHeight(0);
+            imagesFolder.setPadding(0, 0, 0, 0);
+            imagesFolder.setStateListAnimator(null);
+            Button probioticsFolder = new Button(this);
+            probioticsFolder.setText("probiotics");
+            probioticsFolder.setAllCaps(false);
+            probioticsFolder.setTextSize(12);
+            probioticsFolder.setGravity(Gravity.CENTER);
+            probioticsFolder.setMinWidth(0);
+            probioticsFolder.setMinHeight(0);
+            probioticsFolder.setPadding(0, 0, 0, 0);
+            probioticsFolder.setStateListAnimator(null);
+            LinearLayout.LayoutParams folderLp = new LinearLayout.LayoutParams(dp(78), dp(34));
+            folderLp.leftMargin = dp(6);
+            folderRow.addView(imagesFolder, folderLp);
+            LinearLayout.LayoutParams probioticsLp = new LinearLayout.LayoutParams(dp(94), dp(34));
+            probioticsLp.leftMargin = dp(6);
+            folderRow.addView(probioticsFolder, probioticsLp);
+            Runnable updateFolderButtons = () -> {
+                imagesFolder.setBackgroundResource("images".equals(hybridBuiltinFolder) ? R.drawable.dna_row_checked : R.drawable.dna_pill_glass);
+                probioticsFolder.setBackgroundResource("probiotics".equals(hybridBuiltinFolder) ? R.drawable.dna_row_checked : R.drawable.dna_pill_glass);
+                hybridSelectedSourceDir = "";
+                if (fileList != null) refreshProjectFiles();
+            };
+            imagesFolder.setOnClickListener(v -> { Haptics.perform(v); hybridBuiltinFolder = "images"; updateFolderButtons.run(); });
+            probioticsFolder.setOnClickListener(v -> { Haptics.perform(v); hybridBuiltinFolder = "probiotics"; updateFolderButtons.run(); });
+            updateFolderButtons.run();
+            LinearLayout.LayoutParams folderRowLp = new LinearLayout.LayoutParams(-1, dp(42));
+            folderRowLp.topMargin = dp(6);
+            pickCard.addView(folderRow, folderRowLp);
+        }
 
         fileListScroll = new BoundedScrollView(this, dp(320));
         fileList = new LinearLayout(this);
@@ -697,6 +799,14 @@ public final class DnaActivity extends BaseActivity {
             if (running.get()) {
                 cancelFlag.set(true);
                 logLine(t("正在取消 ...", "Cancelling..."));
+                if (MODE_HYBRID.equals(mode)) {
+                    running.set(false);
+                    showProgress(false);
+                    runButton.setText("▶  " + actionLabel());
+                    runButton.setBackgroundResource(R.drawable.button_green);
+                    status.setText(t("已取消", "Cancelled"));
+                    notifyDone(false, t("已取消卡刷包制作", "Recovery package build cancelled"));
+                }
                 return;
             }
             execute();
@@ -765,7 +875,7 @@ public final class DnaActivity extends BaseActivity {
         content.addView(logHead, new LinearLayout.LayoutParams(-1, -2));
         GradientDrawable logBg = new GradientDrawable();
         // v3.30.28：日志框换浅色磨砂底（对齐解压ROM/分解bin页面，弃用黑色终端风）
-        logBg.setColor(0xEdf4f8fc);
+        logBg.setColor(0xB8e6eef4);
         logBg.setCornerRadius(dp(18));
         logBg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
         logDisplay = new TextView(this);
@@ -805,6 +915,7 @@ public final class DnaActivity extends BaseActivity {
             case MODE_SUPER_UNPACK: return "DNA · " + t("分解 super", "Extract super");
             case MODE_REPACK: return "DNA · " + t("合成镜像", "Repack");
             case MODE_SUPER_PACK: return "DNA · " + t("合成 super", "Build super");
+            case MODE_HYBRID: return "DNA·rec" + t("卡刷包制作", " Recovery package builder");
             case MODE_CONVERT: return "DNA · " + t("img-dat-br 转换", "img-dat-br");
             case MODE_SPARSE: return "DNA · " + t("img-simg 互转", "img-simg");
             case MODE_ZST: return "DNA · " + t("zst-img 互转", "zst-img");
@@ -826,6 +937,8 @@ public final class DnaActivity extends BaseActivity {
                     "super.img → partition images (lpunpack).");
             case MODE_REPACK: return t("分解目录 → img / dat / br 镜像（repack）。自动列出当前工程 /data/PDNA/工程名 下的分解输出目录（原版 findfile.sh dir），支持 ext4 / erofs / f2fs，可多目录同时打包。",
                     "Extracted dirs → img / dat / br (repack). ext4 / erofs / f2fs.");
+            case MODE_HYBRID: return t("将工程中的分区 img 组装为可卡刷、可线刷、可 ADB sideload 的一体包。固定 BAT / SH 模板只替换内容变量，不按镜像重新生成脚本。",
+                    "Build one package for recovery, fastboot and ADB sideload while preserving fixed BAT / SH templates.");
             case MODE_SUPER_PACK: return t("分区镜像 → super.img（lpmake）。支持 A-only / AB / Virtual-AB，raw / sparse 输出。",
                     "Partition images → super.img (lpmake).");
             case MODE_CONVERT: return t("img → dat / br（dna convert）。多选批量转换，自动压缩等级。",
@@ -860,6 +973,7 @@ public final class DnaActivity extends BaseActivity {
             // v3.30.13：分解 bin 同时列出 payload.bin 和 OTA zip（payload_extract 原生支持 zip）
             case MODE_BIN: return "bin_zip";
             case MODE_REPACK: return "dro_dir";
+            case MODE_HYBRID: return "img";
             case MODE_SPARSE:
             case MODE_CONVERT:
             case MODE_SUPER_PACK: return "img";
@@ -906,13 +1020,33 @@ public final class DnaActivity extends BaseActivity {
         refreshProjectView();
         fileRows.clear();
         fileList.removeAllViews();
+        // 线卡/卡刷模板使用固定默认目录，不读取当前 DNA 工程。
+        if (MODE_HYBRID.equals(mode)) {
+            List<String> files = DnaTools.listImagesInFolder(hybridSourcePath());
+            projectMeta.setText(t("镜像来源目录：", "Image source folder: ") + hybridSourcePath()
+                    + (files.isEmpty() ? "" : "  ·  " + files.size() + t(" 个 img", " images")));
+            if (files.isEmpty()) {
+                fileCountView.setText(t("已选 0", "Picked 0"));
+                fileList.addView(emptyRow(t("目录内暂无 img，请把镜像放入上方默认目录", "No img files in the default folder")),
+                        new LinearLayout.LayoutParams(-1, -2));
+                return;
+            }
+            picked.retainAll(files);
+            for (String name : files) {
+                Row row = buildRow(name, rowExtra(name, "img"), false);
+                fileList.addView(row.view, rowParams());
+                fileRows.add(row);
+            }
+            refreshFileRows();
+            return;
+        }
         // 根目录扫描模式：不依赖工程选择，直接列 /sdcard/PDNA 下的 img
         if (rootScanMode()) {
             List<String> rootFiles = DnaTools.listProjectFiles(null, "img");
             projectMeta.setText(t("识别 ", "Scan ") + DnaTools.WORK_ROOT + t(" 下的 img · 输出到 ", " for img · output to ")
                     + DnaTools.WORK_ROOT + "/out");
             if (rootFiles.isEmpty()) {
-                fileCountView.setText("");
+                fileCountView.setText(t("已选 0", "Picked 0"));
                 TextView empty = emptyRow(t("/sdcard/PDNA 根目录暂无 img 文件", "No img files in /sdcard/PDMA root"));
                 fileList.addView(empty, new LinearLayout.LayoutParams(-1, -2));
                 return;
@@ -928,7 +1062,7 @@ public final class DnaActivity extends BaseActivity {
             return;
         }
         if (project == null) {
-            fileCountView.setText("");
+            fileCountView.setText(t("已选 0", "Picked 0"));
             projectMeta.setText(t("点击卡片选择或新建工程", "Tap card to pick / create a project"));
             TextView empty = emptyRow(t("请先选择工程", "Select a project first"));
             fileList.addView(empty, new LinearLayout.LayoutParams(-1, -2));
@@ -954,7 +1088,7 @@ public final class DnaActivity extends BaseActivity {
                 + "\n" + t("分解输出 ", "Output ") + DnaTools.TMP_ROOT + "/" + project
                 + (files.isEmpty() ? "" : "  ·  " + files.size() + t(" 项", " items")));
         if (files.isEmpty()) {
-            fileCountView.setText("");
+            fileCountView.setText(t("已选 0", "Picked 0"));
             TextView empty = emptyRow(fromDro
                     ? t("暂无分解输出目录（先分解 img / bin / super）", "No extracted dirs yet. Extract first")
                     : t("工程内暂无匹配文件", "No matching files in this project"));
@@ -1835,6 +1969,351 @@ public final class DnaActivity extends BaseActivity {
     private String superListingPath;         // 正在解析的 super.img 路径
     private Runnable superParseCallback;     // 解析完成回调（弹窗）
 
+    private void showHybridToolchainReport() {
+        Dialog dialog = new Dialog(this);
+        dialog.setCancelable(true);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20), dp(18), dp(20), dp(16));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xF2e9f0f7);
+        bg.setCornerRadius(dp(24));
+        bg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+        panel.setBackground(bg);
+        TextView title = new TextView(this);
+        title.setText("🔍  " + t("DNA·rec 工具链检测", "DNA·rec Toolchain Check"));
+        title.setTextSize(16);
+        title.setTypeface(null, 1);
+        title.setTextColor(0xff17334f);
+        title.setPadding(0, 0, 0, dp(8));
+        panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        TextView hint = new TextView(this);
+        hint.setText(t("阳·卡刷与小布丁·线卡使用的独立工具链", "Independent tools for Yang Recovery and Xiaobuding Hybrid"));
+        hint.setTextSize(11.5f);
+        hint.setTextColor(0xff5a6b82);
+        hint.setPadding(0, 0, 0, dp(8));
+        panel.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        BoundedScrollView scroll = new BoundedScrollView(this, dp(420));
+        scroll.addView(rows, new ScrollView.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, -2);
+        panel.addView(scroll, scrollLp);
+        TextView verdict = new TextView(this);
+        verdict.setText(t("正在检测 …", "Checking…"));
+        verdict.setTextSize(13);
+        verdict.setTypeface(null, 1);
+        verdict.setTextColor(0xff5a6b82);
+        verdict.setPadding(0, dp(10), 0, dp(4));
+        panel.addView(verdict, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        Button close = new Button(this, null, 0);
+        close.setText(t("关闭", "Close"));
+        close.setAllCaps(false);
+        close.setTextSize(14);
+        close.setTypeface(null, 1);
+        close.setTextColor(0xff172b4d);
+        close.setGravity(Gravity.CENTER);
+        close.setBackgroundResource(R.drawable.dna_pill_glass);
+        close.setStateListAnimator(null);
+        close.setOnClickListener(v -> dialog.dismiss());
+        buttons.addView(close, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        Button action = new Button(this, null, 0);
+        action.setText("⬇ " + t("下载工具", "Download"));
+        action.setAllCaps(false);
+        action.setTextSize(14);
+        action.setTypeface(null, 1);
+        action.setTextColor(0xff172b4d);
+        action.setGravity(Gravity.CENTER);
+        action.setBackgroundResource(R.drawable.dna_pill_glass);
+        action.setStateListAnimator(null);
+        LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        actionLp.leftMargin = dp(8);
+        buttons.addView(action, actionLp);
+        panel.addView(buttons, new LinearLayout.LayoutParams(-1, dp(46)));
+        android.util.DisplayMetrics reportDm = getResources().getDisplayMetrics();
+        dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, -2));
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            dialog.getWindow().setLayout((int) (reportDm.widthPixels * 0.92f), -2);
+        }
+        action.setOnClickListener(v -> {
+            dialog.dismiss();
+            showHybridToolchainDownloadDialog();
+        });
+        new Thread(() -> {
+            java.util.List<String> checks = HybridTools.check(this);
+            runOnUiThread(() -> {
+                boolean all = HybridTools.toolsInstalled(this);
+                rows.removeAllViews();
+                for (String item : checks) {
+                    boolean ok = item.startsWith("✓");
+                    String text = item.substring(Math.min(2, item.length()));
+                    int split = text.indexOf(" · ");
+                    String name = split > 0 ? text.substring(0, split) : text;
+                    String detail = split > 0 ? text.substring(split + 3) : "";
+                    LinearLayout row = new LinearLayout(this);
+                    row.setOrientation(LinearLayout.HORIZONTAL);
+                    row.setGravity(Gravity.CENTER_VERTICAL);
+                    row.setPadding(0, dp(5), 0, dp(5));
+                    TextView icon = new TextView(this);
+                    icon.setText(ok ? "✓" : "✗");
+                    icon.setTextSize(15);
+                    icon.setTypeface(null, 1);
+                    icon.setTextColor(ok ? 0xff1d7a4f : 0xffa33b3b);
+                    row.addView(icon, new LinearLayout.LayoutParams(dp(22), -2));
+                    TextView nameView = new TextView(this);
+                    nameView.setText(name);
+                    nameView.setTextSize(13);
+                    nameView.setTypeface(null, 1);
+                    nameView.setTextColor(0xff17334f);
+                    row.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1f));
+                    TextView detailView = new TextView(this);
+                    detailView.setText(detail);
+                    detailView.setTextSize(11);
+                    detailView.setTextColor(0xff5a6b82);
+                    detailView.setGravity(Gravity.RIGHT);
+                    row.addView(detailView, new LinearLayout.LayoutParams(-2, -2));
+                    rows.addView(row, new LinearLayout.LayoutParams(-1, -2));
+                }
+                verdict.setText((all ? "✓ " : "✗ ") + (all ? t("工具链完整，可开始制作", "Toolchain ready") : t("工具链未完整，请下载工具", "Toolchain incomplete; download tools")));
+                verdict.setTextColor(all ? 0xff1d7a4f : 0xffa33b3b);
+                action.setText(all ? "↻ " + t("重新检测", "Re-check") : "⬇ " + t("下载工具", "Download"));
+                action.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    if (all) showHybridToolchainReport(); else showHybridToolchainDownloadDialog();
+                });
+            });
+        }, "rec-toolchain-report").start();
+    }
+
+    private void showHybridToolchainDownloadDialog() {
+        LinearLayout panel = glass();
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(16), dp(18), dp(14));
+        TextView title = new TextView(this);
+        title.setText("↓  " + t("下载 DNA·rec 独立工具链", "Download DNA·rec tools"));
+        title.setTextSize(18);
+        title.setTypeface(null, 1);
+        title.setTextColor(0xff17334f);
+        panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        TextView statusText = new TextView(this);
+        statusText.setText(t("正在连接下载源…", "Connecting to the download source…"));
+        statusText.setTextSize(12.5f);
+        statusText.setTextColor(0xff5a6b82);
+        statusText.setPadding(dp(2), dp(8), dp(2), dp(8));
+        panel.addView(statusText, new LinearLayout.LayoutParams(-1, -2));
+        FrameLayout progressTrack = new FrameLayout(this);
+        GradientDrawable trackBg = new GradientDrawable();
+        trackBg.setColor(0x35FFFFFF);
+        trackBg.setCornerRadius(dp(8));
+        trackBg.setStroke(Math.max(1, dp(1)), 0x55FFFFFF);
+        progressTrack.setBackground(trackBg);
+        View progressFill = new View(this);
+        GradientDrawable fillBg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xffa8eadc, 0xff2f9c8f});
+        fillBg.setCornerRadius(dp(8));
+        progressFill.setBackground(fillBg);
+        progressTrack.addView(progressFill, new FrameLayout.LayoutParams(0, -1));
+        panel.addView(progressTrack, new LinearLayout.LayoutParams(-1, dp(12)));
+        TextView progressMeta = new TextView(this);
+        progressMeta.setText("0%  ·  约 12.4 MB");
+        progressMeta.setTextSize(11.5f);
+        progressMeta.setTextColor(0xff5a6b82);
+        progressMeta.setGravity(Gravity.RIGHT);
+        progressMeta.setPadding(0, dp(5), 0, 0);
+        panel.addView(progressMeta, new LinearLayout.LayoutParams(-1, -2));
+        TextView detail = new TextView(this);
+        detail.setText(t("下载完成后会自动检查并部署卡刷工具。", "The package will be checked and deployed automatically after download."));
+        detail.setTextSize(11);
+        detail.setTextColor(0xff71839b);
+        detail.setPadding(dp(2), dp(8), dp(2), 0);
+        panel.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+        GradientDrawable dialogBg = new GradientDrawable();
+        dialogBg.setColor(0xF2e9f0f7);
+        dialogBg.setCornerRadius(dp(24));
+        dialogBg.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+        panel.setBackground(dialogBg);
+        Dialog dialog = new Dialog(this);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setContentView(panel, new LinearLayout.LayoutParams(-1, -2));
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            dialog.getWindow().setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.9f), -2);
+        }
+        new Thread(() -> {
+            boolean ok = HybridTools.downloadTools(this,
+                    line -> { runOnUiThread(() -> statusText.setText(line)); return kotlin.Unit.INSTANCE; },
+                    p -> { runOnUiThread(() -> {
+                        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) progressFill.getLayoutParams();
+                        lp.width = Math.max(0, (int) (progressTrack.getWidth() * (p / 100f)));
+                        progressFill.setLayoutParams(lp);
+                        progressMeta.setText(p + "%  ·  约 12.4 MB");
+                    }); return kotlin.Unit.INSTANCE; });
+            runOnUiThread(() -> {
+                statusText.setText(ok ? t("✓ 下载并部署完成", "✓ Downloaded and deployed") : t("✗ 下载或部署失败", "✗ Download/deploy failed"));
+                statusText.setTextColor(ok ? 0xff1d7a4f : 0xffa33b3b);
+                if (hybridToolsStatus != null) {
+                    hybridToolsStatus.setText(ok ? t("✓ 独立工具链已就绪", "✓ Independent tools ready") : t("下载失败，请重试", "Download failed; retry"));
+                    hybridToolsStatus.setTextColor(ok ? 0xff1d7a4f : 0xffa33b3b);
+                }
+                if (ok) {
+                    panel.postDelayed(dialog::dismiss, 650);
+                }
+            });
+        }, "rec-tools-download-dialog").start();
+    }
+
+    private LinearLayout buildHybridToolsCard() {
+        LinearLayout card = glass();
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        TextView title = new TextView(this);
+        title.setText(t("DNA·rec 独立工具链", "DNA·rec toolchain"));
+        title.setTextSize(15);
+        title.setTypeface(null, 1);
+        title.setTextColor(0xff17334f);
+        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        hybridToolsStatus = new TextView(this);
+        hybridToolsStatus.setText(t("检测中…", "Checking…"));
+        hybridToolsStatus.setTextSize(12);
+        hybridToolsStatus.setTextColor(0xff5a6b82);
+        hybridToolsStatus.setPadding(0, dp(5), 0, dp(7));
+        card.addView(hybridToolsStatus, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button download = new Button(this);
+        download.setText(t("下载工具", "Download tools"));
+        download.setAllCaps(false);
+        download.setTextColor(0xff17334f);
+        download.setBackgroundResource(R.drawable.dna_pill_glass);
+        download.setStateListAnimator(null);
+        Button check = new Button(this);
+        check.setText(t("检测", "Check"));
+        check.setAllCaps(false);
+        check.setTextColor(0xff17334f);
+        check.setBackgroundResource(R.drawable.dna_pill_glass);
+        check.setStateListAnimator(null);
+        actions.addView(download, new LinearLayout.LayoutParams(0, dp(40), 0.55f));
+        LinearLayout.LayoutParams checkLp = new LinearLayout.LayoutParams(0, dp(40), 0.45f);
+        checkLp.leftMargin = dp(8);
+        actions.addView(check, checkLp);
+        card.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+        Runnable detect = () -> new Thread(() -> {
+            boolean installed = HybridTools.toolsInstalled(this);
+            String detail = installed ? t("独立工具链已就绪 · 7 项资源", "Independent toolchain ready · 7 resources")
+                    : t("独立工具链未下载", "Independent toolchain not downloaded");
+            final String text = detail;
+            runOnUiThread(() -> {
+                if (hybridToolsStatus != null) {
+                    hybridToolsStatus.setText(text);
+                    hybridToolsStatus.setTextColor(text.contains("未") || text.contains("失败") ? 0xffa33b3b : 0xff1d7a4f);
+                }
+            });
+        }, "dna-toolchain-check").start();
+        check.setOnClickListener(v -> { Haptics.perform(v); showHybridToolchainReport(); });
+        download.setOnClickListener(v -> {
+            Haptics.perform(v);
+            showHybridToolchainDownloadDialog();
+        });
+        detect.run();
+        return card;
+    }
+
+    private TextView hybridLabel(LinearLayout parent, String text) {
+        TextView label = new TextView(this);
+        label.setText(text);
+        label.setTextSize(11.5f);
+        label.setTypeface(null, 1);
+        label.setTextColor(0xff5a6b82);
+        label.setPadding(dp(3), dp(8), dp(3), dp(2));
+        parent.addView(label, new LinearLayout.LayoutParams(-1, -2));
+        return label;
+    }
+
+    private EditText hybridParam(LinearLayout parent, String label, String value) {
+        hybridLabel(parent, label);
+        EditText input = glassInput(parent, value);
+        input.setText(value);
+        return input;
+    }
+
+    private void showHybridParamsDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(12), dp(18), dp(8));
+        TextView heading = new TextView(this);
+        heading.setText(t("DNA·rec 卡刷包制作", "DNA·rec Recovery Package Builder"));
+        heading.setTextSize(20);
+        heading.setTypeface(null, 1);
+        heading.setTextColor(0xff17334f);
+        panel.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+        TextView modeNote = new TextView(this);
+        modeNote.setText(t("阳·卡刷 · functions.sh · twrp1/images", "Yang Recovery · functions.sh · twrp1/images"));
+        modeNote.setTextSize(14);
+        modeNote.setTypeface(null, 1);
+        modeNote.setTextColor(0xff287c70);
+        modeNote.setPadding(dp(4), dp(8), dp(4), dp(8));
+        panel.addView(modeNote, new LinearLayout.LayoutParams(-1, -2));
+        TextView cardWarning = new TextView(this);
+        cardWarning.setText(t("阳·卡刷必须包含 super.img.zst，否则刷入后可能无法开机。",
+                "Yang Recovery requires super.img.zst or the device may not boot."));
+        cardWarning.setTextSize(11.5f);
+        cardWarning.setTextColor(0xffa34747);
+        cardWarning.setPadding(dp(4), dp(4), dp(4), dp(5));
+        panel.addView(cardWarning, new LinearLayout.LayoutParams(-1, -2));
+        final TextView[] finalDirHolder = new TextView[1];
+        hybridTemplate = new SegmentGroup(panel, t("打包模板", "Package template"),
+                new String[]{"阳·卡刷", "小布丁·线卡"}, 0, C_TEAL);
+        hybridTemplate.setOnSelectionChanged(() -> {
+            boolean card = hybridTemplate.selected() == 0;
+            modeNote.setText(card ? t("阳·卡刷 · functions.sh · twrp1/images", "Yang Recovery · functions.sh · twrp1/images")
+                    : t("小布丁·线卡 · hybrid_builder.sh · twrp/probiotics", "Xiaobuding Hybrid · hybrid_builder.sh · twrp/probiotics"));
+            cardWarning.setText(card ? t("阳·卡刷必须包含 super.img.zst，否则刷入后可能无法开机。", "Yang Recovery requires super.img.zst or the device may not boot.")
+                    : t("小布丁·线卡只需要普通 .img，根本不需要 super.img.zst。", "Xiaobuding Hybrid only uses normal .img files and does not need super.img.zst."));
+            cardWarning.setTextColor(card ? 0xffa34747 : 0xff287c70);
+            if (finalDirHolder[0] != null) finalDirHolder[0].setText(HybridTools.WORK_ROOT);
+            if (hybridTemplateSummary != null) hybridTemplateSummary.setText(card
+                    ? t("阳·卡刷参数（点击设置）", "Yang Recovery parameters (tap to set)")
+                    : t("小布丁·线卡参数（点击设置）", "Xiaobuding Hybrid parameters (tap to set)"));
+        });
+        hybridName = hybridParam(panel, t("输出文件名", "Output name"), "hybrid_update");
+        hybridVersion = hybridParam(panel, t("移植版本", "Port version"), "ColorOs16.0.0.9");
+        hybridDevice = hybridParam(panel, t("本机机型", "Device model"), "Oneplus 13");
+        hybridPort = hybridParam(panel, t("移植机型", "Ported model"), "OPPO find X9 ultra");
+        hybridAuthor = hybridParam(panel, t("脚本作者", "Script author"), "小布丁");
+        hybridPortVersion = hybridParam(panel, t("移植版本号", "Port build"), "PMA120_16.0.9.402");
+        hybridLabel(panel, t("ZIP 输出目录（PDNA 根目录）", "ZIP output directory (PDNA root)"));
+        TextView finalDir = new TextView(this);
+        finalDirHolder[0] = finalDir;
+        finalDir.setText(HybridTools.WORK_ROOT);
+        finalDir.setTextSize(12.5f);
+        finalDir.setTextColor(0xff287c70);
+        finalDir.setPadding(dp(10), dp(9), dp(10), dp(9));
+        finalDir.setBackgroundResource(R.drawable.dna_row_glass);
+        panel.addView(finalDir, new LinearLayout.LayoutParams(-1, -2));
+        hybridCleanWork = optionSwitch(panel, t("完成后清理 twrp 工作区（默认关闭）", "Clean twrp workspace after build (off by default)"), false);
+        ScrollView parameterScroll = new ScrollView(this);
+        parameterScroll.setFillViewport(true);
+        parameterScroll.addView(panel);
+        parameterScroll.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(430)));
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(parameterScroll)
+                .setNegativeButton(t("取消", "Cancel"), null)
+                .setPositiveButton(t("确定并开始压缩打包", "Confirm and start packing"), null).create();
+        dialog.setOnShowListener(x -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> { dialog.dismiss(); execute(); });
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawableResource(R.drawable.dna_dialog_bg);
+                dialog.getWindow().setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.92f), dp(500));
+            }
+        });
+        dialog.show();
+    }
+
     private void buildOptions(LinearLayout host) {
         switch (mode) {
             case MODE_EXTRACT:
@@ -1863,6 +2342,20 @@ public final class DnaActivity extends BaseActivity {
                 LinearLayout card2 = optionsCard(host, t("高级选项", "Advanced"));
                 repackCompress = optionSwitch(card2, t("压缩 ext4 镜像空间", "Shrink ext4"), false);
                 repackDelavb = optionSwitch(card2, t("去除 AVB / data 加密", "Remove AVB (fstab)"), false);
+                break;
+            }
+            case MODE_HYBRID: {
+                LinearLayout card = optionsCard(host, t("打包参数", "Package parameters"));
+                hybridTemplateSummary = new TextView(this);
+                hybridTemplateSummary.setText(t("阳·卡刷参数（点击设置）", "Recovery package parameters (tap to set)"));
+                hybridTemplateSummary.setTextSize(14);
+                hybridTemplateSummary.setTypeface(null, 1);
+                hybridTemplateSummary.setTextColor(0xff17334f);
+                hybridTemplateSummary.setGravity(Gravity.CENTER_VERTICAL);
+                hybridTemplateSummary.setPadding(dp(12), 0, dp(12), 0);
+                hybridTemplateSummary.setBackgroundResource(R.drawable.dna_pill_glass);
+                hybridTemplateSummary.setOnClickListener(v -> showHybridParamsDialog());
+                card.addView(hybridTemplateSummary, new LinearLayout.LayoutParams(-1, dp(46)));
                 break;
             }
             case MODE_SUPER_PACK: {
@@ -1945,7 +2438,7 @@ public final class DnaActivity extends BaseActivity {
 
     private void execute() {
         // 根目录扫描模式（vbmeta/宽容）不依赖工程，直接读 /sdcard/PDMA 根目录
-        if (project == null && !rootScanMode()) {
+        if (project == null && !rootScanMode() && !MODE_HYBRID.equals(mode)) {
             toast(t("请先选择工程", "Select a project first"));
             showProjectPicker();
             return;
@@ -1954,8 +2447,42 @@ public final class DnaActivity extends BaseActivity {
         if (mode == MODE_BIN) { executeBinExtract(); return; }
         // v3.30.27：分解 super 对齐 bin 交互 —— 点「开始分解」先解析分区，弹窗勾选，确定后执行
         if (mode == MODE_SUPER_UNPACK) { executeSuperUnpack(); return; }
+        if (MODE_HYBRID.equals(mode)) {
+            try { HybridTools.installTemplateScripts(this); }
+            catch (Exception e) { toast(t("模板脚本安装失败", "Template script install failed")); return; }
+        }
         String command = buildCommand();
         if (command == null) return;
+        if (MODE_HYBRID.equals(mode)) {
+            final boolean cardTemplate = hybridTemplate == null || hybridTemplate.selected() == 0;
+            final String work = HybridTools.WORK_ROOT + (cardTemplate ? "/twrp1" : "/twrp");
+            running.set(true);
+            cancelFlag.set(false);
+            hybridStartedAt = System.nanoTime();
+            runButton.setText("■  " + t("准备中（点击取消）", "Preparing (tap to cancel)"));
+            runButton.setBackgroundResource(R.drawable.button_red);
+            status.setText(t("正在准备模板…", "Preparing template…"));
+            showProgress(true);
+            logLine("• 正在准备模板与镜像工作区…");
+            new Thread(() -> {
+                if (cancelFlag.get()) {
+                    mainHandler.post(() -> { running.set(false); showProgress(false); runButton.setText("▶  " + actionLabel()); runButton.setBackgroundResource(R.drawable.button_green); });
+                    return;
+                }
+                boolean prepared = HybridTools.prepareWorkspace(this, work, cardTemplate,
+                        line -> { mainHandler.post(() -> { logHybridLine(line); status.setText(t("正在准备模板…", "Preparing template…")); }); return kotlin.Unit.INSTANCE; });
+                if (prepared && !cancelFlag.get()) mainHandler.post(() -> runDnaCommand(command));
+                else if (!prepared) mainHandler.post(() -> {
+                    running.set(false); showProgress(false);
+                    runButton.setText("▶  " + actionLabel());
+                    runButton.setBackgroundResource(R.drawable.button_green);
+                    status.setText(t("模板准备失败", "Template preparation failed"));
+                    toast(t("DNA·rec 工具链未就绪或归档解压失败", "DNA·rec tools are not ready or archive extraction failed"));
+                });
+                else mainHandler.post(() -> { running.set(false); showProgress(false); runButton.setText("▶  " + actionLabel()); runButton.setBackgroundResource(R.drawable.button_green); status.setText(t("已取消", "Cancelled")); });
+            }, "rec-prepare-workspace").start();
+            return;
+        }
         runDnaCommand(command);
     }
 
@@ -1968,23 +2495,83 @@ public final class DnaActivity extends BaseActivity {
         status.setText(t("正在执行 ...", "Running..."));
         status.setTextColor(0xff5a6b82);
         showProgress(true);
-        logLine("$ " + command);
+        if (!MODE_HYBRID.equals(mode)) logLine("$ " + command);
         notify(t("正在执行", "Running") + " · " + (project != null ? project : "PDNA"), true, true);
         executor.execute(() -> {
             DnaTools.Result result = DnaTools.run(this, command,
-                    line -> { logLine(line); return kotlin.Unit.INSTANCE; },
+                    line -> { if (!MODE_HYBRID.equals(mode)) logLine(line); else logHybridLine(line); return kotlin.Unit.INSTANCE; },
                     () -> cancelFlag.get());
             mainHandler.post(() -> {
-                running.set(false);
-                runButton.setText("▶  " + actionLabel());
-                runButton.setBackgroundResource(R.drawable.button_green);
-                showProgress(false);
+                if (MODE_HYBRID.equals(mode) && cancelFlag.get()) {
+                    running.set(false);
+                    showProgress(false);
+                    runButton.setText("▶  " + actionLabel());
+                    runButton.setBackgroundResource(R.drawable.button_green);
+                    status.setText(t("已取消", "Cancelled"));
+                    notifyDone(false, t("已取消卡刷包制作", "Recovery package build cancelled"));
+                    return;
+                }
                 if (result.getSuccess()) {
+                    if (MODE_HYBRID.equals(mode)) {
+                        runButton.setText("■  " + t("正在压缩（点击取消）", "Packing (tap to cancel)"));
+                        status.setText(t("正在压缩卡刷包…", "Packing recovery package…"));
+                        showProgress(true);
+                        logLine("• 动态刷写脚本已生成，正在压缩成品 ZIP…");
+                        final boolean cardTemplate = hybridTemplate == null || hybridTemplate.selected() == 0;
+                        final String work = HybridTools.WORK_ROOT + (cardTemplate ? "/twrp1" : "/twrp");
+                        final String out = HybridTools.WORK_ROOT;
+                        final String name = hybridPackageName();
+                        new Thread(() -> {
+                            boolean packed = HybridTools.zipWorkspace(this, work, out, name,
+                                    line -> { logHybridLine(line); return kotlin.Unit.INSTANCE; },
+                                    () -> cancelFlag.get());
+                            if (cancelFlag.get()) {
+                                mainHandler.post(() -> {
+                                    running.set(false); showProgress(false);
+                                    runButton.setText("▶  " + actionLabel());
+                                    runButton.setBackgroundResource(R.drawable.button_green);
+                                    status.setText(t("已取消", "Cancelled"));
+                                    logLine("• 已取消本次卡刷包制作");
+                                });
+                                return;
+                            }
+                            if (packed && hybridCleanWork != null && hybridCleanWork.isChecked()) {
+                                RootShell.exec("rm -rf " + DnaTools.quote(work + "/bin") + " " + DnaTools.quote(work + "/META-INF") + " "
+                                        + DnaTools.quote(work + "/Platform-Tools") + " " + DnaTools.quote(work + "/functions.sh") + " "
+                                        + DnaTools.quote(work + "/hybrid_builder.sh") + "; echo __REC_CLEANED__", 30000, null);
+                            }
+                            final boolean done = packed;
+                            mainHandler.post(() -> {
+                                running.set(false);
+                                runButton.setText("▶  " + actionLabel());
+                                runButton.setBackgroundResource(R.drawable.button_green);
+                                showProgress(false);
+                                long cost = Math.max(0L, (System.nanoTime() - hybridStartedAt) / 1_000_000_000L);
+                                String elapsed = String.format(Locale.US, "%02d:%02d:%02d", cost / 3600, (cost % 3600) / 60, cost % 60);
+                                status.setText(done ? "✓ " + t("卡刷包制作完成", "Package ready") : "✗ " + t("最终 ZIP 打包失败", "Final ZIP packing failed"));
+                                status.setTextColor(done ? 0xff1d7a4f : 0xffa33b3b);
+                                logLine(done ? "✓ " + out + "/" + name + ".zip" : "✗ APK ZIP 流打包失败");
+                                logLine("⏱ 本次打包用时：" + elapsed);
+                                toast(done ? t("卡刷包制作完成", "Package ready") : t("最终 ZIP 打包失败", "Final ZIP packing failed"));
+                                notifyDone(done, (done ? "卡刷包制作完成" : "最终 ZIP 打包失败") + " · PDNA");
+                                refreshProjectFiles();
+                            });
+                        }, "rec-zip-pack").start();
+                        return;
+                    }
+                    running.set(false);
+                    runButton.setText("▶  " + actionLabel());
+                    runButton.setBackgroundResource(R.drawable.button_green);
+                    showProgress(false);
                     logLine("✓ " + result.getMessage());
                     status.setText("✓ " + t("执行完成", "Done"));
                     status.setTextColor(0xff1d7a4f);
                     toast(t("执行完成", "Done"));
                 } else {
+                    running.set(false);
+                    runButton.setText("▶  " + actionLabel());
+                    runButton.setBackgroundResource(R.drawable.button_green);
+                    showProgress(false);
                     logLine("✗ " + result.getMessage());
                     status.setText("✗ " + t("执行失败", "Failed") + ": " + result.getMessage());
                     status.setTextColor(0xffa33b3b);
@@ -1995,12 +2582,36 @@ public final class DnaActivity extends BaseActivity {
         });
     }
 
+    private void logHybridLine(String raw) {
+        if (raw == null) return;
+        String s = raw.trim();
+        if (s.isEmpty() || s.startsWith("$")
+                || s.startsWith("mkdir ") || s.startsWith("cp ") || s.startsWith("sed ")
+                || s.startsWith("export ") || s.startsWith("test ") || s.startsWith("sh ")) return;
+        // 不再只保留少数中文前缀：7z/tar 的英文错误、退出码和文件名同样必须显示。
+        logLine(s);
+        if (s.startsWith("[-]") || s.startsWith("[X]") || s.contains("扫描") || s.contains("生成")
+                || s.contains("失败") || s.contains("Error") || s.contains("error")
+                || s.contains("退出码") || s.contains("Cannot") || s.contains("No such")) status.setText(s);
+    }
+
+    private String hybridPackageName() {
+        String name = hybridName == null ? "hybrid_update" : hybridName.getText().toString().trim();
+        if (name.isEmpty() || name.matches("_+")) name = "hybrid_update";
+        name = name.replaceAll("[^A-Za-z0-9_.-]", "_");
+        return name.replaceAll("^[_\\.]+", "").isEmpty() ? "hybrid_update" : name;
+    }
+
     /** 工程内选中项 → 绝对路径列表（外加手动输入路径）
      *  合成 repack：分解输出目录优先（/data/PDNA/工程名/x），回退工程目录
      *  根目录扫描模式（vbmeta/宽容）：选中项直接映射 /sdcard/PDMA/文件名 */
     private List<String> targetPaths() {
         List<String> paths = new ArrayList<>();
         for (String name : picked) {
+            if (MODE_HYBRID.equals(mode)) {
+                paths.add(hybridSourcePath() + "/" + name);
+                continue;
+            }
             if (rootScanMode()) {
                 paths.add(DnaTools.WORK_ROOT + "/" + name);
                 continue;
@@ -2039,6 +2650,8 @@ public final class DnaActivity extends BaseActivity {
                 return t("开始分解", "Extract");
             case MODE_REPACK:
                 return t("开始打包", "Pack");
+            case MODE_HYBRID:
+                return t("开始制作卡刷包", "Build recovery package");
             case MODE_SUPER_PACK:
                 return t("开始打包 SUPER", "Pack SUPER");
             case MODE_VBMETA:
@@ -2123,6 +2736,76 @@ public final class DnaActivity extends BaseActivity {
                         .append(" --delavb ").append(repackDelavb != null && repackDelavb.isChecked() ? "1" : "0")
                         .append(" --convert ").append(segValue(repackFsType, "0", "1", "2"))
                         .append(" || __rc=$?; done; ( exit $__rc )");
+                return cmd.toString();
+            }
+            case MODE_HYBRID: {
+                boolean cardTemplate = hybridTemplate == null || hybridTemplate.selected() == 0;
+                // 卡刷 updater-script 只能以 twrp/images 的实际内容为来源，不能使用固定分区列表。
+                List<String> templateTargets = new ArrayList<>();
+                for (Row row : fileRows) templateTargets.add(hybridSourcePath() + "/" + row.name);
+                if (templateTargets.isEmpty()) { toast(t("文件夹内没有可打包的 img", "No images in the template folder")); return null; }
+                String name = hybridPackageName();
+                // 两个模板共用固定默认根目录，但各自使用不同的镜像子目录。
+                // 不创建/读取 PDNA 工程，也不把镜像复制到工程目录。
+                String work = HybridTools.WORK_ROOT + (cardTemplate ? "/twrp1" : "/twrp");
+                String out = HybridTools.WORK_ROOT;
+                String templateScript = new File(getFilesDir(), "dna-scripts/" + (cardTemplate ? "functions.sh" : "hybrid_builder.sh")).getAbsolutePath();
+                String imageDir = work + "/" + (cardTemplate ? "images" : "probiotics");
+                String sourceDir = hybridSourcePath();
+                boolean moving = !sourceDir.equals(imageDir);
+                cmd.append("echo '").append(cardTemplate ? "使用阳·卡刷模板 functions.sh，镜像目录: twrp1/images" : "使用小布丁·线卡模板 hybrid_builder.sh，镜像目录: twrp/probiotics").append("'; ")
+                        .append("mkdir -p ").append(DnaTools.quote(imageDir)).append(" ").append(DnaTools.quote(out));
+                if (moving) {
+                    // 用户自选目录时只移动，不复制，避免同一批镜像占用两份空间。
+                    cmd.append("; for __img in ").append(DnaTools.quote(sourceDir)).append("/*.img; do [ -f \"$__img\" ] && mv -f \"$__img\" ")
+                            .append(DnaTools.quote(imageDir)).append("/; done");
+                    if (cardTemplate) {
+                        cmd.append("; if [ -f ").append(DnaTools.quote(sourceDir + "/super.img.zst"))
+                                .append(" ]; then mv -f ").append(DnaTools.quote(sourceDir + "/super.img.zst"))
+                                .append(" ").append(DnaTools.quote(imageDir + "/super.img.zst")).append("; fi");
+                    }
+                }
+                if (cardTemplate) {
+                    cmd.append("; if [ ! -f ").append(DnaTools.quote(imageDir + "/super.img.zst"))
+                            .append(" ]; then echo '错误：阳·卡刷必须存在 twrp1/images/super.img，否则可能无法开机'; exit 1; fi");
+                }
+                if (cardTemplate) {
+                    // functions.sh 的真实输入目录是 twrp/images，bin.tar.zst 由 prepare_bin 解到 twrp/bin。
+                    cmd.append("; export TOOLS_DIR=").append(DnaTools.quote(HybridTools.TOOLS_ROOT))
+                            .append(" P7Z=").append(DnaTools.quote(HybridTools.TOOLS_ROOT + "/7z"))
+                            .append(" BIN_TAR_ZST=").append(DnaTools.quote(HybridTools.TOOLS_ROOT + "/bin.tar.zst"))
+                            .append(" TWRP_DIR=").append(DnaTools.quote(work)).append(" PDNA_DIR=").append(DnaTools.quote(out))
+                            .append("; ").append(DnaTools.quote(HybridTools.TOOLS_ROOT + "/bash"))
+                            .append(" ").append(DnaTools.quote(templateScript)).append(" build_flashable_zip ")
+                            .append(DnaTools.quote(name)).append(" keep ")
+                            .append(DnaTools.quote(hybridValue(hybridAuthor, "星落人间"))).append(" ")
+                            .append(DnaTools.quote(hybridValue(hybridDevice, "一加13"))).append(" ")
+                            .append(DnaTools.quote(hybridValue(hybridVersion, "PDNA"))).append(" ")
+                            .append(DnaTools.quote(hybridValue(hybridPort, ""))).append(" ")
+                            .append(DnaTools.quote(hybridValue(hybridPortVersion, "")))
+                            .append(" && test -f ").append(DnaTools.quote(work + "/META-INF/com/google/android/update-binary"))
+                            .append(" && test -d ").append(DnaTools.quote(work + "/bin"));
+                } else {
+                    String script = work + "/hybrid_builder.sh";
+                    // 线卡脚本只从 APK 内置资源执行；不会复制到 twrp，也不会进入成品 ZIP。
+                    cmd.append("; export TOOLS_DIR=").append(DnaTools.quote(HybridTools.TOOLS_ROOT))
+                            .append(" P7Z=").append(DnaTools.quote(HybridTools.TOOLS_ROOT + "/7z"))
+                            .append(" TWRP_TAR_ZST=").append(DnaTools.quote(HybridTools.TOOLS_ROOT + "/twrp.tar.zst"))
+                            .append(" TWRP_DIR=").append(DnaTools.quote(work)).append(" PDNA_DIR=").append(DnaTools.quote(out))
+                            .append(" BUILD_VER_NAME=").append(DnaTools.quote(hybridValue(hybridVersion, "ColorOs16.0.0.9")))
+                            .append(" BUILD_DEVICE_MODEL=").append(DnaTools.quote(hybridValue(hybridDevice, "本机机型")))
+                            .append(" BUILD_PORT_MODEL=").append(DnaTools.quote(hybridValue(hybridPort, "移植机型")))
+                            .append(" BUILD_SCRIPT_AUTHOR=").append(DnaTools.quote(hybridValue(hybridAuthor, "小布丁")))
+                            .append(" BUILD_PORT_VERSION=").append(DnaTools.quote(hybridValue(hybridPortVersion, "")))
+                            .append("; ").append(DnaTools.quote(HybridTools.TOOLS_ROOT + "/bash"))
+                            .append(" ").append(DnaTools.quote(templateScript)).append(" generate_all_scripts")
+                            .append(" && test -f ").append(DnaTools.quote(work + "/META-INF/com/google/android/updater-script"))
+                            .append(" && test -f ").append(DnaTools.quote(work + "/META-INF/com/google/android/update-binary"))
+                            .append(" && test -d ").append(DnaTools.quote(work + "/META-INF/com/google/android/helpers"))
+                            .append(" && test -d ").append(DnaTools.quote(work + "/Platform-Tools"))
+                            .append(" && test -s ").append(DnaTools.quote(work + "/SUPERHYBRID_FLASHER.bat"))
+                            .append(" && test -s ").append(DnaTools.quote(work + "/SUPERHYBRID_FLASHER.sh"));
+                }
                 return cmd.toString();
             }
             case MODE_SUPER_PACK: {
@@ -2407,6 +3090,17 @@ public final class DnaActivity extends BaseActivity {
         if (group == null) return values[0];
         int i = group.selected();
         return i >= 0 && i < values.length ? values[i] : values[0];
+    }
+
+    private String hybridValue(EditText input, String fallback) {
+        if (input == null) return fallback;
+        String value = input.getText().toString().trim();
+        return value.isEmpty() ? fallback : value;
+    }
+
+    /** sed 替换值：避免用户输入的 &、反斜杠破坏固定模板替换。 */
+    private String shellSafe(String value) {
+        return value.replace("\\", "\\\\").replace("&", "\\&").replace("|", "\\|").replace("'", "'\\''");
     }
 
     private int seekValue(SeekBar seek, int min) {

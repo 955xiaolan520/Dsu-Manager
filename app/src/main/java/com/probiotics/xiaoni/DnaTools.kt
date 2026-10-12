@@ -22,7 +22,11 @@ object DnaTools {
         "dna", "busybox", "brotli", "e2fsdroid", "extract.erofs", "extract.f2fs",
         "img2simg", "simg2img", "lpmake", "magiskboot", "mke2fs", "mkfs.erofs",
         "mkfs.f2fs", "payload_extract", "resize2fs", "sload_f2fs", "zstd",
+        "7z", "bash", "duk", "sign", "sparse", "tar",
     )
+
+    private const val TOOLS_ASSET_URL =
+        "https://github.com/955xiaolan520/Dsu-Manager/releases/download/dna-tools/dna-tools-v1.zip"
 
     // v3.42.10：工具包改用独立固定 Release（tag: dna-tools）—— 与 APP 版本 Release 彻底解耦，
     // 以后工具链更新只需替换该 Release 里的 dna-tools*.zip 附件，APP 发版不必再跟着上传工具包；
@@ -44,6 +48,8 @@ object DnaTools {
      * @return browser_download_url；Release 没传附件返回 null（区别于网络失败抛异常）
      */
     private fun fetchToolsAssetUrl(onLog: ((String) -> Unit)?): String? {
+        // 固定附件地址不依赖 GitHub API，避免 API 403/限流导致下载卡死。
+        return TOOLS_ASSET_URL
         var lastError: java.io.IOException? = null
         for (api in TOOLS_API_URLS) {
             var conn: java.net.HttpURLConnection? = null
@@ -78,6 +84,40 @@ object DnaTools {
         throw lastError ?: java.io.IOException("no mirror reachable")
     }
 
+    /** 查找线卡一体包资源，兼容中文旧附件名和新的 hybrid/card-package 命名。 */
+    private fun fetchHybridAssetUrl(onLog: ((String) -> Unit)?): String? {
+        var lastError: java.io.IOException? = null
+        for (api in TOOLS_API_URLS) {
+            var conn: java.net.HttpURLConnection? = null
+            try {
+                conn = java.net.URL(api).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 8000
+                conn.readTimeout = 12000
+                conn.setRequestProperty("Accept", "application/vnd.github+json")
+                conn.setRequestProperty("User-Agent", "Dsu-Manager-Android")
+                val code = conn.responseCode
+                if (code !in 200..299) throw java.io.IOException("HTTP $code")
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val assets = org.json.JSONArray(org.json.JSONObject(body).optJSONArray("assets")?.toString() ?: "[]")
+                for (i in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(i) ?: continue
+                    val name = asset.optString("name", "")
+                    val lower = name.lowercase()
+                    if (name.endsWith(".zip", true) &&
+                        (lower.contains("hybrid") || lower.contains("card") || lower.contains("flash") || name.contains("卡刷"))) {
+                        return asset.optString("browser_download_url", "")
+                    }
+                }
+                return null
+            } catch (e: java.io.IOException) {
+                lastError = e
+                onLog?.invoke("线卡工具 API 线路失败：${e.message}")
+            } finally { conn?.disconnect() }
+        }
+        throw lastError ?: java.io.IOException("no mirror reachable")
+    }
+
     class Result(val success: Boolean, val output: String, val message: String) {
         // Java 侧便捷访问（属性 getter 为 getSuccess/getOutput/getMessage）
         fun ok(): Boolean = success
@@ -90,6 +130,46 @@ object DnaTools {
 
     fun toolsDir(ctx: Context): File = File(ctx.filesDir, "dna-tools")
     private fun relayDir(ctx: Context): File = File("/data/local/tmp/dna-tools")
+
+    /** 线卡一体包工具运行目录：归档工具放在 /data/local，模板脚本固定保留。 */
+    const val HYBRID_TOOLS_ROOT = "/data/local/dna-hybrid-tools"
+    const val HYBRID_WORK_ROOT = "/sdcard/PDNA"
+
+    /** 安装/启动时预建线卡工具目录，避免首次构建时目录不存在。 */
+    @JvmStatic
+    fun ensureHybridDirectories(): Boolean {
+        val r = RootShell.exec(
+            "mkdir -p '$HYBRID_TOOLS_ROOT' '$HYBRID_WORK_ROOT/twrp/probiotics' '$HYBRID_WORK_ROOT/twrp1/images' && chmod 755 '$HYBRID_TOOLS_ROOT' '$HYBRID_WORK_ROOT' '$HYBRID_WORK_ROOT/twrp' '$HYBRID_WORK_ROOT/twrp/probiotics' '$HYBRID_WORK_ROOT/twrp1' '$HYBRID_WORK_ROOT/twrp1/images' && echo __HYBRID_OK__",
+            timeoutMs = 15000)
+        return r.success && r.stdout.contains("__HYBRID_OK__")
+    }
+
+    @JvmStatic
+    fun hybridToolsReady(): Boolean {
+        val r = RootShell.exec("[ -f '$HYBRID_TOOLS_ROOT/bin.tar.zst' ] && [ -f '$HYBRID_TOOLS_ROOT/twrp.tar.zst' ] && [ -f '$HYBRID_TOOLS_ROOT/functions.sh' ] && [ -f '$HYBRID_TOOLS_ROOT/hybrid_builder.sh' ] && echo __HYBRID_READY__", timeoutMs = 10000)
+        return r.stdout.contains("__HYBRID_READY__")
+    }
+
+    /** 将 APK 内固定 BAT/SH 模板复制到 /data/local；构建时只替换模板变量，不重写脚本结构。 */
+    @JvmStatic
+    fun ensureHybridTemplates(ctx: Context): Boolean {
+        return try {
+            ensureHybridDirectories()
+            val local = File(ctx.filesDir, "dna-hybrid-template")
+            if (!local.exists()) local.mkdirs()
+            for (name in arrayOf("SUPERHYBRID_FLASHER.bat", "SUPERHYBRID_FLASHER.sh", "README.txt")) {
+                ctx.assets.open("dna-hybrid/$name").use { input ->
+                    File(local, name).outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            val r = RootShell.exec(
+                "cp -f '${local.absolutePath}'/* '$HYBRID_TOOLS_ROOT/' && chmod 755 '$HYBRID_TOOLS_ROOT'/* 2>/dev/null; echo __HYBRID_TEMPLATES_OK__",
+                timeoutMs = 20000)
+            r.stdout.contains("__HYBRID_TEMPLATES_OK__")
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     // v3.28.8：正版校验终极方案 —— 二进制全部恢复原版（零 patch，Nuitka 常量 blob 无法安全修改）。
     // dna / extract.f2fs / sload.f2fs 启动时 getcwd() 严格要求以下两路径之一（对齐原版 com.dna.tools app）：
@@ -283,8 +363,30 @@ object DnaTools {
     /** 工程内文件清单（/sdcard/PDNA/工程名）：type 过滤扩展名，"dir" 列子目录，"split_sparse" 列分段镜像前缀 */
     @JvmStatic
     fun listProjectFiles(project: String?, type: String): List<String> {
-        val base = if (project != null) "$WORK_ROOT/$project" else WORK_ROOT
-        return listDirEntries(base, type)
+        val path = if (project == null) WORK_ROOT else "$WORK_ROOT/$project"
+        return listDirEntries(path, type)
+    }
+
+    /** 线卡/卡刷模板默认目录：不依赖 PDNA 工程，分别读取 twrp/images 或 twrp/probiotics。 */
+    @JvmStatic
+    fun listHybridImages(folder: String): List<String> {
+        val safe = if (folder == "images") "images" else "probiotics"
+        return listDirEntries("$HYBRID_WORK_ROOT/twrp/$safe", "img")
+    }
+
+    @JvmStatic
+    fun listImagesInFolder(path: String): List<String> {
+        fun scan(p: String): List<String> = listDirEntries(p, "").filter {
+            it.endsWith(".img", true) || it.endsWith(".img.zst", true)
+        }
+        val first = scan(path)
+        if (first.isNotEmpty()) return first
+        val alternate = when {
+            path.startsWith("/sdcard/") -> "/storage/emulated/0/" + path.removePrefix("/sdcard/")
+            path.startsWith("/storage/emulated/0/") -> "/sdcard/" + path.removePrefix("/storage/emulated/0/")
+            else -> ""
+        }
+        return if (alternate.isNotEmpty()) scan(alternate) else first
     }
 
     /** 分解输出目录（/data/PDNA/工程名）下的子目录 —— 合成 repack 的数据源（原版 findfile.sh dir 列 DNA_DRO） */
@@ -511,6 +613,62 @@ object DnaTools {
         runCatching { RootShell.exec("rm -rf '$RELAY_PATH'", timeoutMs = 15000) }
         onLog?.invoke("✓ 工具链部署完成（17 个工具）")
         return true
+    }
+
+    /** 云端下载线卡一体包工具（GitHub tag: dna-tools），解压后部署到 /data/local。 */
+    @JvmStatic
+    @JvmOverloads
+    fun downloadHybridTools(
+        ctx: Context,
+        onLog: ((String) -> Unit)? = null,
+        onProgress: ((Int) -> Unit)? = null,
+    ): Boolean {
+        ensureHybridDirectories()
+        val dest = File(ctx.cacheDir, "dna-hybrid-tools.zip")
+        val assetUrl = try { fetchHybridAssetUrl(onLog) } catch (e: Exception) {
+            onLog?.invoke("✗ 无法查询线卡工具包：${e.message}")
+            return false
+        }
+        if (assetUrl.isNullOrBlank()) {
+            onLog?.invoke("✗ 独立 Release 未找到线卡工具包附件（支持 hybrid/card-package/卡刷 命名）")
+            return false
+        }
+        var ok = false
+        for (mirror in TOOLS_MIRRORS) {
+            val r = Aria2c.download(ctx, mirror + assetUrl, dest, { p -> onProgress?.invoke(p) },
+                onLog = { line -> onLog?.invoke(line) })
+            if (r.success && dest.isFile && dest.length() > 1024 * 1024) { ok = true; break }
+            dest.delete()
+            if (r.message == "已取消") break
+        }
+        if (!ok) { onLog?.invoke("✗ 线卡工具包下载失败"); return false }
+        onLog?.invoke("下载完成，正在部署到 /data/local …")
+        val staging = File(ctx.cacheDir, "dna-hybrid-staging").apply { deleteRecursively(); mkdirs() }
+        try {
+            java.util.zip.ZipFile(dest).use { zip ->
+                zip.entries().asSequence().forEach { entry ->
+                    if (entry.isDirectory) return@forEach
+                    val name = entry.name.substringAfterLast('/')
+                    if (name.isBlank() || name.contains("..")) return@forEach
+                    zip.getInputStream(entry).use { input ->
+                        File(staging, name).outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+            }
+            val r = RootShell.exec(
+                "cp -f '${staging.absolutePath}'/* '$HYBRID_TOOLS_ROOT/' 2>/dev/null; chmod 755 '$HYBRID_TOOLS_ROOT'/* 2>/dev/null; echo __HYBRID_DEPLOYED__",
+                timeoutMs = 60000)
+            ensureHybridTemplates(ctx)
+            dest.delete(); staging.deleteRecursively()
+            onProgress?.invoke(100)
+            val success = r.stdout.contains("__HYBRID_DEPLOYED__")
+            onLog?.invoke(if (success) "✓ 线卡工具包已部署到 /data/local/dna-hybrid-tools" else "✗ 线卡工具包部署失败")
+            return success
+        } catch (e: Exception) {
+            dest.delete(); staging.deleteRecursively()
+            onLog?.invoke("✗ 线卡工具包解压失败：${e.message}")
+            return false
+        }
     }
 
     /**
@@ -1045,6 +1203,21 @@ object DnaTools {
             append("export DNA_TMP=").append(TMP_ROOT).append("\n")
             append("export DNA_PRO='").append(pro).append("'\n")
             append("export DNA_DRO='").append(dro).append("'\n")
+            // v3.55.57：旧 DNA 插件常只认识 START_DIR/module、DNA_*，新插件则使用
+            // PDNA_*。统一执行器同时注入两套变量，插件无需改脚本即可跟随当前工程。
+            append("export PDNA_DIR='").append(WORK_ROOT).append("'\n")
+            append("export PDNA_TMP='").append(TMP_ROOT).append("'\n")
+            append("export PDNA_PRO='").append(pro).append("'\n")
+            append("export PDNA_DRO='").append(dro).append("'\n")
+            append("export PDNA_PROJECT='").append(project ?: "").append("'\n")
+            append("export START_DIR='").append(ctx.filesDir.absolutePath).append("'\n")
+            // 旧插件约定 $START_DIR/module/<插件名>，当前 App 使用 files/dna-module；
+            // 建立无损软链接，仅在缺少兼容入口时创建，不覆盖用户已有实体目录。
+            append("if [ -L '").append(ctx.filesDir.absolutePath).append("/module' ]; then rm -f '")
+                .append(ctx.filesDir.absolutePath).append("/module'; fi\n")
+            append("if [ ! -e '").append(ctx.filesDir.absolutePath).append("/module' ]; then ln -s '")
+                .append(ctx.filesDir.absolutePath).append("/dna-module' '")
+                .append(ctx.filesDir.absolutePath).append("/module'; fi\n")
             append("export TMPDIR=/data/local/tmp\n")
             // v3.28.8：零 patch —— 原版二进制 getcwd 校验 /data/data/com.dna.tools/files（伪装目录，root 预建）
             // 工具本体在 /data/local/tmp/dna-tools 经 PATH 调用（对齐原版 executor.sh 的 START_DIR + TOOLKIT 机制）

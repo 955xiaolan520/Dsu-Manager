@@ -350,7 +350,7 @@ public final class DnaSuperActivity extends BaseActivity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(12), dp(10), dp(12), dp(10));
         android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xEdf4f8fc);
+        bg.setColor(0xB8e6eef4);
         bg.setCornerRadius(dp(18));
         bg.setStroke(Math.max(1, dp(1)), 0x99FFFFFF);
         card.setBackground(bg);

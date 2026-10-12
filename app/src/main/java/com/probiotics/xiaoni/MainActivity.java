@@ -176,6 +176,8 @@ public class MainActivity extends BaseActivity {
         new Thread(() -> adbManager.extractBinaries()).start();
         // v3.41.13：后台清理上次进程遗留的 JNI 提取整包副本 / OTA 解包目录（可达十几 G）
         DnaTools.INSTANCE.cleanStaleCaches(this);
+        // 线卡一体包工具目录：安装/启动即预建，首次进入 DNA 时直接可用
+        DnaTools.INSTANCE.ensureHybridDirectories();
         // v3.51.81: 加载 SoC 数据库
         loadSocsDatabase();
         buildUi();
@@ -2405,6 +2407,7 @@ public class MainActivity extends BaseActivity {
           dnaMenuItem(page, "📦", t("合成 img-dat-br", "Build img-dat-br"), t("将工程目录重新打包成镜像", "Project dirs → image"), DnaActivity.MODE_REPACK, null, 2);
           dnaMenuItem(page, "🗜", t("合成 super.img", "Build super.img"), t("把 IMG 打包成 super.img（A / AB / VAB）", "IMGs → super.img"), DnaActivity.MODE_SUPER_PACK, null, 3);
           dnaMenuItem(page, "📦", t("合成 OTA 卡刷包", "Build OTA zip"), t("img 集 + 模板 → payload 签名完整 A/B 卡刷包", "imgs + template → signed A/B OTA zip"), "dna_ota_pack", null, 3);
+          dnaMenuItem(page, "⚡", t("线卡一体包打包", "Build hybrid package"), t("固定 BAT / SH 模板，只替换内容变量，生成可卡刷、线刷、ADB sideload 的一体包", "Build recovery + fastboot + sideload package with fixed BAT / SH templates"), DnaActivity.MODE_HYBRID, null, 3);
 
           // ===== 格式转换 =====
           dnaSectionTitle(page, t("格式转换", "Convert"), 0xFFE07B39);
@@ -2758,12 +2761,12 @@ public class MainActivity extends BaseActivity {
               try { rootOk = RootShell.INSTANCE.available(); } catch (Exception e) { rootOk = false; }
               addCheckRow(rows, t("ROOT 授权", "ROOT"), rootOk,
                       rootOk ? "su 可用" : t("未授予 ROOT 权限", "no root grant"));
-              // 2. 工具包完整性（17 个逐一：存在 + 大小>0 + 可执行）
+              // 2. 工具包完整性（23 个逐一：存在 + 大小>0 + 可执行）
               java.util.List<String> missing = DnaTools.INSTANCE.missingTools(this);
               boolean complete = missing.isEmpty();
               String compDetail = complete
-                      ? "17/17 · " + fmtSize(DnaTools.INSTANCE.toolsBytes(this)) + t(" · 全部可执行", " · all executable")
-                      : missing.size() >= 17
+                      ? "23/23 · " + fmtSize(DnaTools.INSTANCE.toolsBytes(this)) + t(" · 全部可执行", " · all executable")
+                      : missing.size() >= 23
                       ? t("工具包未下载（点「下载工具」）", "not downloaded")
                       : t("缺失 ", "missing ") + missing.size() + ": " + android.text.TextUtils.join(", ", missing);
               addCheckRow(rows, t("工具包完整性", "Tools integrity"), complete, compDetail);
