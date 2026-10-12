@@ -3804,6 +3804,10 @@ public class MainActivity extends BaseActivity {
            enter.setElevation(0f);
               enter.setOnClickListener(v -> {
                   Haptics.perform(v);
+                  if ("yunx".equals(vendorId)) {
+                      showNetdiskInternalTestingDialog();
+                      return;
+                  }
                    Intent intent = new Intent(this,
                            "oppo".equals(vendorId) ? OPlusLookupActivity.class
                                    : "vivo".equals(vendorId) ? VivoActivity.class
@@ -3839,6 +3843,117 @@ public class MainActivity extends BaseActivity {
            lp.setMargins(0, 0, 0, dp(12));
            card.setOnClickListener(v -> enter.performClick());
            return addRomCardMargin(card, lp);
+       }
+
+       private void showNetdiskInternalTestingDialog() {
+           Dialog dialog = new Dialog(this);
+           LinearLayout panel = new LinearLayout(this);
+           panel.setOrientation(LinearLayout.VERTICAL);
+           panel.setPadding(dp(16), dp(16), dp(16), dp(16));
+           panel.setElevation(dp(8));
+           GradientDrawable panelBg = new GradientDrawable();
+           panelBg.setColor(0xfff8fafc);
+           panelBg.setCornerRadius(dp(26));
+           panelBg.setStroke(Math.max(1, dp(1)), 0xffdbe5ef);
+           panel.setBackground(panelBg);
+
+           LinearLayout hero = new LinearLayout(this);
+           hero.setOrientation(LinearLayout.HORIZONTAL);
+           hero.setGravity(Gravity.CENTER_VERTICAL);
+           hero.setPadding(dp(14), dp(13), dp(14), dp(13));
+           GradientDrawable heroBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                   new int[]{0xff2166a8, 0xff6256b5, 0xff168f9a});
+           heroBg.setCornerRadius(dp(20));
+           hero.setBackground(heroBg);
+           TextView icon = new TextView(this);
+           icon.setText("☁");
+           icon.setTextSize(22);
+           icon.setGravity(Gravity.CENTER);
+           icon.setTextColor(Color.WHITE);
+           GradientDrawable iconBg = new GradientDrawable();
+           iconBg.setShape(GradientDrawable.OVAL);
+           iconBg.setColor(0x33ffffff);
+           iconBg.setStroke(Math.max(1, dp(1)), 0x66ffffff);
+           icon.setBackground(iconBg);
+           hero.addView(icon, new LinearLayout.LayoutParams(dp(46), dp(46)));
+           LinearLayout heroText = new LinearLayout(this);
+           heroText.setOrientation(LinearLayout.VERTICAL);
+           heroText.setPadding(dp(12), 0, 0, 0);
+           TextView title = new TextView(this);
+           title.setText(t("网盘解析", "Netdisk parsing"));
+           title.setTextSize(17);
+           title.setTypeface(null, 1);
+           title.setTextColor(Color.WHITE);
+           heroText.addView(title, new LinearLayout.LayoutParams(-1, -2));
+           TextView subtitle = new TextView(this);
+           subtitle.setText(t("功能开放进度", "Feature availability"));
+           subtitle.setTextSize(11.5f);
+           subtitle.setTextColor(0xffe4efff);
+           subtitle.setPadding(0, dp(3), 0, 0);
+           heroText.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
+           hero.addView(heroText, new LinearLayout.LayoutParams(0, -2, 1f));
+           TextView badge = new TextView(this);
+           badge.setText(t("内测中", "BETA"));
+           badge.setTextSize(10.5f);
+           badge.setTypeface(null, 1);
+           badge.setTextColor(0xff563600);
+           badge.setGravity(Gravity.CENTER);
+           badge.setPadding(dp(10), dp(6), dp(10), dp(6));
+           GradientDrawable badgeBg = new GradientDrawable();
+           badgeBg.setColor(0xffffdf91);
+           badgeBg.setCornerRadius(dp(18));
+           badge.setBackground(badgeBg);
+           hero.addView(badge, new LinearLayout.LayoutParams(-2, -2));
+           panel.addView(hero, new LinearLayout.LayoutParams(-1, -2));
+
+           TextView message = new TextView(this);
+           message.setText(t("该功能在内测中，请关注后续版本。", "This feature is in internal testing. Please stay tuned for a future release."));
+           message.setTextSize(15);
+           message.setTextColor(0xff23344d);
+           message.setLineSpacing(dp(4), 1.0f);
+           message.setPadding(dp(4), dp(18), dp(4), dp(16));
+           panel.addView(message, new LinearLayout.LayoutParams(-1, -2));
+
+           TextView note = new TextView(this);
+           note.setText(t("📣  后续开放信息请留意版本更新", "📣  Watch future release notes for availability"));
+           note.setTextSize(12);
+           note.setTextColor(0xff49617d);
+           note.setPadding(dp(12), dp(11), dp(12), dp(11));
+           GradientDrawable noteBg = new GradientDrawable();
+           noteBg.setColor(0xffeaf2fb);
+           noteBg.setCornerRadius(dp(14));
+           note.setBackground(noteBg);
+           panel.addView(note, new LinearLayout.LayoutParams(-1, -2));
+
+           TextView close = new TextView(this);
+           close.setText(t("知道了", "Got it"));
+           close.setTextSize(14);
+           close.setTypeface(null, 1);
+           close.setTextColor(Color.WHITE);
+           close.setGravity(Gravity.CENTER);
+           GradientDrawable closeBg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                   new int[]{0xff2785a5, 0xff315e9b});
+           closeBg.setCornerRadius(dp(18));
+           close.setBackground(closeBg);
+           LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(-1, dp(46));
+           closeLp.topMargin = dp(16);
+           panel.addView(close, closeLp);
+           close.setOnClickListener(v -> dialog.dismiss());
+
+           dialog.setContentView(panel);
+           dialog.setCancelable(true);
+           dialog.setCanceledOnTouchOutside(true);
+           dialog.show();
+           Window window = dialog.getWindow();
+           if (window != null) {
+               window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+               window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+               WindowManager.LayoutParams attrs = window.getAttributes();
+               attrs.width = getResources().getDisplayMetrics().widthPixels - dp(40);
+               attrs.height = WindowManager.LayoutParams.WRAP_CONTENT;
+               attrs.dimAmount = 0.46f;
+               window.setAttributes(attrs);
+           }
        }
 
        private View addRomCardMargin(View card, LinearLayout.LayoutParams lp) {

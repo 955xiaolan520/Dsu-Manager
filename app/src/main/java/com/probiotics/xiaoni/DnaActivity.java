@@ -502,6 +502,36 @@ public final class DnaActivity extends BaseActivity {
         titleLp.bottomMargin = dp(10);
         content.addView(titleBar, titleLp);
 
+        if (MODE_HYBRID.equals(mode)) {
+            LinearLayout hybridCaution = new LinearLayout(this);
+            hybridCaution.setOrientation(LinearLayout.VERTICAL);
+            hybridCaution.setPadding(dp(14), dp(11), dp(14), dp(11));
+            GradientDrawable cautionBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{0xffffd98a, 0xfff2b04e});
+            cautionBg.setCornerRadius(dp(18));
+            cautionBg.setStroke(Math.max(1, dp(1)), 0x80ffffff);
+            hybridCaution.setBackground(cautionBg);
+            hybridCaution.setElevation(0f);
+            TextView cautionTitle = new TextView(this);
+            cautionTitle.setText("📌 " + t("置顶提示", "Pinned"));
+            cautionTitle.setTextSize(14);
+            cautionTitle.setTypeface(null, 1);
+            cautionTitle.setTextColor(0xff6b3d00);
+            cautionTitle.setPadding(0, 0, 0, dp(5));
+            hybridCaution.addView(cautionTitle, new LinearLayout.LayoutParams(-1, -2));
+            TextView cautionBody = new TextView(this);
+            cautionBody.setText(t(
+                    "目前只测试过小布丁·线卡制作功能。卡刷包生成的 BAT 脚本未测试可用性（没有电脑）；REC 卡刷没有问题。线刷 BAT、SH 脚本线刷均未测试。阳·卡刷也未测试打包及刷入，请谨慎操作，或自行测试。",
+                    "Only Xiaobuding·line-card package creation has been tested. The BAT script generated in flashable ZIPs has not been tested on a PC; REC flashing is confirmed. BAT/SH fastboot scripts and Yang·card packages (creation and flashing) are untested. Use caution or test at your own risk."));
+            cautionBody.setTextSize(11);
+            cautionBody.setTextColor(0xff7a4a10);
+            cautionBody.setLineSpacing(dp(2), 1.0f);
+            hybridCaution.addView(cautionBody, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout.LayoutParams cautionLp = new LinearLayout.LayoutParams(-1, -2);
+            cautionLp.bottomMargin = dp(10);
+            content.addView(hybridCaution, cautionLp);
+        }
+
         // ---- 工程选择横幅（最顶部 · 整卡点击切换工程，对齐原版"工程菜单"）----
         LinearLayout projectCard = glass();
         projectCard.setOrientation(LinearLayout.VERTICAL);
