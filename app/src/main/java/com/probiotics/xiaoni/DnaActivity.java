@@ -69,6 +69,22 @@ public final class DnaActivity extends BaseActivity {
     public static final String MODE_HYBRID = "hybrid";
 
     private static final int PICK_FILE = 2001;
+    private static volatile boolean hybridPackActive;
+    private static volatile boolean hybridPackDone;
+    private static volatile boolean hybridPackSucceeded;
+    private static volatile String hybridPackPath = "";
+    private static volatile long hybridPackStartedWallTime;
+    private static volatile String hybridPackMessage = "";
+    private static volatile String hybridPackOutput = "";
+    private static volatile DnaActivity hybridPackOwner;
+    private static final AtomicBoolean hybridPackCancel = new AtomicBoolean(false);
+    private final Runnable hybridPackUiTicker = new Runnable() {
+        @Override public void run() {
+            syncHybridPackState();
+            if (MODE_HYBRID.equals(mode) && hybridPackActive) mainHandler.postDelayed(this, 1000);
+        }
+    };
+    private int hybridPackOutputOffset;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -108,7 +124,15 @@ public final class DnaActivity extends BaseActivity {
     private CheckBox hybridCleanWork;
     private TextView hybridTemplateSummary, hybridToolsStatus;
     private String hybridSelectedSourceDir = "";
-    private String hybridBuiltinFolder = "images";
+    private String hybridBuiltinFolder = "probiotics";
+    private String hybridOutputNameValue = "hybrid_update";
+    private String hybridVersionValue = "ColorOs16.0.0.9";
+    private String hybridDeviceValue = "Oneplus 13";
+    private String hybridPortValue = "OPPO find X9 ultra";
+    private String hybridAuthorValue = "小布丁";
+    private String hybridPortVersionValue = "PMA120_16.0.9.402";
+    private boolean hybridCleanWorkValue;
+    private int hybridTemplateValue = 1;
 
     // 行视图记录（工程文件）
     private final List<Row> fileRows = new ArrayList<>();
@@ -281,6 +305,98 @@ public final class DnaActivity extends BaseActivity {
         if (MODE_HYBRID.equals(mode)) HybridTools.ensureDirectories();
         buildUi();
         refreshProjectFiles();
+        if (MODE_HYBRID.equals(mode)) {
+            DnaActivity previous = hybridPackOwner;
+            if (previous != null && previous != this) previous.mainHandler.removeCallbacks(previous.hybridPackUiTicker);
+            hybridPackOwner = this;
+            hybridPackOutputOffset = 0;
+            syncHybridPackState();
+            if (hybridPackActive) mainHandler.postDelayed(hybridPackUiTicker, 1000);
+        }
+    }
+
+    private static synchronized void appendHybridPackOutput(String text) {
+        if (text == null || text.isEmpty()) return;
+        hybridPackOutput += text + "\n";
+        if (hybridPackOutput.length() > 48000) hybridPackOutput = hybridPackOutput.substring(hybridPackOutput.length() - 48000);
+    }
+
+    private void syncHybridPackState() {
+        if (!MODE_HYBRID.equals(mode) || status == null) return;
+        String snapshot;
+        synchronized (DnaActivity.class) { snapshot = hybridPackOutput; }
+        if (hybridPackOutputOffset > snapshot.length()) hybridPackOutputOffset = 0;
+        if (logDisplay != null && hybridPackOutputOffset < snapshot.length()) {
+            String delta = snapshot.substring(hybridPackOutputOffset);
+            logDisplay.append(delta);
+            hybridPackOutputOffset = snapshot.length();
+            if (logScroll != null) logScroll.post(() -> logScroll.fullScroll(ScrollView.FOCUS_DOWN));
+        }
+        if (hybridPackActive) {
+            long bytes = hybridPackPath.isEmpty() ? 0L : new File(hybridPackPath).length();
+            long elapsed = Math.max(0L, (System.currentTimeMillis() - hybridPackStartedWallTime) / 1000L);
+            hybridPackMessage = "正在压缩 " + compactZipName(new File(hybridPackPath).getName()) + " · 已写入 "
+                    + formatPackSize(bytes) + " · 已运行 "
+                    + String.format(Locale.US, "%02d:%02d:%02d", elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+            running.set(true);
+            status.setText(hybridPackCancel.get() ? "正在取消压缩…" : hybridPackMessage);
+            status.setTextColor(0xff5a6b82);
+            if (runButton != null) {
+                runButton.setText("■  " + t("正在压缩（点击取消）", "Packing (tap to cancel)"));
+                runButton.setBackgroundResource(R.drawable.button_red);
+            }
+            notify(hybridPackCancel.get() ? "正在取消压缩…" : hybridPackMessage, true, true);
+            showProgress(true);
+        } else if (hybridPackDone) {
+            running.set(false);
+            if (runButton != null) {
+                runButton.setText("▶  " + actionLabel());
+                runButton.setBackgroundResource(R.drawable.button_green);
+            }
+            showProgress(false);
+            status.setText((hybridPackSucceeded ? "✓ " : "✗ ") + hybridPackMessage);
+            status.setTextColor(hybridPackSucceeded ? 0xff1d7a4f : 0xffa33b3b);
+        }
+    }
+
+    private static boolean isNoisyPackLine(String line) {
+        return line.matches("(?i)^[0-9]+%\\s+[0-9]+%\\s+.*")
+                || line.matches("(?i)^[0-9]+%\\s+.*");
+    }
+
+    private static String formatPackSize(long bytes) {
+        double gib = bytes / (1024.0 * 1024.0 * 1024.0);
+        double gb = bytes / 1_000_000_000.0;
+        return String.format(Locale.US, "%.2f GiB (%.2f GB, %,d B)", gib, gb, bytes);
+    }
+
+    private static String compactZipName(String name) {
+        if (name == null || name.length() <= 32) return name == null ? "" : name;
+        String suffix = name.toLowerCase(Locale.ROOT).endsWith(".zip") ? ".zip" : "";
+        String base = suffix.isEmpty() ? name : name.substring(0, name.length() - suffix.length());
+        return base.substring(0, Math.min(22, base.length())) + "…" + suffix;
+    }
+
+    private void finishHybridPack(boolean success, String message, String out, String name) {
+        long elapsed = Math.max(0L, (System.currentTimeMillis() - hybridPackStartedWallTime) / 1000L);
+        String duration = String.format(Locale.US, "%02d:%02d:%02d", elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+        synchronized (DnaActivity.class) {
+            hybridPackActive = false;
+            hybridPackDone = true;
+            hybridPackSucceeded = success;
+            hybridPackMessage = message;
+        }
+        appendHybridPackOutput((success ? "✓ " : "• ") + message + "\n⏱ 用时：" + duration);
+        DnaActivity owner = hybridPackOwner;
+        if (owner != null) owner.mainHandler.post(() -> {
+            owner.syncHybridPackState();
+            if (!message.startsWith("已取消")) {
+                owner.toast(success ? owner.t("卡刷包制作完成", "Package ready") : owner.t("最终 ZIP 打包失败", "Final ZIP packing failed"));
+                owner.notifyDone(success, (success ? "卡刷包制作完成" : "最终 ZIP 打包失败") + " · PDNA");
+                owner.refreshProjectFiles();
+            }
+            owner.mainHandler.removeCallbacks(owner.hybridPackUiTicker);
+        });
     }
 
     private int dp(int n) {
@@ -796,6 +912,14 @@ public final class DnaActivity extends BaseActivity {
         runButton.setStateListAnimator(null);
         runButton.setOnClickListener(v -> {
             Haptics.perform(v);
+            if (MODE_HYBRID.equals(mode) && hybridPackActive) {
+                hybridPackCancel.set(true);
+                status.setText("正在取消压缩…");
+                status.setTextColor(0xffa33b3b);
+                appendHybridPackOutput("• 收到取消请求，正在停止并清理未完成 ZIP…");
+                syncHybridPackState();
+                return;
+            }
             if (running.get()) {
                 cancelFlag.set(true);
                 logLine(t("正在取消 ...", "Cancelling..."));
@@ -2046,7 +2170,7 @@ public final class DnaActivity extends BaseActivity {
         new Thread(() -> {
             java.util.List<String> checks = HybridTools.check(this);
             runOnUiThread(() -> {
-                boolean all = HybridTools.toolsInstalled(this);
+                boolean all = checks.stream().allMatch(item -> item.startsWith("✓"));
                 rows.removeAllViews();
                 for (String item : checks) {
                     boolean ok = item.startsWith("✓");
@@ -2253,24 +2377,25 @@ public final class DnaActivity extends BaseActivity {
         heading.setTextColor(0xff17334f);
         panel.addView(heading, new LinearLayout.LayoutParams(-1, -2));
         TextView modeNote = new TextView(this);
-        modeNote.setText(t("阳·卡刷 · functions.sh · twrp1/images", "Yang Recovery · functions.sh · twrp1/images"));
+        modeNote.setText(t("小布丁·线卡 · hybrid_builder.sh · twrp/probiotics", "Xiaobuding Hybrid · hybrid_builder.sh · twrp/probiotics"));
         modeNote.setTextSize(14);
         modeNote.setTypeface(null, 1);
         modeNote.setTextColor(0xff287c70);
         modeNote.setPadding(dp(4), dp(8), dp(4), dp(8));
         panel.addView(modeNote, new LinearLayout.LayoutParams(-1, -2));
         TextView cardWarning = new TextView(this);
-        cardWarning.setText(t("阳·卡刷必须包含 super.img.zst，否则刷入后可能无法开机。",
-                "Yang Recovery requires super.img.zst or the device may not boot."));
+        cardWarning.setText(t("小布丁·线卡使用 probiotics 内普通 .img 文件生成卡刷与线刷脚本。",
+                "Xiaobuding Hybrid generates recovery and fastboot scripts from .img files in probiotics."));
         cardWarning.setTextSize(11.5f);
-        cardWarning.setTextColor(0xffa34747);
+        cardWarning.setTextColor(0xff287c70);
         cardWarning.setPadding(dp(4), dp(4), dp(4), dp(5));
         panel.addView(cardWarning, new LinearLayout.LayoutParams(-1, -2));
         final TextView[] finalDirHolder = new TextView[1];
         hybridTemplate = new SegmentGroup(panel, t("打包模板", "Package template"),
-                new String[]{"阳·卡刷", "小布丁·线卡"}, 0, C_TEAL);
+                new String[]{"阳·卡刷", "小布丁·线卡"}, hybridTemplateValue, C_TEAL);
         hybridTemplate.setOnSelectionChanged(() -> {
             boolean card = hybridTemplate.selected() == 0;
+            hybridTemplateValue = hybridTemplate.selected();
             modeNote.setText(card ? t("阳·卡刷 · functions.sh · twrp1/images", "Yang Recovery · functions.sh · twrp1/images")
                     : t("小布丁·线卡 · hybrid_builder.sh · twrp/probiotics", "Xiaobuding Hybrid · hybrid_builder.sh · twrp/probiotics"));
             cardWarning.setText(card ? t("阳·卡刷必须包含 super.img.zst，否则刷入后可能无法开机。", "Yang Recovery requires super.img.zst or the device may not boot.")
@@ -2281,12 +2406,12 @@ public final class DnaActivity extends BaseActivity {
                     ? t("阳·卡刷参数（点击设置）", "Yang Recovery parameters (tap to set)")
                     : t("小布丁·线卡参数（点击设置）", "Xiaobuding Hybrid parameters (tap to set)"));
         });
-        hybridName = hybridParam(panel, t("输出文件名", "Output name"), "hybrid_update");
-        hybridVersion = hybridParam(panel, t("移植版本", "Port version"), "ColorOs16.0.0.9");
-        hybridDevice = hybridParam(panel, t("本机机型", "Device model"), "Oneplus 13");
-        hybridPort = hybridParam(panel, t("移植机型", "Ported model"), "OPPO find X9 ultra");
-        hybridAuthor = hybridParam(panel, t("脚本作者", "Script author"), "小布丁");
-        hybridPortVersion = hybridParam(panel, t("移植版本号", "Port build"), "PMA120_16.0.9.402");
+        hybridName = hybridParam(panel, t("输出文件名", "Output name"), hybridOutputNameValue);
+        hybridVersion = hybridParam(panel, t("移植版本", "Port version"), hybridVersionValue);
+        hybridDevice = hybridParam(panel, t("本机机型", "Device model"), hybridDeviceValue);
+        hybridPort = hybridParam(panel, t("移植机型", "Ported model"), hybridPortValue);
+        hybridAuthor = hybridParam(panel, t("脚本作者", "Script author"), hybridAuthorValue);
+        hybridPortVersion = hybridParam(panel, t("移植版本号", "Port build"), hybridPortVersionValue);
         hybridLabel(panel, t("ZIP 输出目录（PDNA 根目录）", "ZIP output directory (PDNA root)"));
         TextView finalDir = new TextView(this);
         finalDirHolder[0] = finalDir;
@@ -2296,7 +2421,7 @@ public final class DnaActivity extends BaseActivity {
         finalDir.setPadding(dp(10), dp(9), dp(10), dp(9));
         finalDir.setBackgroundResource(R.drawable.dna_row_glass);
         panel.addView(finalDir, new LinearLayout.LayoutParams(-1, -2));
-        hybridCleanWork = optionSwitch(panel, t("完成后清理 twrp 工作区（默认关闭）", "Clean twrp workspace after build (off by default)"), false);
+        hybridCleanWork = optionSwitch(panel, t("完成后清理 twrp 工作区（默认关闭）", "Clean twrp workspace after build (off by default)"), hybridCleanWorkValue);
         ScrollView parameterScroll = new ScrollView(this);
         parameterScroll.setFillViewport(true);
         parameterScroll.addView(panel);
@@ -2305,7 +2430,17 @@ public final class DnaActivity extends BaseActivity {
                 .setNegativeButton(t("取消", "Cancel"), null)
                 .setPositiveButton(t("确定并开始压缩打包", "Confirm and start packing"), null).create();
         dialog.setOnShowListener(x -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> { dialog.dismiss(); execute(); });
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                hybridOutputNameValue = hybridPackageName();
+                hybridVersionValue = hybridValue(hybridVersion, hybridVersionValue);
+                hybridDeviceValue = hybridValue(hybridDevice, hybridDeviceValue);
+                hybridPortValue = hybridValue(hybridPort, hybridPortValue);
+                hybridAuthorValue = hybridValue(hybridAuthor, hybridAuthorValue);
+                hybridPortVersionValue = hybridValue(hybridPortVersion, hybridPortVersionValue);
+                hybridCleanWorkValue = hybridCleanWork != null && hybridCleanWork.isChecked();
+                dialog.dismiss();
+                execute();
+            });
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawableResource(R.drawable.dna_dialog_bg);
                 dialog.getWindow().setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.92f), dp(500));
@@ -2347,7 +2482,7 @@ public final class DnaActivity extends BaseActivity {
             case MODE_HYBRID: {
                 LinearLayout card = optionsCard(host, t("打包参数", "Package parameters"));
                 hybridTemplateSummary = new TextView(this);
-                hybridTemplateSummary.setText(t("阳·卡刷参数（点击设置）", "Recovery package parameters (tap to set)"));
+                hybridTemplateSummary.setText(t("小布丁·线卡参数（点击设置）", "Xiaobuding Hybrid parameters (tap to set)"));
                 hybridTemplateSummary.setTextSize(14);
                 hybridTemplateSummary.setTypeface(null, 1);
                 hybridTemplateSummary.setTextColor(0xff17334f);
@@ -2454,8 +2589,17 @@ public final class DnaActivity extends BaseActivity {
         String command = buildCommand();
         if (command == null) return;
         if (MODE_HYBRID.equals(mode)) {
+            final String outputName = hybridPackageName();
+            final boolean cleanWorkAfter = hybridCleanWork != null && hybridCleanWork.isChecked();
             final boolean cardTemplate = hybridTemplate == null || hybridTemplate.selected() == 0;
             final String work = HybridTools.WORK_ROOT + (cardTemplate ? "/twrp1" : "/twrp");
+            synchronized (DnaActivity.class) {
+                hybridPackOutput = "";
+                hybridPackDone = false;
+                hybridPackSucceeded = false;
+            }
+            hybridPackOwner = this;
+            hybridPackOutputOffset = 0;
             running.set(true);
             cancelFlag.set(false);
             hybridStartedAt = System.nanoTime();
@@ -2463,7 +2607,8 @@ public final class DnaActivity extends BaseActivity {
             runButton.setBackgroundResource(R.drawable.button_red);
             status.setText(t("正在准备模板…", "Preparing template…"));
             showProgress(true);
-            logLine("• 正在准备模板与镜像工作区…");
+            logHybridLine("• 正在准备模板与镜像工作区…");
+            logHybridLine("• 输出文件名已锁定：" + outputName + ".zip");
             new Thread(() -> {
                 if (cancelFlag.get()) {
                     mainHandler.post(() -> { running.set(false); showProgress(false); runButton.setText("▶  " + actionLabel()); runButton.setBackgroundResource(R.drawable.button_green); });
@@ -2471,7 +2616,7 @@ public final class DnaActivity extends BaseActivity {
                 }
                 boolean prepared = HybridTools.prepareWorkspace(this, work, cardTemplate,
                         line -> { mainHandler.post(() -> { logHybridLine(line); status.setText(t("正在准备模板…", "Preparing template…")); }); return kotlin.Unit.INSTANCE; });
-                if (prepared && !cancelFlag.get()) mainHandler.post(() -> runDnaCommand(command));
+                if (prepared && !cancelFlag.get()) mainHandler.post(() -> runDnaCommand(command, outputName, cleanWorkAfter));
                 else if (!prepared) mainHandler.post(() -> {
                     running.set(false); showProgress(false);
                     runButton.setText("▶  " + actionLabel());
@@ -2488,6 +2633,10 @@ public final class DnaActivity extends BaseActivity {
 
     /** 通用 root 命令执行（v3.30.27 从 execute() 抽出，super 弹窗确定后复用） */
     private void runDnaCommand(String command) {
+        runDnaCommand(command, null, false);
+    }
+
+    private void runDnaCommand(String command, String requestedOutputName, boolean cleanWorkAfter) {
         running.set(true);
         cancelFlag.set(false);
         runButton.setText("■  " + t("执行中（点击取消）", "Running (tap to cancel)"));
@@ -2516,46 +2665,49 @@ public final class DnaActivity extends BaseActivity {
                         runButton.setText("■  " + t("正在压缩（点击取消）", "Packing (tap to cancel)"));
                         status.setText(t("正在压缩卡刷包…", "Packing recovery package…"));
                         showProgress(true);
-                        logLine("• 动态刷写脚本已生成，正在压缩成品 ZIP…");
+                        logHybridLine("• 动态刷写脚本已生成，正在压缩成品 ZIP…");
                         final boolean cardTemplate = hybridTemplate == null || hybridTemplate.selected() == 0;
                         final String work = HybridTools.WORK_ROOT + (cardTemplate ? "/twrp1" : "/twrp");
                         final String out = HybridTools.WORK_ROOT;
-                        final String name = hybridPackageName();
+                        final String name = requestedOutputName == null ? hybridPackageName() : requestedOutputName;
+                        synchronized (DnaActivity.class) {
+                            hybridPackActive = true;
+                            hybridPackDone = false;
+                            hybridPackSucceeded = false;
+                            hybridPackPath = out + "/" + name + ".zip";
+                            hybridPackStartedWallTime = System.currentTimeMillis();
+                            hybridPackMessage = "正在压缩 " + name + ".zip";
+                        }
+                        appendHybridPackOutput("• 开始 ZIP 压缩：" + hybridPackPath);
+                        hybridPackCancel.set(false);
+                        hybridPackOwner = this;
+                        hybridPackOutputOffset = 0;
+                        mainHandler.removeCallbacks(hybridPackUiTicker);
+                        mainHandler.postDelayed(hybridPackUiTicker, 1000);
+                        mainHandler.post(this::syncHybridPackState);
                         new Thread(() -> {
                             boolean packed = HybridTools.zipWorkspace(this, work, out, name,
-                                    line -> { logHybridLine(line); return kotlin.Unit.INSTANCE; },
-                                    () -> cancelFlag.get());
-                            if (cancelFlag.get()) {
-                                mainHandler.post(() -> {
-                                    running.set(false); showProgress(false);
-                                    runButton.setText("▶  " + actionLabel());
-                                    runButton.setBackgroundResource(R.drawable.button_green);
-                                    status.setText(t("已取消", "Cancelled"));
-                                    logLine("• 已取消本次卡刷包制作");
-                                });
+                                    line -> {
+                                        String clean = line == null ? "" : line.trim();
+                                        if (!clean.isEmpty() && !isNoisyPackLine(clean)) {
+                                            appendHybridPackOutput(clean);
+                                            DnaActivity owner = hybridPackOwner;
+                                            if (owner != null) owner.mainHandler.post(owner::syncHybridPackState);
+                                        }
+                                        return kotlin.Unit.INSTANCE;
+                                    },
+                                    () -> hybridPackCancel.get());
+                            if (hybridPackCancel.get()) {
+                                finishHybridPack(false, "已取消本次打包", out, name);
                                 return;
                             }
-                            if (packed && hybridCleanWork != null && hybridCleanWork.isChecked()) {
+                            if (packed && cleanWorkAfter) {
                                 RootShell.exec("rm -rf " + DnaTools.quote(work + "/bin") + " " + DnaTools.quote(work + "/META-INF") + " "
                                         + DnaTools.quote(work + "/Platform-Tools") + " " + DnaTools.quote(work + "/functions.sh") + " "
                                         + DnaTools.quote(work + "/hybrid_builder.sh") + "; echo __REC_CLEANED__", 30000, null);
                             }
                             final boolean done = packed;
-                            mainHandler.post(() -> {
-                                running.set(false);
-                                runButton.setText("▶  " + actionLabel());
-                                runButton.setBackgroundResource(R.drawable.button_green);
-                                showProgress(false);
-                                long cost = Math.max(0L, (System.nanoTime() - hybridStartedAt) / 1_000_000_000L);
-                                String elapsed = String.format(Locale.US, "%02d:%02d:%02d", cost / 3600, (cost % 3600) / 60, cost % 60);
-                                status.setText(done ? "✓ " + t("卡刷包制作完成", "Package ready") : "✗ " + t("最终 ZIP 打包失败", "Final ZIP packing failed"));
-                                status.setTextColor(done ? 0xff1d7a4f : 0xffa33b3b);
-                                logLine(done ? "✓ " + out + "/" + name + ".zip" : "✗ APK ZIP 流打包失败");
-                                logLine("⏱ 本次打包用时：" + elapsed);
-                                toast(done ? t("卡刷包制作完成", "Package ready") : t("最终 ZIP 打包失败", "Final ZIP packing failed"));
-                                notifyDone(done, (done ? "卡刷包制作完成" : "最终 ZIP 打包失败") + " · PDNA");
-                                refreshProjectFiles();
-                            });
+                            finishHybridPack(done, done ? "卡刷包制作完成：" + out + "/" + name + ".zip" : "最终 ZIP 打包失败", out, name);
                         }, "rec-zip-pack").start();
                         return;
                     }
@@ -2586,19 +2738,29 @@ public final class DnaActivity extends BaseActivity {
         if (raw == null) return;
         String s = raw.trim();
         if (s.isEmpty() || s.startsWith("$")
+                || s.matches("(?i)^[0-9]+%\\s+[0-9]+%\\s+.*")
+                || s.matches("(?i)^[0-9]+%\\s+.*")
                 || s.startsWith("mkdir ") || s.startsWith("cp ") || s.startsWith("sed ")
                 || s.startsWith("export ") || s.startsWith("test ") || s.startsWith("sh ")) return;
-        // 不再只保留少数中文前缀：7z/tar 的英文错误、退出码和文件名同样必须显示。
-        logLine(s);
+        appendHybridPackOutput(s);
+        // 保留整次任务输出，返回页面时可从准备阶段日志继续查看。
+        mainHandler.post(() -> {
+            if (logDisplay == null) return;
+            logDisplay.append(s + "\n");
+            synchronized (DnaActivity.class) { hybridPackOutputOffset = hybridPackOutput.length(); }
+            if (logScroll != null) logScroll.post(() -> logScroll.fullScroll(ScrollView.FOCUS_DOWN));
+        });
+        if (running.get()) notifyProgress(s);
         if (s.startsWith("[-]") || s.startsWith("[X]") || s.contains("扫描") || s.contains("生成")
                 || s.contains("失败") || s.contains("Error") || s.contains("error")
                 || s.contains("退出码") || s.contains("Cannot") || s.contains("No such")) status.setText(s);
     }
 
     private String hybridPackageName() {
-        String name = hybridName == null ? "hybrid_update" : hybridName.getText().toString().trim();
+        String name = hybridName == null ? hybridOutputNameValue : hybridName.getText().toString().trim();
+        if (name.toLowerCase(Locale.ROOT).endsWith(".zip")) name = name.substring(0, name.length() - 4).trim();
         if (name.isEmpty() || name.matches("_+")) name = "hybrid_update";
-        name = name.replaceAll("[^A-Za-z0-9_.-]", "_");
+        name = name.replaceAll("[^\\p{L}\\p{N}_.-]", "_");
         return name.replaceAll("^[_\\.]+", "").isEmpty() ? "hybrid_update" : name;
     }
 
@@ -2797,6 +2959,13 @@ public final class DnaActivity extends BaseActivity {
                             .append(" BUILD_PORT_MODEL=").append(DnaTools.quote(hybridValue(hybridPort, "移植机型")))
                             .append(" BUILD_SCRIPT_AUTHOR=").append(DnaTools.quote(hybridValue(hybridAuthor, "小布丁")))
                             .append(" BUILD_PORT_VERSION=").append(DnaTools.quote(hybridValue(hybridPortVersion, "")))
+                            .append("; printf '%s\\n' ")
+                            .append(DnaTools.quote("打包参数：输出文件=" + name + ".zip"))
+                            .append(" ").append(DnaTools.quote("移植版本=" + hybridValue(hybridVersion, "ColorOs16.0.0.9")))
+                            .append(" ").append(DnaTools.quote("本机机型=" + hybridValue(hybridDevice, "本机机型")))
+                            .append(" ").append(DnaTools.quote("移植机型=" + hybridValue(hybridPort, "移植机型")))
+                            .append(" ").append(DnaTools.quote("作者=" + hybridValue(hybridAuthor, "小布丁")))
+                            .append(" ").append(DnaTools.quote("版本号=" + hybridValue(hybridPortVersion, "")))
                             .append("; ").append(DnaTools.quote(HybridTools.TOOLS_ROOT + "/bash"))
                             .append(" ").append(DnaTools.quote(templateScript)).append(" generate_all_scripts")
                             .append(" && test -f ").append(DnaTools.quote(work + "/META-INF/com/google/android/updater-script"))
@@ -3197,9 +3366,13 @@ public final class DnaActivity extends BaseActivity {
 
     @Override
     protected void onDestroy() {
+        if (!hybridPackActive) {
+            mainHandler.removeCallbacks(hybridPackUiTicker);
+            if (hybridPackOwner == this) hybridPackOwner = null;
+        }
         super.onDestroy();
         executor.shutdownNow();
-        cancelNote();
+        if (!hybridPackActive) cancelNote();
         // v3.30.19：关闭分解 bin 的 JNI 句柄
         if (binExtractor != null) {
             try { binExtractor.close(); } catch (Exception ignored) {}

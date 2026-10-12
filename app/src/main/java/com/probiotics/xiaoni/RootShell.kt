@@ -19,7 +19,13 @@ object RootShell {
     }
 
     @JvmStatic
-    fun exec(script: String, timeoutMs: Long = 30000, log: ((String) -> Unit)? = null): ShellResult {
+    @JvmOverloads
+    fun exec(
+        script: String,
+        timeoutMs: Long = 30000,
+        log: ((String) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null,
+    ): ShellResult {
         val sink = log ?: lastLog
         try {
             val process = ProcessBuilder("su").start()
@@ -49,9 +55,20 @@ object RootShell {
                 }
             }
             t1.start(); t2.start()
-            if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly()
-                return ShellResult(-1, stdout.toString(), "timeout after ${timeoutMs}ms")
+            val startedAt = System.nanoTime()
+            while (!process.waitFor(500, TimeUnit.MILLISECONDS)) {
+                if (isCancelled?.invoke() == true) {
+                    process.destroyForcibly()
+                    process.waitFor()
+                    t1.join(3000); t2.join(3000)
+                    return ShellResult(-2, synchronized(stdout) { stdout.toString() }, "已取消")
+                }
+                if (timeoutMs > 0 && System.nanoTime() - startedAt >= TimeUnit.MILLISECONDS.toNanos(timeoutMs)) {
+                    process.destroyForcibly()
+                    process.waitFor()
+                    t1.join(3000); t2.join(3000)
+                    return ShellResult(-1, synchronized(stdout) { stdout.toString() }, "timeout after ${timeoutMs}ms")
+                }
             }
             t1.join(3000); t2.join(3000)
             val out = synchronized(stdout) { stdout.toString() }

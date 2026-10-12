@@ -58,7 +58,21 @@ object HybridTools {
     }
 
     @JvmStatic
-    fun toolsInstalled(ctx: Context): Boolean = REQUIRED.all { File(privateDir(ctx), it).isFile }
+    private fun missingDeployedTools(): Set<String> {
+        val checks = REQUIRED.joinToString(" ") { name ->
+            "if [ -s '$TOOLS_ROOT/$name' ]; then echo 'OK:$name'; else echo 'MISSING:$name'; fi;"
+        }
+        val result = RootShell.exec("$checks echo __REC_CHECK_DONE__", timeoutMs = 15000)
+        if (!result.success || !result.stdout.contains("__REC_CHECK_DONE__")) return REQUIRED.toSet()
+        return result.stdout.lineSequence()
+            .filter { it.startsWith("MISSING:") }
+            .map { it.removePrefix("MISSING:").trim() }
+            .filter { it in REQUIRED }
+            .toSet()
+    }
+
+    @JvmStatic
+    fun toolsInstalled(ctx: Context): Boolean = missingDeployedTools().isEmpty()
 
     private fun workspaceReady(work: String, cardTemplate: Boolean): Boolean {
         val root = File(work)
@@ -74,6 +88,7 @@ object HybridTools {
     @JvmStatic
     fun check(ctx: Context): List<String> {
         val dir = privateDir(ctx)
+        val missing = missingDeployedTools()
         return REQUIRED.map { name ->
             val f = File(dir, name)
             val display = when (name) {
@@ -92,8 +107,8 @@ object HybridTools {
                 "SUPERHYBRID_FLASHER.sh" -> "Linux 线刷脚本"
                 else -> "卡刷资源"
             }
-            if (f.isFile && f.length() > 0) "✓ $display · ${f.length() / 1024} KB"
-            else "✗ $display · 未部署"
+            if (name !in missing) "✓ $display · ${if (f.isFile) "${f.length() / 1024} KB" else "已部署"}"
+            else "✗ $display · /data/local 未部署"
         }
     }
 
@@ -104,10 +119,24 @@ object HybridTools {
         onProgress: ((Int) -> Unit)? = null,
     ): Boolean {
         ensureDirectories()
-        if (toolsInstalled(ctx) && File(TOOLS_ROOT, "7z").isFile) {
+        if (toolsInstalled(ctx)) {
             onProgress?.invoke(100)
             onLog?.invoke("✓ 已复用 /data/local/dna-rec-tools 中的工具链")
             return true
+        }
+        val cachedToolsReady = REQUIRED.all { File(privateDir(ctx), it).isFile && File(privateDir(ctx), it).length() > 0 }
+        if (cachedToolsReady) {
+            val cachedDir = privateDir(ctx).absolutePath
+            val deploy = RootShell.exec(
+                "mkdir -p '$TOOLS_ROOT' && cp -f '$cachedDir'/* '$TOOLS_ROOT/' && chmod 755 '$TOOLS_ROOT'/* && echo __REC_DEPLOYED__",
+                timeoutMs = 60000
+            )
+            if (deploy.success && deploy.stdout.contains("__REC_DEPLOYED__") && toolsInstalled(ctx)) {
+                onProgress?.invoke(100)
+                onLog?.invoke("✓ 从应用缓存重新部署已删除的 /data/local 工具文件")
+                return true
+            }
+            onLog?.invoke("缓存文件存在，但 /data/local 重新部署失败，将尝试重新下载")
         }
         val dest = File(ctx.cacheDir, "dna-rec-tools-v1.zip")
         dest.delete()
@@ -233,10 +262,10 @@ object HybridTools {
                     "rm -rf '$work/bin' && mkdir -p '$work/bin' && cp -rf \"\$__bin/.\" '$work/bin/' && " +
                     "chmod -R 755 '$work/bin' && test -f '$work/bin/android/7zzs'"
             } else {
-                "__meta=\$(find '${staging.absolutePath}' -type d -name META-INF -print -quit); " +
+            "__meta=\$(find '${staging.absolutePath}' -type d -name META-INF -print -quit); " +
                     "[ -n \"\$__meta\" ] || { echo '[rec] 归档内缺少 META-INF 目录'; exit 1; }; " +
                     "__root=\${__meta%/META-INF}; rm -rf '$work/META-INF' '$work/Platform-Tools' && mkdir -p '$work' '$work/probiotics' && " +
-                    "cp -rf \"\$__root/.\" '$work/' && chmod -R 755 '$work/META-INF' '$work/Platform-Tools' 2>/dev/null && " +
+                    "cp -rf \"\$__root/.\" '$work/' && rm -f '$work/Regional_Flasher_COS.bat' && chmod -R 755 '$work/META-INF' '$work/Platform-Tools' 2>/dev/null && " +
                     "test -d '$work/META-INF/com/google/android/helpers' && test -f '$work/META-INF/com/google/android/update-binary'"
             }
             val r = RootShell.exec(command, timeoutMs = 60000)
@@ -251,7 +280,7 @@ object HybridTools {
         }
     }
 
-    /** 使用独立工具链中的 Android 7z 生成最终 ZIP，并透传 7z 的扫描/进度/文件信息。 */
+    /** 使用独立工具链压缩 ZIP；关闭 7-Zip 逐文件输出，避免大体积日志管道拖慢压缩。 */
     @JvmStatic
     fun zipWorkspace(ctx: Context, work: String, outDir: String, name: String, onLog: ((String) -> Unit)? = null, cancelled: (() -> Boolean)? = null): Boolean {
         if (cancelled?.invoke() == true) return false
@@ -261,11 +290,14 @@ object HybridTools {
             val p7z = "$TOOLS_ROOT/7z"
             val result = RootShell.exec(
                 "rm -f '$zipPath' && mkdir -p '$outDir' && " +
-                    "echo '[rec] 使用独立 7z 开始压缩成品 ZIP...' && " +
-                    "cd '$work' && '$p7z' a -tzip '$zipPath' . -y -bsp1 -bso1 -bse1 2>&1 && " +
+                    "echo '[rec] 使用独立 7z 开始压缩成品 ZIP；隐藏逐文件百分比输出' && " +
+                    "cd '$work' && __files=\$(find . -type f | wc -l | tr -d ' ') && __kb=\$(du -sk . | awk '{print \$1}') && " +
+                    "echo \"[rec] 待打包文件：\$__files 个 · 工作区约 \$__kb KiB\" && " +
+                    "'$p7z' a -tzip '$zipPath' . -y -bsp0 -bso0 -bse1 2>&1 && " +
                     "test -s '$zipPath'",
-                timeoutMs = 180000,
-                log = onLog
+                timeoutMs = 0L,
+                log = onLog,
+                isCancelled = cancelled
             )
             val ok = result.success
             onLog?.invoke(if (ok) "✓ 7z ZIP 打包完成：$zipPath" else "✗ 7z ZIP 打包失败（退出码 ${result.code}）：${result.stderr.trim().ifBlank { result.stdout.trim() }}")

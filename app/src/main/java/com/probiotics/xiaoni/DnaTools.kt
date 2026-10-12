@@ -396,7 +396,7 @@ object DnaTools {
         return listDirEntries("$TMP_ROOT/$project", "dir")
     }
 
-    // v3.30.11：原版 more.xml 其他功能脚本（assets 内置原版 sh 原样释放，root source 执行，与原版行为 100% 一致）
+    // DNA 辅助脚本来自 APK assets；执行前同步覆盖私有目录副本，确保 DNA_DIR→PDNA_DIR 路径更新生效。
     private val SCRIPTS = arrayOf(
         "del_vbmeta.sh", "patch_selinux.sh", "my_partition_merge.sh", "partition_merge.sh",
         "merge_superchunk.sh"
@@ -409,7 +409,6 @@ object DnaTools {
         if (!dir.isDirectory) dir.mkdirs()
         for (name in SCRIPTS) {
             val out = File(dir, name)
-            if (out.isFile) continue
             runCatching {
                 ctx.assets.open("dna-scripts/$name").use { input ->
                     out.outputStream().use { output -> input.copyTo(output) }

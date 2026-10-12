@@ -19,6 +19,7 @@ extract_twrp() {
     # PDNA·rec Android 版由 APK 的 Kotlin 解压层预先部署 META-INF/Platform-Tools。
     if [ -d "$TWRP_DIR/META-INF" ]; then
         echo "[√] 复用已解压的 TWRP 模板"
+        rm -f "$TWRP_DIR/Regional_Flasher_COS.bat"
         mkdir -p "$TWRP_DIR/probiotics"
         return 0
     fi
@@ -96,6 +97,7 @@ scan_images() {
             root_init_boot)
                 HAS_ROOT=1
                 ROOT_IMG="root_init_boot"
+                BOOT_LIST="$BOOT_LIST $name"
                 ;;
 
             boot|dtbo|init_boot|recovery|vbmeta|vbmeta_system|vbmeta_vendor|vendor_boot)
@@ -249,19 +251,20 @@ generate_bat() {
     echo "[-] Generating SUPERHYBRID_FLASHER.bat ..."
 
     local bat_path="$TWRP_DIR/SUPERHYBRID_FLASHER.bat"
+    rm -f "$TWRP_DIR/Regional_Flasher_COS.bat"
 
-    cat > "$bat_path" << 'BATEOF'
+    cat > "$bat_path" << BATEOF
 @echo off
 setlocal
 color 2F
-title Super OnePlus Flasher
+title ${DEVICE_MODEL} Hybrid Flasher
 
 echo.**********************************************************************
 echo.
-echo.         Oneplus 13 - Flasher
-echo.       LineageOS for OP13 created by LineageOS Team
-echo.          Packaged by docnok63, Jonas Salo ^& Daniel
-echo.     script inspired by FTH PHONE 1902 and Venkay
+echo.         ${DEVICE_MODEL} - Hybrid Flasher
+echo.       移植版本: ${VER_NAME} / ${PORT_VERSION}
+echo.       移植机型: ${PORT_MODEL}
+echo.       作者: ${SCRIPT_AUTHOR}
 echo.
 
 cd %~dp0
@@ -338,27 +341,24 @@ pause
 
 echo.
 echo ------------------------------------------------------------
-echo FLASHING ALL NON-SUPER IMAGES IN FASTBOOTD
-echo Boot images will be flashed again to slots A and B.
+echo FLASHING SCANNED SMALL PARTITIONS IN FASTBOOTD
 echo ------------------------------------------------------------
 
-for %%G in (probiotics\*.img) do (
-    if /I not "%%~nG"=="super" (
-        echo Flashing %%~nG.img to slots A and B...
-        "%fastboot%" flash --slot=all "%%~nG" "%%G"
-        if errorlevel 1 (
-            echo.
-            echo ------------------------------------------------------------
-            echo ERROR: Failed to flash %%~nG.img in fastbootd.
-            echo ------------------------------------------------------------
-            echo Do not boot into the system.
-            pause
-            exit /B 1
-        )
-    )
-)
-
 BATEOF
+
+    for part in $SMALL_LIST; do
+        cat >> "$bat_path" << PARTEOF
+
+echo Flashing ${part}.img to slots A and B in fastbootd...
+"%fastboot%" flash --slot=all "${part}" "probiotics\\${part}.img"
+if errorlevel 1 (
+    echo ERROR: Failed to flash ${part}.img in fastbootd.
+    echo Do not boot if errors appear.
+    pause
+    exit /B 1
+)
+PARTEOF
+    done
 
     if [ "$HAS_SUPER" -eq 1 ]; then
         cat >> "$bat_path" << 'SUPEOF'
