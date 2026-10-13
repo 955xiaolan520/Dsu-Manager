@@ -13,9 +13,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
+import android.webkit.MimeTypeMap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -41,6 +44,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.PauseCircle
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -73,6 +77,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
@@ -390,6 +395,7 @@ fun DsuEmbeddedDownloadScreen(
                     ) },
                     onCancel = { task -> sendAction(DSU_DOWNLOAD_ACTION_CANCEL, task.id) },
                     onOpenTask = { task -> openLocation(task.path, task.folderRoot) },
+                    onOpenCompletedFile = { task -> openDsuCompletedFile(context, task.path) },
                     onDeleteTask = { task -> pendingDelete = DsuDeleteTarget(task.name, listOf(task), task.folderRoot) }
                 )
             }
@@ -400,6 +406,7 @@ fun DsuEmbeddedDownloadScreen(
                         if (task.isPaused) DSU_DOWNLOAD_ACTION_RESUME else DSU_DOWNLOAD_ACTION_PAUSE, task.id
                     ) },
                     onCancel = { sendAction(DSU_DOWNLOAD_ACTION_CANCEL, task.id) },
+                    onOpenCompletedFile = { openDsuCompletedFile(context, task.path) },
                     onOpenLocation = { openLocation(task.path) },
                     onDelete = { pendingDelete = DsuDeleteTarget(task.name, listOf(task)) }
                 )
@@ -445,6 +452,53 @@ fun DsuEmbeddedDownloadScreen(
     }
 }
 
+private fun openDsuCompletedFile(context: Context, path: String) {
+    val file = File(path)
+    if (!file.isFile) {
+        SnackbarController.show("文件不存在或尚未下载完成")
+        return
+    }
+    val ext = file.extension.lowercase(Locale.ROOT)
+    val video = ext in setOf("mp4", "m4v", "mov", "webm", "mkv", "3gp", "ts", "avi")
+    val image = ext in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif")
+    fun start(intent: Intent) {
+        if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+    runCatching {
+        when {
+            video -> start(
+                Intent().setClassName(context.packageName, "${context.packageName}.ShortVideoPreviewActivity")
+                    .putExtra("video_url", Uri.fromFile(file).toString())
+                    .putExtra("title", file.name)
+            )
+            image -> start(
+                Intent().setClassName(context.packageName, "${context.packageName}.ShortVideoImagesActivity")
+                    .putExtra("local_image_file", file.absolutePath)
+                    .putExtra("image_title", file.name)
+            )
+            ext == "apk" -> {
+                if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
+                    start(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
+                    SnackbarController.show("请允许 Dsu 管理器安装应用，然后再次点击“查看/安装”")
+                } else {
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                    start(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                }
+            }
+            else -> {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                val mime = if (ext == "zip") "application/zip"
+                    else MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+                val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                start(Intent.createChooser(view, "选择打开方式"))
+            }
+        }
+    }.onFailure { SnackbarController.show("无法打开文件：${it.message ?: "请检查文件或权限"}") }
+}
+
 @Composable
 private fun GlassCard(accent: Color, content: @Composable () -> Unit) {
     Card(
@@ -481,6 +535,7 @@ private fun DsuEmbeddedFolderCard(
     onPauseResume: (DsuEmbeddedTask) -> Unit,
     onCancel: (DsuEmbeddedTask) -> Unit,
     onOpenTask: (DsuEmbeddedTask) -> Unit,
+    onOpenCompletedFile: (DsuEmbeddedTask) -> Unit,
     onDeleteTask: (DsuEmbeddedTask) -> Unit
 ) {
     var expanded by remember(folderRoot) { mutableStateOf(false) }
@@ -558,6 +613,7 @@ private fun DsuEmbeddedFolderCard(
                             task = task,
                             onPauseResume = { onPauseResume(task) },
                             onCancel = { onCancel(task) },
+                            onOpenCompletedFile = { onOpenCompletedFile(task) },
                             onOpenLocation = { onOpenTask(task) },
                             onDelete = { onDeleteTask(task) },
                             compact = true
@@ -575,6 +631,7 @@ private fun DsuDownloadTaskCard(
     onPauseResume: () -> Unit,
     onCancel: () -> Unit,
     onOpenLocation: () -> Unit,
+    onOpenCompletedFile: () -> Unit,
     onDelete: () -> Unit,
     compact: Boolean = false
 ) {
@@ -606,7 +663,7 @@ private fun DsuDownloadTaskCard(
                 Column(Modifier.weight(1f).padding(start = 9.dp)) {
                     Text(task.name, style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold, color = DsuInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(task.packageName, style = MaterialTheme.typography.labelSmall, color = DsuSubtleInk)
+                    Text(task.packageName + " · " + dsuFileKind(task.name), style = MaterialTheme.typography.labelSmall, color = DsuSubtleInk)
                 }
                 Text(
                     when {
@@ -664,6 +721,12 @@ private fun DsuDownloadTaskCard(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (task.isFinished) {
+                    TextButton(onClick = onOpenCompletedFile, modifier = Modifier.weight(1.15f)) {
+                        Icon(Icons.Outlined.Visibility, null, modifier = Modifier.size(18.dp), tint = Color(0xFF327F91))
+                        Text("查看/安装", modifier = Modifier.padding(start = 3.dp), color = Color(0xFF327F91), maxLines = 1)
+                    }
+                }
                 TextButton(onClick = onDelete, modifier = Modifier.weight(.82f)) {
                     Icon(Icons.Outlined.Delete, null, modifier = Modifier.size(18.dp), tint = Color(0xFFB35B55))
                     Text("删除", modifier = Modifier.padding(start = 3.dp), color = Color(0xFFB35B55))
@@ -674,6 +737,20 @@ private fun DsuDownloadTaskCard(
                 }
             }
         }
+    }
+}
+
+private fun dsuFileKind(name: String): String {
+    val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+    return when (ext) {
+        "apk" -> "APK 安装包"
+        "zip" -> "ZIP 压缩包"
+        "mp4", "m4v", "mov", "webm", "mkv", "3gp", "ts", "avi" -> "视频"
+        "jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif" -> "图片"
+        "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus" -> "音频"
+        "pdf" -> "PDF 文档"
+        "txt", "log", "json", "xml", "html", "htm", "csv", "md", "sh", "ini", "yaml", "yml" -> "文本"
+        else -> if (ext.isBlank()) "未知类型" else ext.uppercase(Locale.ROOT)
     }
 }
 

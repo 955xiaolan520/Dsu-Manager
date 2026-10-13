@@ -3763,6 +3763,7 @@ public class MainActivity extends BaseActivity {
            TextView subtitle = text(t("网盘解析与各品牌 ROM 工具", "Netdisk parsing and ROM tools"), 13, 0xffe5edf7);
             page.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
              page.addView(romVendorCard("网盘分享解析", "多网盘链接解析 · aria2c 多线程下载", R.drawable.vendor_glass_yunx, "yunx"));
+             page.addView(romVendorCard("短视频无水印下载", "抖音 · 快手 · B站等分享链接解析", R.drawable.vendor_glass_video, "shortvideo"));
              page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.vendor_glass_blue, "xiaomi"));
              page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.vendor_glass_purple, "vivo"));
               page.addView(romVendorCard("OPPO / 一加 / 真我", "ColorOS · 官方系统更新查询", R.drawable.vendor_glass_orange, "oppo"));
@@ -3784,7 +3785,8 @@ public class MainActivity extends BaseActivity {
            TextView desc = text(detail, 13, 0xE6FFFFFF);
            card.addView(desc, new LinearLayout.LayoutParams(-1, dp(30)));
            Button enter = new Button(this, null, 0);
-           enter.setText(t("进入查询", "Open lookup"));
+           enter.setText(t("shortvideo".equals(vendorId) ? "开始解析" : "进入查询",
+                   "shortvideo".equals(vendorId) ? "Start parsing" : "Open lookup"));
            enter.setAllCaps(false);
            enter.setTextSize(14.5f);
            enter.setGravity(Gravity.CENTER);
@@ -3810,8 +3812,9 @@ public class MainActivity extends BaseActivity {
                                    : "extract".equals(vendorId) ? PayloadDumperActivity.class
                                    : "otamerge".equals(vendorId) ? OtaMergeActivity.class
                                    : "yunx".equals(vendorId) ? com.yunx.app.MainActivity.class
+                                   : "shortvideo".equals(vendorId) ? ShortVideoActivity.class
                                    : RomActivity.class);
-                  if (!"extract".equals(vendorId) && !"otamerge".equals(vendorId) && !"yunx".equals(vendorId)) intent.putExtra("vendor", vendorId);
+                  if (!"extract".equals(vendorId) && !"otamerge".equals(vendorId) && !"yunx".equals(vendorId) && !"shortvideo".equals(vendorId)) intent.putExtra("vendor", vendorId);
                   startActivity(intent);
                   // 不同厂商使用不同的炸裂转场动画
                   if ("oppo".equals(vendorId)) {
@@ -3828,6 +3831,9 @@ public class MainActivity extends BaseActivity {
                     overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
                 } else if ("yunx".equals(vendorId)) {
                     // 网盘解析：底部滑入
+                    overridePendingTransition(R.anim.slide_up_in, R.anim.slide_up_out);
+                } else if ("shortvideo".equals(vendorId)) {
+                    // 短视频解析：底部滑入
                     overridePendingTransition(R.anim.slide_up_in, R.anim.slide_up_out);
                 } else {
                     // 小米: 缩放 + 淡入
