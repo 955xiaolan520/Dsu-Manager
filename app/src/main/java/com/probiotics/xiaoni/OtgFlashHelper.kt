@@ -2,6 +2,7 @@ package com.probiotics.xiaoni
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
@@ -10,6 +11,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.widget.*
 import java.io.File
 
@@ -28,6 +30,112 @@ class OtgFlashHelper(
     @Volatile
     private var operationActive = false
     private var parsedPartitions = emptyList<OtgAssistantCore.PartitionInfo>()
+    
+    // v3.66.70：圆角年轻化弹窗样式辅助方法（参考 ShortVideoActivity 短视频解析弹窗）
+    private fun rounded(color: Int, strokeColor: Int, radiusDp: Int): android.graphics.drawable.GradientDrawable {
+        return android.graphics.drawable.GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radiusDp).toFloat()
+            if (strokeColor != 0) setStroke(Math.max(1, dp(1)), strokeColor)
+        }
+    }
+    
+    private fun label(value: String, size: Int, color: Int, bold: Boolean = false): TextView {
+        return TextView(activity).apply {
+            text = value
+            textSize = size.toFloat()
+            setTextColor(color)
+            if (bold) typeface = Typeface.DEFAULT_BOLD
+        }
+    }
+    
+    private fun actionButton(value: String, startColor: Int, endColor: Int): Button {
+        return Button(activity, null, 0).apply {
+            text = value
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            isAllCaps = false
+            setPadding(0, dp(9), 0, dp(9))
+            typeface = Typeface.DEFAULT_BOLD
+            stateListAnimator = null
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(startColor, endColor)
+            ).apply { cornerRadius = dp(13).toFloat() }
+        }
+    }
+    
+    private fun showModernDialog(
+        title: String,
+        message: String,
+        cancelText: String = "取消",
+        confirmText: String,
+        onConfirm: () -> Unit
+    ) {
+        val dialog = Dialog(activity)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        
+        val card = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xffeffaff.toInt(), 0xffdceafa.toInt(), 0xfff3e8ff.toInt())
+            ).apply {
+                cornerRadius = dp(26).toFloat()
+                setStroke(dp(1), 0xd8ffffff.toInt())
+            }
+        }
+        
+        // 顶部胶囊标签
+        val capsule = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = rounded(0x247d98bd.toInt(), 0x887d98bd.toInt(), 15)
+        }
+        capsule.addView(label("OTG ASSISTANT  ·  操作确认", 10, 0xff35617e.toInt(), true))
+        card.addView(capsule, LinearLayout.LayoutParams(-2, -2).apply { 
+            gravity = Gravity.START 
+        })
+        
+        // 标题
+        val titleView = label(title, 21, 0xff17334f.toInt(), true).apply {
+            setPadding(0, dp(14), 0, dp(8))
+        }
+        card.addView(titleView, LinearLayout.LayoutParams(-1, -2))
+        
+        // 描述
+        val messageView = label(message, 13, 0xff4c647a.toInt(), false).apply {
+            setPadding(0, 0, 0, dp(18))
+        }
+        card.addView(messageView, LinearLayout.LayoutParams(-1, -2))
+        
+        // 按钮行
+        val btnRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        val cancelBtn = actionButton(cancelText, 0xff8fa1b8.toInt(), 0xff6e7c93.toInt()).apply {
+            setOnClickListener { dialog.dismiss() }
+        }
+        val confirmBtn = actionButton(confirmText, 0xff35A8C4.toInt(), 0xff0E7D95.toInt()).apply {
+            setOnClickListener { 
+                dialog.dismiss()
+                onConfirm()
+            }
+        }
+        btnRow.addView(cancelBtn, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(8) })
+        btnRow.addView(confirmBtn, LinearLayout.LayoutParams(0, dp(44), 1f))
+        card.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
+        
+        dialog.setContentView(card, ViewGroup.LayoutParams(
+            (activity.resources.displayMetrics.widthPixels * 0.88).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        dialog.window?.setDimAmount(0.58f)
+        dialog.show()
+    }
     private var selectedPartition: String? = null
     private var fullImages = mutableListOf<OtgAssistantCore.ImageInfo>()
     private val confirmationPhrase = "我确认固件包匹配当前设备，并允许清除全部用户数据"
@@ -146,8 +254,22 @@ class OtgFlashHelper(
             .setTitle("选择目标分区")
             .setItems(names) { _, which ->
                 selectedPartition = names[which]
-                // 启动文件选择器
-                launchBuiltInPicker(singleImageRequest, "选择单分区镜像", ".img,.bin,.dat", false)
+                // v3.66.70：换用内置文件管理器
+                FileBrowserDialog.show(
+                    activity,
+                    "选择单分区镜像（.img / .bin）",
+                    arrayOf(".img", ".bin", ".dat"),
+                    null
+                ) { path -> 
+                    // 添加刷入前确认弹窗
+                    showModernDialog(
+                        title = "确认刷入分区？",
+                        message = "即将刷入：\n分区名：$selectedPartition\n镜像文件：${File(path).name}\n\n刷入后需重启生效，错误的镜像可能导致无法开机。",
+                        confirmText = "开始刷入"
+                    ) {
+                        prepareSingleImage(path)
+                    }
+                }
             }
             .show()
     }
@@ -161,15 +283,15 @@ class OtgFlashHelper(
                 val digest = OtgAssistantCore.sha256(file)
                 val size = file.length()
                 postUi {
-                    AlertDialog.Builder(activity)
-                        .setTitle("确认单分区刷写")
-                        .setMessage("分区: $partition\n文件: $name\n大小: ${formatBytes(size)}\nSHA-256: $digest")
-                        .setNegativeButton("取消", null)
-                        .setPositiveButton("刷写") { _, _ -> 
-                            Haptics.perform(activity.window.decorView)
-                            flashSingle(file, partition, name)
-                        }
-                        .show()
+                    // v3.66.70：圆角年轻化弹窗
+                    showModernDialog(
+                        title = "确认单分区刷写",
+                        message = "分区: $partition\n文件: $name\n大小: ${formatBytes(size)}\nSHA-256: $digest",
+                        confirmText = "刷写"
+                    ) {
+                        Haptics.perform(activity.window.decorView)
+                        flashSingle(file, partition, name)
+                    }
                 }
             } catch (e: Exception) {
                 postUi { appendLog("读取镜像失败: ${e.message}\n") }
@@ -195,8 +317,19 @@ class OtgFlashHelper(
     
     fun chooseFirmwareDirectory() {
         if (operationActive) return
-        // 启动文件选择器
-        launchBuiltInPicker(otaRequest, "选择 OTA 全量包（payload.bin / zip）")
+        // v3.66.70：圆角年轻化弹窗（参考短视频解析）
+        showModernDialog(
+            title = "全量包刷写 · 需要什么包？",
+            message = "只支持 OTA 全量包 ZIP（内含 payload.bin，A/B 动态分区设备官方整包）或裸 payload.bin 文件。\n\n不支持 Recovery 卡刷包、线刷 tar/目录，选错会解包失败。\n\n流程：解包分区 → 勾选 → 进入 FastbootD 刷写 → fastboot -w 清数据。",
+            confirmText = "选择文件"
+        ) {
+            FileBrowserDialog.show(
+                activity,
+                "选择全量包（OTA ZIP 内含 payload.bin / 裸 payload.bin）",
+                arrayOf(".zip", ".bin"),
+                null
+            ) { path -> extractAndScanOta(path) }
+        }
     }
     
     fun extractAndScanOta(filePath: String) {
@@ -204,122 +337,36 @@ class OtgFlashHelper(
         val progressText = TextView(activity).apply {
             text = "已完成 0%\n准备读取 BIN/ZIP..."
             textSize = 13f
-            setTextColor(Color.BLACK)
+            setTextColor(0xff17334f.toInt())
             gravity = Gravity.CENTER
         }
         val hint = TextView(activity).apply {
             text = "解包速度取决于设备性能与存储速度，通常需要 2-5 分钟。"
             textSize = 12f
-            setTextColor(Color.GRAY)
+            setTextColor(0xff6e7c93.toInt())
             setPadding(0, dp(10), 0, 0)
+            gravity = Gravity.CENTER
         }
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(24), dp(20), dp(24), dp(20))
-            addView(progressText)
-            addView(hint)
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xffeffaff.toInt(), 0xffdceafa.toInt(), 0xfff3e8ff.toInt())
+            ).apply {
+                cornerRadius = dp(26).toFloat()
+                setStroke(dp(1), 0xd8ffffff.toInt())
+            }
+            addView(label("正在解包 OTA", 18, 0xff17334f.toInt(), true))
+            addView(progressText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+            addView(hint, LinearLayout.LayoutParams(-1, -2))
         }
-        val progressDialog = AlertDialog.Builder(activity)
-            .setTitle("正在解包 OTA")
+        val dialog = AlertDialog.Builder(activity)
             .setView(content)
             .setCancelable(false)
             .create()
-        progressDialog.show()
-        
-        Thread {
-            try {
-                val extraction = OtgAssistantCore.extractOtaPackage(ctx, file) { percent, line ->
-                    postUi {
-                        if (percent >= 0) progressText.text = "已完成 $percent%\n$line"
-                        else progressText.text = line
-                    }
-                }
-                val images = OtgAssistantCore.listExtractedImages(extraction.root)
-                postUi {
-                    progressDialog.dismiss()
-                    fullImages = images.toMutableList()
-                    if (images.isEmpty()) {
-                        appendLog("OTA 包中没有可用的 .img 镜像\n")
-                        OtgAssistantCore.deleteOtaDirectory(ctx)
-                    } else {
-                        showImageSelection()
-                    }
-                }
-            } catch (e: Exception) {
-                OtgAssistantCore.deleteOtaDirectory(ctx)
-                postUi {
-                    progressDialog.dismiss()
-                    appendLog("解压或扫描 OTA 包失败: ${e.message}\n")
-                }
-            }
-        }.start()
-    }
-    
-    private fun showImageSelection() {
-        val checks = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-        }
-        fullImages.forEach { image ->
-            CheckBox(activity).apply {
-                isChecked = image.selected
-                text = "  ${image.partition}  ${formatBytes(image.sizeBytes)}${if (image.highRisk) "  [高风险]" else ""}"
-                setTextColor(Color.BLACK)
-                setOnCheckedChangeListener { _, checked -> image.selected = checked }
-                checks.addView(this)
-            }
-        }
-        val box = ScrollView(activity).apply {
-            addView(checks)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(300))
-        }
-        val nextBtn = TextView(activity).apply {
-            text = "下一步：进入 FastbootD"
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#3b82f6"))
-            setPadding(0, dp(12), 0, dp(12))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(12) }
-        }
-        val content = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), 0, dp(20), dp(16))
-            addView(TextView(activity).apply {
-                text = "共发现 ${fullImages.size} 个 .img 文件（已解压到 APP 私有 files/ota 目录）"
-                textSize = 12f
-                setTextColor(Color.GRAY)
-                setPadding(0, 0, 0, dp(8))
-            })
-            addView(box)
-            addView(nextBtn)
-        }
-        val dialog = AlertDialog.Builder(activity)
-            .setTitle("选择 OTA 全量包分区（默认全选）")
-            .setView(content)
-            .setNegativeButton("取消") { _, _ ->
-                OtgAssistantCore.deleteOtaDirectory(ctx)
-                appendLog("已取消选择并清理 files/ota 目录\n")
-            }
-            .create()
-        dialog.setOnCancelListener {
-            OtgAssistantCore.deleteOtaDirectory(ctx)
-            appendLog("已取消选择并清理 files/ota 目录\n")
-        }
-        nextBtn.setOnClickListener {
-            val selected = fullImages.filter { it.selected }
-            if (selected.isEmpty()) {
-                toast("至少选择一个分区")
-                return@setOnClickListener
-            }
-            dialog.dismiss()
-            enterFastbootDThenConfirm(selected)
-        }
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
         dialog.show()
     }
     
@@ -348,8 +395,10 @@ class OtgFlashHelper(
         val summary = selected.joinToString("\n") { "${it.partition}: ${it.name}" }
         val input = EditText(activity).apply {
             hint = confirmationPhrase
-            setSingleLine(false)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setHintTextColor(0xffadb8c9.toInt())
+            textSize = 13f
+            setTextColor(0xff17334f.toInt())
+            isSingleLine = true
         }
         val box = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -358,26 +407,56 @@ class OtgFlashHelper(
                 text = "重要警告：必须确认固件包匹配当前设备型号、地区、版本与存储规格。" +
                     "刷写成功后将执行 fastboot -w，全部用户数据会被清除。\n\n待刷分区:\n$summary\n\n请输入确认短语："
                 textSize = 12f
-                setTextColor(Color.BLACK)
+                setTextColor(0xff17334f.toInt())
                 setLineSpacing(dp(3).toFloat(), 1f)
             })
             addView(input)
         }
-        val dialog = AlertDialog.Builder(activity)
-            .setTitle("确认全量包刷写")
-            .setView(box)
-            .setNegativeButton("取消") { _, _ ->
+        
+        // v3.66.70：圆角年轻化弹窗
+        val dialog = Dialog(activity)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        
+        val card = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xffeffaff.toInt(), 0xffdceafa.toInt(), 0xfff3e8ff.toInt())
+            ).apply {
+                cornerRadius = dp(26).toFloat()
+                setStroke(dp(1), 0xd8ffffff.toInt())
+            }
+        }
+        
+        val capsule = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = rounded(0x247d98bd.toInt(), 0x887d98bd.toInt(), 15)
+        }
+        capsule.addView(label("OTG ASSISTANT  ·  危险操作", 10, 0xffcc5555.toInt(), true))
+        card.addView(capsule, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.START })
+        
+        val titleView = label("确认全量包刷写", 21, 0xff17334f.toInt(), true).apply {
+            setPadding(0, dp(14), 0, dp(8))
+        }
+        card.addView(titleView, LinearLayout.LayoutParams(-1, -2))
+        card.addView(box, LinearLayout.LayoutParams(-1, -2))
+        
+        val btnRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        val cancelBtn = actionButton("取消", 0xff8fa1b8.toInt(), 0xff6e7c93.toInt()).apply {
+            setOnClickListener {
+                dialog.dismiss()
                 OtgAssistantCore.deleteOtaDirectory(ctx)
                 appendLog("已取消刷写并清理 files/ota 目录\n")
             }
-            .setPositiveButton("开始刷写", null)
-            .create()
-        dialog.setOnCancelListener {
-            OtgAssistantCore.deleteOtaDirectory(ctx)
-            appendLog("已取消刷写并清理 files/ota 目录\n")
         }
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+        val confirmBtn = actionButton("开始刷写", 0xffD95656.toInt(), 0xffB03838.toInt()).apply {
+            setOnClickListener {
                 if (input.text.toString() == confirmationPhrase) {
                     dialog.dismiss()
                     Haptics.perform(activity.window.decorView)
@@ -386,6 +465,19 @@ class OtgFlashHelper(
                     toast("确认短语不匹配")
                 }
             }
+        }
+        btnRow.addView(cancelBtn, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(8) })
+        btnRow.addView(confirmBtn, LinearLayout.LayoutParams(0, dp(44), 1f))
+        card.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
+        
+        dialog.setContentView(card, ViewGroup.LayoutParams(
+            (activity.resources.displayMetrics.widthPixels * 0.88).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        dialog.window?.setDimAmount(0.58f)
+        dialog.setOnCancelListener {
+            OtgAssistantCore.deleteOtaDirectory(ctx)
+            appendLog("已取消刷写并清理 files/ota 目录\n")
         }
         dialog.show()
     }
@@ -426,8 +518,13 @@ class OtgFlashHelper(
     
     fun chooseAdbPushFile() {
         if (operationActive) return
-        // 启动文件选择器
-        launchBuiltInPicker(adbPushRequest, "选择要推送的文件")
+        // v3.66.70：换用 Dsu 管理器内置文件浏览器
+        FileBrowserDialog.show(
+            activity,
+            "选择要推送到设备的文件",
+            null,  // 不限制扩展名
+            null
+        ) { path -> prepareAdbPush(path) }
     }
     
     fun prepareAdbPush(filePath: String) {
@@ -499,12 +596,69 @@ class OtgFlashHelper(
     // ==================== 高级重启 ====================
     
     fun showRebootMenu() {
+        // v3.66.70：圆角年轻化弹窗样式
+        val dialog = Dialog(activity)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        
+        val card = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xffeffaff.toInt(), 0xffdceafa.toInt(), 0xfff3e8ff.toInt())
+            ).apply {
+                cornerRadius = dp(26).toFloat()
+                setStroke(dp(1), 0xd8ffffff.toInt())
+            }
+        }
+        
+        val capsule = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = rounded(0x247d98bd.toInt(), 0x887d98bd.toInt(), 15)
+        }
+        capsule.addView(label("OTG ASSISTANT  ·  本机重启", 10, 0xff35617e.toInt(), true))
+        card.addView(capsule, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.START })
+        
+        val titleView = label("高级重启选项", 21, 0xff17334f.toInt(), true).apply {
+            setPadding(0, dp(14), 0, dp(12))
+        }
+        card.addView(titleView, LinearLayout.LayoutParams(-1, -2))
+        
         val items = arrayOf("正常重启", "正常关机", "Recovery", "Fastboot", "9008 (EDL)")
         val commands = arrayOf("reboot", "reboot poweroff", "reboot recovery", "reboot bootloader", "reboot edl")
-        AlertDialog.Builder(activity)
-            .setTitle("高级重启")
-            .setItems(items) { _, which -> executeRebootMode(commands[which]) }
-            .show()
+        
+        items.forEachIndexed { index, itemName ->
+            val btn = Button(activity, null, 0).apply {
+                text = itemName
+                textSize = 14f
+                setTextColor(0xff17334f.toInt())
+                isAllCaps = false
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(12), dp(16), dp(12))
+                background = rounded(0x20ffffff.toInt(), 0x8effffff.toInt(), 13)
+                setOnClickListener {
+                    dialog.dismiss()
+                    executeRebootMode(commands[index])
+                }
+            }
+            card.addView(btn, LinearLayout.LayoutParams(-1, -2).apply {
+                if (index < items.size - 1) bottomMargin = dp(8)
+            })
+        }
+        
+        val cancelBtn = actionButton("取消", 0xff8fa1b8.toInt(), 0xff6e7c93.toInt()).apply {
+            setOnClickListener { dialog.dismiss() }
+        }
+        card.addView(cancelBtn, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(12) })
+        
+        dialog.setContentView(card, ViewGroup.LayoutParams(
+            (activity.resources.displayMetrics.widthPixels * 0.88).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        dialog.window?.setDimAmount(0.58f)
+        dialog.show()
     }
 
     private fun executeRebootMode(target: String) {

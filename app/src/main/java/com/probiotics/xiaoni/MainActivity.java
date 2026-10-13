@@ -4716,13 +4716,45 @@ public class MainActivity extends BaseActivity {
       private OtgFlashHelper otgFlashHelper;
       
       private LinearLayout buildOtgFastbootPanel() {
-          ScrollView scroll = new ScrollView(this);
-          LinearLayout content = new LinearLayout(this);
-          content.setOrientation(LinearLayout.VERTICAL);
-          content.setPadding(dp(4), dp(20), dp(4), dp(96));
-          
-          // 设备状态卡片（标题带刷新按钮）
-          content.addView(buildFlashDeviceCard());
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(4), dp(20), dp(4), dp(96));
+
+        // v3.10.60：置顶提示卡（OTG/ADB 刷机未完整实测声明 + 全量包格式说明，样式对齐 DNA 置顶提示框）
+        LinearLayout otgPinnedCard = new LinearLayout(this);
+        otgPinnedCard.setOrientation(LinearLayout.VERTICAL);
+        otgPinnedCard.setPadding(dp(14), dp(11), dp(14), dp(11));
+        GradientDrawable otgPinnedBg = new GradientDrawable();
+        otgPinnedBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+        otgPinnedBg.setColors(new int[]{0xFFFFD98A, 0xFFF2B04E});
+        otgPinnedBg.setCornerRadius(dp(18));
+        otgPinnedBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
+        otgPinnedCard.setBackground(otgPinnedBg);
+        otgPinnedCard.setElevation(0f);
+        TextView otgPinnedTitle = text("📌 " + t("置顶提示", "Pinned"), 14, 0xff6b3d00);
+        otgPinnedTitle.setTypeface(null, 1);
+        otgPinnedTitle.setPadding(0, 0, 0, dp(5));
+        otgPinnedCard.addView(otgPinnedTitle, new LinearLayout.LayoutParams(-1, -2));
+        String[] otgPinnedLines = {
+                t("目前还没测试能不能刷入 img 给另一个设备，只看过每个功能可以正常点击有回应。",
+                        "Flashing images to another device is untested; only verified that every button responds."),
+                t("全量包刷写、分区刷入还没测试，谨慎操作，理论上没有问题。",
+                        "Full-package flash and partition flash are untested. Proceed carefully; should work in theory."),
+                t("全量包刷写需要：OTA 全量包 ZIP（压缩包内含 payload.bin）或裸 payload.bin，点击功能后按说明选择文件。",
+                        "Full-package flash needs an OTA ZIP containing payload.bin, or a raw payload.bin file.")};
+        for (String otgPl : otgPinnedLines) {
+            TextView otgLine = text(otgPl, 11, 0xff7a4a10);
+            otgLine.setLineSpacing(dp(2), 1f);
+            otgLine.setPadding(0, 0, 0, dp(3));
+            otgPinnedCard.addView(otgLine, new LinearLayout.LayoutParams(-1, -2));
+        }
+        LinearLayout.LayoutParams otgPinnedLp = new LinearLayout.LayoutParams(-1, -2);
+        otgPinnedLp.bottomMargin = dp(10);
+        content.addView(otgPinnedCard, otgPinnedLp);
+
+        // 设备状态卡片（标题带刷新按钮）
+        content.addView(buildFlashDeviceCard());
           
           // 输入命令卡片
           content.addView(buildFlashCommandCard());
