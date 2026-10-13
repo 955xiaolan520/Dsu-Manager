@@ -53,7 +53,9 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
                     apk.delete();
                 } catch (Exception ignored) { }
             }
-            Toast.makeText(context, "✓ 安装完成，已自动清理安装包", Toast.LENGTH_LONG).show();
+            Toast.makeText(context, apkPath == null || apkPath.isEmpty()
+                    ? "✓ 安装完成，下载文件已保留"
+                    : "✓ 安装完成，已自动清理安装包", Toast.LENGTH_LONG).show();
             return;
         }
         String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);

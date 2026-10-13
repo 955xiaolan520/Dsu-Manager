@@ -8,10 +8,6 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Paint;
-import android.graphics.RadialGradient;
-import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -162,9 +158,11 @@ public class ShortVideoActivity extends BaseActivity {
 
     private View buildPage() {
         FrameLayout root = new FrameLayout(this);
-        GradientDrawable pageBackground = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xffd9e6ef, 0xffb6cad9, 0xff8aa6ba});
-        root.setBackground(pageBackground);
+        root.setBackground(new CornerAccentDrawable(
+                0xffdce7ee, 0xff8299aa,
+                new int[]{0xff3296a8, 0xff6e78bd, 0xffca8953, 0xff4d9c7c},
+                new float[][]{{0.04f, 0.02f}, {0.97f, 0.18f}, {0.96f, 0.98f}, {0.03f, 0.84f}},
+                new int[]{dp(280), dp(250), dp(300), dp(220)}));
 
         LinearLayout shell = new LinearLayout(this);
         shell.setOrientation(LinearLayout.VERTICAL);
@@ -192,11 +190,6 @@ public class ShortVideoActivity extends BaseActivity {
             return windowInsets;
         });
         ViewCompat.requestApplyInsets(root);
-        CornerAccentsView accents = new CornerAccentsView(this);
-        accents.setClickable(false);
-        accents.setFocusable(false);
-        root.addView(accents, new FrameLayout.LayoutParams(-1, -1));
-
         TextView steps = label(t("① 粘贴分享文案  →  ② 自动提取链接  →  ③ 解析并下载",
                 "① Paste share text  →  ② Extract link  →  ③ Resolve and download"),
                 12, 0xff287f87, true);
@@ -274,8 +267,8 @@ public class ShortVideoActivity extends BaseActivity {
         supportedCard.setBackground(rounded(0x25ffffff, 0x88ffffff, 17));
         TextView supportedTitle = label(t("接口支持的平台", "Platforms reported by the API"), 12, 0xff244c62, true);
         supportedCard.addView(supportedTitle, lp(-1, dp(20)));
-        TextView supportedText = label(t("抖音 · 快手 · 哔哩哔哩 · TikTok · YouTube 等；是否有直链以接口响应为准。",
-                "Douyin · Kuaishou · Bilibili · TikTok · YouTube and more; availability depends on the API response."),
+        TextView supportedText = label(t("抖音 · 快手 · TikTok 等；哔哩哔哩和 YouTube 当前暂不可用。",
+                "Douyin · Kuaishou · TikTok and more; Bilibili and YouTube are currently unavailable."),
                 11, 0xff4f6a80, false);
         supportedText.setLineSpacing(dp(2), 1.0f);
         LinearLayout.LayoutParams supportedTextLp = lp(-1, -2);
@@ -295,8 +288,8 @@ public class ShortVideoActivity extends BaseActivity {
         TextView title = label(t("解析服务与源码来源", "Parser service & source references"),
                 12, 0xff244c62, true);
         card.addView(title, lp(-1, -2));
-        TextView service = label(t("当前解析请求由 api.bugpk.com 提供；APP 按接口返回数据展示并下载。",
-                "Parsing is provided by api.bugpk.com; the app displays and downloads the API response."),
+        TextView service = label(t("当前使用 api.bugpk.com 第三方接口；B站和 YouTube 暂时无法解析。",
+                "Uses the api.bugpk.com third-party API; Bilibili and YouTube are currently unavailable."),
                 11, 0xff4f6a80, false);
         service.setLineSpacing(dp(2), 1f);
         LinearLayout.LayoutParams serviceLp = lp(-1, -2);
@@ -325,8 +318,8 @@ public class ShortVideoActivity extends BaseActivity {
         LinearLayout.LayoutParams refsLp = lp(-1, -2);
         refsLp.topMargin = dp(7);
         card.addView(references, refsLp);
-        TextView note = label(t("说明：以上仓库用于解析实现参考；本应用实际调用第三方 API，不包含或托管其服务端源码。点击仓库名称可查看原项目。",
-                "The repositories are implementation references. This app calls the third-party API and does not bundle or host their server code. Tap to view the projects."),
+        TextView note = label(t("说明：以上仓库用于解析实现参考；本应用调用第三方 API，不包含或托管其服务端源码。点击仓库名称可查看原项目。",
+                "The repositories are implementation references. This app calls the third-party API and does not bundle or host its server code. Tap to view the projects."),
                 10, 0xff61768a, false);
         note.setLineSpacing(dp(2), 1f);
         LinearLayout.LayoutParams noteLp = lp(-1, -2);
@@ -407,11 +400,11 @@ public class ShortVideoActivity extends BaseActivity {
         privacy.setOrientation(LinearLayout.VERTICAL);
         privacy.setPadding(dp(13), dp(11), dp(13), dp(11));
         privacy.setBackground(rounded(0xffffefbd, 0xffffd66e, 17));
-        TextView title = label(t("第三方解析提示", "Third-party processing"), 13, 0xff62430b, true);
+        TextView title = label(t("解析方式与隐私提示", "Resolver & privacy"), 13, 0xff62430b, true);
         privacy.addView(title, lp(-1, dp(21)));
         TextView body = label(t(
-                "只有点击解析时，当前分享文案中提取出的链接才会发送到 api.bugpk.com。本应用不自动发送或保存链接；清晰度和水印状态由接口及源平台返回，不保证每条都有 4K/无水印版本。",
-                "Only when you tap Resolve, the extracted link is sent to api.bugpk.com. This app does not send or save it automatically. Quality and watermark status depend on the API and source platform; 4K or watermark-free output is not guaranteed."),
+                "确认后只会发送识别出的链接到 api.bugpk.com，不会发送整段分享文案。哔哩哔哩和 YouTube 当前无法通过此接口解析，尝试后仍可能失败。",
+                "After confirmation, only the extracted link is sent to api.bugpk.com, not the full share text. Bilibili and YouTube are currently not supported by this API and may still fail."),
                 11, 0xff604a20, false);
         body.setLineSpacing(dp(2), 1.0f);
         LinearLayout.LayoutParams bodyLp = lp(-1, -2);
@@ -578,6 +571,7 @@ public class ShortVideoActivity extends BaseActivity {
     }
 
     private void showResolveConfirmDialog(String url) {
+        final boolean knownUnavailable = isApiKnownUnavailablePlatform(url);
         final android.app.Dialog dialog = new android.app.Dialog(this);
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -603,13 +597,18 @@ public class ShortVideoActivity extends BaseActivity {
         LinearLayout.LayoutParams titleLp = lp(-1, -2);
         titleLp.topMargin = dp(12);
         card.addView(title, titleLp);
-        TextView description = label(t("只发送识别出的分享链接，不会发送整段分享文案。", "Only the extracted share link is sent—not the surrounding share text."),
+        TextView description = label(knownUnavailable
+                        ? t("哔哩哔哩和 YouTube 当前无法通过此解析接口使用；继续后仍可能解析失败。只会发送识别出的链接，不会发送整段文案。",
+                                "Bilibili and YouTube are currently unavailable through this parser and may still fail. Only the extracted link is sent, not the full share text.")
+                        : t("只发送识别出的分享链接，不会发送整段分享文案。", "Only the extracted share link is sent—not the surrounding share text."),
                 13, 0xff4c647a, false);
         LinearLayout.LayoutParams descLp = lp(-1, -2);
         descLp.topMargin = dp(5);
         card.addView(description, descLp);
 
-        TextView host = label("api.bugpk.com", 12, 0xff345c7b, true);
+        TextView host = label(knownUnavailable
+                ? "api.bugpk.com · B站 / YouTube 当前不可用"
+                : "api.bugpk.com · 第三方解析", 12, 0xff345c7b, true);
         host.setPadding(dp(11), dp(10), dp(11), dp(10));
         host.setBackground(rounded(0x20ffffff, 0x8effffff, 13));
         LinearLayout.LayoutParams hostLp = lp(-1, -2);
@@ -621,7 +620,8 @@ public class ShortVideoActivity extends BaseActivity {
         LinearLayout.LayoutParams buttonsLp = lp(-1, dp(46));
         buttonsLp.topMargin = dp(16);
         Button cancel = actionButton(t("先不解析", "Not now"), 0xff8297a8, 0xff687f93);
-        Button proceed = actionButton(t("继续解析  →", "Resolve  →"), 0xff23899a, 0xff476ab4);
+        Button proceed = actionButton(knownUnavailable
+                ? t("仍然尝试  →", "Try anyway  →") : t("继续解析  →", "Resolve  →"), 0xff23899a, 0xff476ab4);
         LinearLayout.LayoutParams each = new LinearLayout.LayoutParams(0, -1, 1f);
         buttons.addView(cancel, each);
         LinearLayout.LayoutParams proceedLp = new LinearLayout.LayoutParams(0, -1, 1f);
@@ -787,6 +787,16 @@ public class ShortVideoActivity extends BaseActivity {
         return video;
     }
 
+    private boolean isApiKnownUnavailablePlatform(String url) {
+        try {
+            String host = Uri.parse(url).getHost();
+            if (host == null) return false;
+            host = host.toLowerCase(Locale.ROOT);
+            return host.equals("b23.tv") || host.endsWith(".bilibili.com") || host.equals("bilibili.com")
+                    || host.equals("youtu.be") || host.endsWith(".youtube.com") || host.equals("youtube.com");
+        } catch (Exception ignored) { return false; }
+    }
+
     private void finishParseSuccess(VideoInfo video, String message) {
         if (isFinishing() || isDestroyed()) return;
         progressBar.setVisibility(View.GONE);
@@ -889,12 +899,12 @@ public class ShortVideoActivity extends BaseActivity {
     private String explainApiError(int code, String message, JSONObject data, String platform) {
         String detail = message == null ? "" : message.trim();
         if ("youtube".equals(platform) && code == 501) {
-            detail = t("YouTube 解析服务返回“需签名流或受限”（code=501）。链接已被识别，但当前第三方接口没有提供视频直链；这是接口端限制，不是 APP 链接格式问题。",
-                    "The YouTube parser reports signed/limited streams (code 501). The link was recognized, but the third-party API returned no media URL; this is an API-side limitation, not an app URL-format issue.");
+            detail = t("YouTube 链接已识别，但当前解析接口返回“需签名流或受限”，没有给出可用视频地址。不是链接格式错误；当前版本尚未接入本地备用解析器。",
+                    "The YouTube link was recognized, but the configured parser returned no media URL because streams are signed or restricted. This is not a URL-format error; this version has no local fallback extractor.");
         }
         else if ("bilibili".equals(platform) && (code == 0 || code == -1)) {
-            detail = t("B 站解析服务已识别链接，但返回“解析失败/链接不正确”（code=" + code + "）。APP 已将链接发送给解析接口；需要接口端修复 B 站解析器或其网络/访问状态后才能返回视频直链。",
-                    "The Bilibili parser recognized the link but returned a parse/link error (code=" + code + "). The app sent the URL successfully; the API's Bilibili extractor or its access/network state must be fixed to return a media URL.");
+            detail = t("B 站链接已识别，但当前解析接口返回 code=" + code + "，未给出视频地址。不是 APP 链接格式错误；当前版本尚未接入本地备用解析器。",
+                    "The Bilibili link was recognized, but the configured parser returned code=" + code + " without a media URL. This is not a URL-format error; this version has no local fallback extractor.");
         }
         else if (code == 501) detail = t("该平台未返回可用的视频直链（接口 code=501）。", "No direct media URL was returned (API code 501).");
         else if (code == 400 && detail.isEmpty()) detail = t("链接格式无效或接口无法识别平台。", "Invalid link or unsupported platform.");
@@ -914,7 +924,7 @@ public class ShortVideoActivity extends BaseActivity {
             }
             if (!labels.isEmpty()) detail += "\n" + t("接口支持：", "Supported: ") + TextUtils.join("、", labels);
         }
-        return "API " + code + " · " + detail;
+        return t("接口返回 " + code + " · " + detail, "API returned " + code + " · " + detail);
     }
 
     private boolean isHttpUrl(String value) {
@@ -1393,32 +1403,6 @@ public class ShortVideoActivity extends BaseActivity {
         worker.shutdownNow();
         imageWorker.shutdownNow();
         super.onDestroy();
-    }
-
-    /** Soft radial corner accents matching the embedded YunX/Dsu resolver surfaces. */
-    private final class CornerAccentsView extends View {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final int accent = 0xff35a8c4;
-        CornerAccentsView(Context context) { super(context); setWillNotDraw(false); }
-        @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            float w = getWidth(), h = getHeight();
-            if (w <= 0 || h <= 0) return;
-            drawGlow(canvas, w, 0, dp(190), 0.16f);
-            drawGlow(canvas, 0, h * 0.28f, dp(115), 0.10f);
-            drawGlow(canvas, w, h * 0.42f, dp(108), 0.10f);
-            drawGlow(canvas, 0, h, dp(135), 0.11f);
-            drawGlow(canvas, w, h, dp(125), 0.12f);
-            drawGlow(canvas, w * 0.5f, h, dp(140), 0.07f);
-        }
-        private void drawGlow(Canvas canvas, float x, float y, float radius, float alpha) {
-            paint.setShader(new RadialGradient(x, y, radius,
-                    new int[]{((int) (alpha * 255) << 24) | (accent & 0x00ffffff),
-                            ((int) (alpha * 100) << 24) | (accent & 0x00ffffff), Color.TRANSPARENT},
-                    new float[]{0f, 0.58f, 1f}, Shader.TileMode.CLAMP));
-            canvas.drawCircle(x, y, radius, paint);
-            paint.setShader(null);
-        }
     }
 
     private static final class VideoInfo {

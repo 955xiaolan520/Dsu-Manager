@@ -44,7 +44,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -91,6 +90,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -142,6 +143,7 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     BackHandler { onBack() }
 
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val settings = remember { SettingsRepository(context) }
     val engineState by GopeedEngine.state.collectAsState()
@@ -623,13 +625,16 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                                 )
                             }
                             failure?.let { text ->
-                                // 可选择文本：方便把原始报错整段复制出来
-                                SelectionContainer {
+                                Row(verticalAlignment = Alignment.Top) {
                                     Text(
                                         text,
+                                        modifier = Modifier.weight(1f),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.error
                                     )
+                                    TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }) {
+                                        Text("复制", color = MaterialTheme.colorScheme.error)
+                                    }
                                 }
                                 if (gopeedNeedsRestart(text)) {
                                     Text(

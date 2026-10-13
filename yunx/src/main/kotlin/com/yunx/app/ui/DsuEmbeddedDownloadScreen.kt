@@ -82,6 +82,7 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -478,13 +479,28 @@ private fun openDsuCompletedFile(context: Context, path: String) {
                     .putExtra("image_title", file.name)
             )
             ext == "apk" -> {
+                if (file.length() < 8L || !file.canRead()) {
+                    SnackbarController.show("APK 文件为空或不可读取：${file.name}")
+                    return
+                }
+                val parsedPackage = if (Build.VERSION.SDK_INT >= 33) {
+                    context.packageManager.getPackageArchiveInfo(
+                        file.absolutePath,
+                        android.content.pm.PackageManager.PackageInfoFlags.of(0L)
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+                }
+                if (parsedPackage == null) {
+                    SnackbarController.show("APK 包校验失败：系统无法读取此文件的 AndroidManifest.xml。请确认下载完成且文件确为 APK。")
+                    return
+                }
                 if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
                     start(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
                     SnackbarController.show("请允许 Dsu 管理器安装应用，然后再次点击“查看/安装”")
                 } else {
-                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                    start(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    installApkWithSession(context, file, parsedPackage.packageName)
                 }
             }
             else -> {
@@ -497,6 +513,52 @@ private fun openDsuCompletedFile(context: Context, path: String) {
             }
         }
     }.onFailure { SnackbarController.show("无法打开文件：${it.message ?: "请检查文件或权限"}") }
+}
+
+/** Install from the file itself through PackageInstaller, so URI grants/MIUI file sniffing cannot corrupt APK handoff. */
+private fun installApkWithSession(context: Context, file: File, packageName: String) {
+    val appContext = context.applicationContext
+    val main = android.os.Handler(android.os.Looper.getMainLooper())
+    SnackbarController.show("正在校验并准备安装 ${file.name}…")
+    Thread({
+        var sessionId = -1
+        try {
+            val installer = appContext.packageManager.packageInstaller
+            val params = android.content.pm.PackageInstaller.SessionParams(
+                android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL
+            )
+            params.setAppPackageName(packageName)
+            if (Build.VERSION.SDK_INT >= 31) {
+                params.setRequireUserAction(android.content.pm.PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+            }
+            sessionId = installer.createSession(params)
+            installer.openSession(sessionId).use { session ->
+                FileInputStream(file).use { input ->
+                    session.openWrite("base.apk", 0, file.length()).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                        session.fsync(output)
+                    }
+                }
+                val result = Intent()
+                    .setClassName(appContext.packageName, "${appContext.packageName}.UpdateInstallReceiver")
+                    .setAction("com.probiotics.xiaoni.UPDATE_INSTALL_RESULT")
+                val flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                    if (Build.VERSION.SDK_INT >= 31) android.app.PendingIntent.FLAG_MUTABLE else 0
+                val callback = android.app.PendingIntent.getBroadcast(appContext, sessionId, result, flags)
+                session.commit(callback.intentSender)
+            }
+            main.post { SnackbarController.show("已交给 Android 安装器，请在系统确认页完成安装。下载文件会保留。") }
+        } catch (failure: Throwable) {
+            if (sessionId >= 0) runCatching { appContext.packageManager.packageInstaller.abandonSession(sessionId) }
+            val message = failure.message?.takeIf { it.isNotBlank() } ?: failure.javaClass.simpleName
+            main.post { SnackbarController.show("提交 APK 安装失败：$message") }
+        }
+    }, "dsu-apk-install").start()
 }
 
 @Composable
