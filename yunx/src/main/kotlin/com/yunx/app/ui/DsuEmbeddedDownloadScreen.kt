@@ -244,7 +244,12 @@ fun DsuEmbeddedDownloadScreen(
     var tasks by remember(source) { mutableStateOf(readDsuEmbeddedTasks(context, source)) }
     var filter by remember { mutableStateOf("全部") }
     var pendingDelete by remember { mutableStateOf<DsuDeleteTarget?>(null) }
-    fun refresh() { tasks = readDsuEmbeddedTasks(context, source) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    fun refresh() { 
+        tasks = readDsuEmbeddedTasks(context, source)
+        selectedIds = selectedIds.filter { id -> tasks.any { it.id == id } }.toSet()
+    }
     fun sendAction(action: String, id: String? = null) {
         val intent = Intent().setClassName(context.packageName, "com.probiotics.xiaoni.DownloadService")
             .setAction(action)
@@ -325,13 +330,60 @@ fun DsuEmbeddedDownloadScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                SummaryMetric("进行中", activeCount.toString(), Color(0xFF248FA2))
-                SummaryMetric("已完成", completedCount.toString(), Color(0xFF32946F))
-                SummaryMetric("失败/取消", failedCount.toString(), Color(0xFFB76C5A))
-                TextButton(onClick = { sendAction(DSU_DOWNLOAD_ACTION_QUERY); refresh() }) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp),
-                        tint = Color(0xFF327E8A))
-                    Text("刷新", color = Color(0xFF327E8A))
+                if (selectionMode) {
+                    Text("已选择 ${selectedIds.size} 项", 
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = DsuInk)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { 
+                            selectedIds = if (selectedIds.size == visible.size) emptySet() 
+                            else visible.map { it.id }.toSet()
+                        }) {
+                            Icon(Icons.Outlined.CheckCircle, contentDescription = "全选", 
+                                modifier = Modifier.size(18.dp), tint = Color(0xFF327E8A))
+                            Text("全选", color = Color(0xFF327E8A))
+                        }
+                        TextButton(onClick = { 
+                            if (selectedIds.isEmpty()) {
+                                SnackbarController.show("请先选择要删除的项")
+                                return@TextButton
+                            }
+                            val selected = tasks.filter { it.id in selectedIds }
+                            pendingDelete = DsuDeleteTarget(
+                                label = "${selected.size} 项下载",
+                                tasks = selected
+                            )
+                        }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "删除", 
+                                modifier = Modifier.size(18.dp), tint = Color(0xFFB76C5A))
+                            Text("批量删除", color = Color(0xFFB76C5A))
+                        }
+                        TextButton(onClick = { 
+                            selectionMode = false
+                            selectedIds = emptySet()
+                        }) {
+                            Text("取消", color = DsuSubtleInk)
+                        }
+                    }
+                } else {
+                    SummaryMetric("进行中", activeCount.toString(), Color(0xFF248FA2))
+                    SummaryMetric("已完成", completedCount.toString(), Color(0xFF32946F))
+                    SummaryMetric("失败/取消", failedCount.toString(), Color(0xFFB76C5A))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { sendAction(DSU_DOWNLOAD_ACTION_QUERY); refresh() }) {
+                            Icon(Icons.Outlined.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp),
+                                tint = Color(0xFF327E8A))
+                            Text("刷新", color = Color(0xFF327E8A))
+                        }
+                        if (visible.isNotEmpty()) {
+                            TextButton(onClick = { selectionMode = true }) {
+                                Icon(Icons.Outlined.CheckCircle, contentDescription = "选择", modifier = Modifier.size(18.dp),
+                                    tint = Color(0xFF327E8A))
+                                Text("选择", color = Color(0xFF327E8A))
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -397,7 +449,12 @@ fun DsuEmbeddedDownloadScreen(
                     onCancel = { task -> sendAction(DSU_DOWNLOAD_ACTION_CANCEL, task.id) },
                     onOpenTask = { task -> openLocation(task.path, task.folderRoot) },
                     onOpenCompletedFile = { task -> openDsuCompletedFile(context, task.path) },
-                    onDeleteTask = { task -> pendingDelete = DsuDeleteTarget(task.name, listOf(task), task.folderRoot) }
+                    onDeleteTask = { task -> pendingDelete = DsuDeleteTarget(task.name, listOf(task), task.folderRoot) },
+                    selectionMode = selectionMode,
+                    selectedIds = selectedIds,
+                    onToggleSelection = { id -> 
+                        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id 
+                    }
                 )
             }
             standalone.forEach { task ->
@@ -409,7 +466,12 @@ fun DsuEmbeddedDownloadScreen(
                     onCancel = { sendAction(DSU_DOWNLOAD_ACTION_CANCEL, task.id) },
                     onOpenCompletedFile = { openDsuCompletedFile(context, task.path) },
                     onOpenLocation = { openLocation(task.path) },
-                    onDelete = { pendingDelete = DsuDeleteTarget(task.name, listOf(task)) }
+                    onDelete = { pendingDelete = DsuDeleteTarget(task.name, listOf(task)) },
+                    selectionMode = selectionMode,
+                    isSelected = task.id in selectedIds,
+                    onToggleSelection = { 
+                        selectedIds = if (task.id in selectedIds) selectedIds - task.id else selectedIds + task.id 
+                    }
                 )
             }
         }
@@ -445,6 +507,8 @@ fun DsuEmbeddedDownloadScreen(
                     TextButton(onClick = {
                         pendingDelete = null
                         deleteDsuDownloadTarget(context, target, deleteLocal, ::refresh, ::sendAction)
+                        selectionMode = false
+                        selectedIds = emptySet()
                     }) { Text("删除", color = Color(0xFFB74E4A), fontWeight = FontWeight.Bold) }
                 },
                 dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消", color = DsuSubtleInk) } }
@@ -547,12 +611,13 @@ private fun installApkWithSession(context: Context, file: File, packageName: Str
                 val result = Intent()
                     .setClassName(appContext.packageName, "${appContext.packageName}.UpdateInstallReceiver")
                     .setAction("com.probiotics.xiaoni.UPDATE_INSTALL_RESULT")
+                    .putExtra("apk_path", file.absolutePath)
                 val flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT or
                     if (Build.VERSION.SDK_INT >= 31) android.app.PendingIntent.FLAG_MUTABLE else 0
                 val callback = android.app.PendingIntent.getBroadcast(appContext, sessionId, result, flags)
                 session.commit(callback.intentSender)
             }
-            main.post { SnackbarController.show("已交给 Android 安装器，请在系统确认页完成安装。下载文件会保留。") }
+            main.post { SnackbarController.show("已交给 Android 安装器，请在系统确认页完成安装。安装成功后将自动清理安装包。") }
         } catch (failure: Throwable) {
             if (sessionId >= 0) runCatching { appContext.packageManager.packageInstaller.abandonSession(sessionId) }
             val message = failure.message?.takeIf { it.isNotBlank() } ?: failure.javaClass.simpleName
@@ -598,7 +663,10 @@ private fun DsuEmbeddedFolderCard(
     onCancel: (DsuEmbeddedTask) -> Unit,
     onOpenTask: (DsuEmbeddedTask) -> Unit,
     onOpenCompletedFile: (DsuEmbeddedTask) -> Unit,
-    onDeleteTask: (DsuEmbeddedTask) -> Unit
+    onDeleteTask: (DsuEmbeddedTask) -> Unit,
+    selectionMode: Boolean = false,
+    selectedIds: Set<String> = emptySet(),
+    onToggleSelection: (String) -> Unit = {}
 ) {
     var expanded by remember(folderRoot) { mutableStateOf(false) }
     val completed = allTasks.count { it.isFinished }
@@ -678,7 +746,10 @@ private fun DsuEmbeddedFolderCard(
                             onOpenCompletedFile = { onOpenCompletedFile(task) },
                             onOpenLocation = { onOpenTask(task) },
                             onDelete = { onDeleteTask(task) },
-                            compact = true
+                            compact = true,
+                            selectionMode = selectionMode,
+                            isSelected = task.id in selectedIds,
+                            onToggleSelection = { onToggleSelection(task.id) }
                         )
                     }
                 }
@@ -695,19 +766,37 @@ private fun DsuDownloadTaskCard(
     onOpenLocation: () -> Unit,
     onOpenCompletedFile: () -> Unit,
     onDelete: () -> Unit,
-    compact: Boolean = false
+    compact: Boolean = false,
+    selectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelection: () -> Unit = {}
 ) {
+    val haptic = LocalHapticFeedback.current
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = selectionMode) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            onToggleSelection()
+        },
         shape = RoundedCornerShape(if (compact) 20.dp else 25.dp),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = if (compact) .67f else .78f)),
+        border = BorderStroke(1.dp, if (selectionMode && isSelected) Color(0xFF3D9AA1) 
+            else Color.White.copy(alpha = if (compact) .67f else .78f)),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(Modifier.fillMaxWidth().background(DsuGlassBrush)
-            .padding(horizontal = if (compact) 12.dp else 15.dp, vertical = if (compact) 10.dp else 14.dp),
+        Column(Modifier.fillMaxWidth().background(
+            if (selectionMode && isSelected) Brush.linearGradient(
+                listOf(Color(0x303D9AA1), Color(0x203D9AA1))
+            ) else DsuGlassBrush
+        ).padding(horizontal = if (compact) 12.dp else 15.dp, vertical = if (compact) 10.dp else 14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (selectionMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelection() },
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                }
                 Icon(
                     imageVector = when {
                         task.isFinished -> Icons.Outlined.CheckCircle
@@ -769,33 +858,35 @@ private fun DsuDownloadTaskCard(
             }
             if (!task.historical) {
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = onPauseResume, enabled = !task.isPending,
+                    Button(onClick = onPauseResume, enabled = !task.isPending && !selectionMode,
                         modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
                         Icon(if (task.isPaused) Icons.Outlined.PlayCircle else Icons.Outlined.PauseCircle, null,
                             modifier = Modifier.size(18.dp))
                         Text(if (task.isPaused) "继续" else if (task.isPending) "排队" else "暂停",
                             modifier = Modifier.padding(start = 4.dp), maxLines = 1)
                     }
-                    TextButton(onClick = onCancel, modifier = Modifier.weight(.82f)) {
+                    TextButton(onClick = onCancel, enabled = !selectionMode, modifier = Modifier.weight(.82f)) {
                         Icon(Icons.Outlined.StopCircle, null, modifier = Modifier.size(18.dp), tint = Color(0xFFAA625C))
                         Text("取消", modifier = Modifier.padding(start = 3.dp), color = Color(0xFFAA625C))
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (task.isFinished) {
-                    TextButton(onClick = onOpenCompletedFile, modifier = Modifier.weight(1.15f)) {
-                        Icon(Icons.Outlined.Visibility, null, modifier = Modifier.size(18.dp), tint = Color(0xFF327F91))
-                        Text("查看/安装", modifier = Modifier.padding(start = 3.dp), color = Color(0xFF327F91), maxLines = 1)
+            if (!selectionMode) {
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (task.isFinished) {
+                        TextButton(onClick = onOpenCompletedFile, modifier = Modifier.weight(1.15f)) {
+                            Icon(Icons.Outlined.Visibility, null, modifier = Modifier.size(18.dp), tint = Color(0xFF327F91))
+                            Text("查看/安装", modifier = Modifier.padding(start = 3.dp), color = Color(0xFF327F91), maxLines = 1)
+                        }
                     }
-                }
-                TextButton(onClick = onDelete, modifier = Modifier.weight(.82f)) {
-                    Icon(Icons.Outlined.Delete, null, modifier = Modifier.size(18.dp), tint = Color(0xFFB35B55))
-                    Text("删除", modifier = Modifier.padding(start = 3.dp), color = Color(0xFFB35B55))
-                }
-                TextButton(onClick = onOpenLocation, modifier = Modifier.weight(1.18f)) {
-                    Icon(Icons.Outlined.FolderOpen, null, modifier = Modifier.size(18.dp), tint = Color(0xFF327F91))
-                    Text("打开位置", modifier = Modifier.padding(start = 3.dp), color = Color(0xFF327F91), maxLines = 1)
+                    TextButton(onClick = onDelete, modifier = Modifier.weight(.82f)) {
+                        Icon(Icons.Outlined.Delete, null, modifier = Modifier.size(18.dp), tint = Color(0xFFB35B55))
+                        Text("删除", modifier = Modifier.padding(start = 3.dp), color = Color(0xFFB35B55))
+                    }
+                    TextButton(onClick = onOpenLocation, modifier = Modifier.weight(1.18f)) {
+                        Icon(Icons.Outlined.FolderOpen, null, modifier = Modifier.size(18.dp), tint = Color(0xFF327F91))
+                        Text("打开位置", modifier = Modifier.padding(start = 3.dp), color = Color(0xFF327F91), maxLines = 1)
+                    }
                 }
             }
         }

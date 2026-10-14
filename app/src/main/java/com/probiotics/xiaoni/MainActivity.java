@@ -5654,6 +5654,120 @@ public class MainActivity extends BaseActivity {
           }
       }
 
+      // 现代圆角渐变弹窗（Java版本）
+      private void showModernDialog(String title, String message, String cancelText, String confirmText, Runnable onConfirm) {
+          android.app.Dialog dialog = new android.app.Dialog(this);
+          dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+          dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
+          
+          LinearLayout card = new LinearLayout(this);
+          card.setOrientation(LinearLayout.VERTICAL);
+          int padding20 = dp(20);
+          int padding18 = dp(18);
+          card.setPadding(padding20, padding18, padding20, padding18);
+          
+          android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable(
+              android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+              new int[]{0xffeffaff, 0xffdceafa, 0xfff3e8ff}
+          );
+          cardBg.setCornerRadius(dp(26));
+          cardBg.setStroke(dp(1), 0xd8ffffff);
+          card.setBackground(cardBg);
+          
+          // 顶部胶囊标签
+          LinearLayout capsule = new LinearLayout(this);
+          capsule.setGravity(android.view.Gravity.CENTER);
+          int padding10 = dp(10);
+          int padding6 = dp(6);
+          capsule.setPadding(padding10, padding6, padding10, padding6);
+          android.graphics.drawable.GradientDrawable capsuleBg = new android.graphics.drawable.GradientDrawable();
+          capsuleBg.setCornerRadius(dp(15));
+          capsuleBg.setColors(new int[]{0x247d98bd, 0x887d98bd});
+          capsule.setBackground(capsuleBg);
+          
+          android.widget.TextView capsuleLabel = new android.widget.TextView(this);
+          capsuleLabel.setText("OTG ASSISTANT  ·  操作确认");
+          capsuleLabel.setTextSize(10);
+          capsuleLabel.setTextColor(0xff35617e);
+          capsuleLabel.setTypeface(null, android.graphics.Typeface.BOLD);
+          capsule.addView(capsuleLabel);
+          
+          LinearLayout.LayoutParams capsuleParams = new LinearLayout.LayoutParams(-2, -2);
+          capsuleParams.gravity = android.view.Gravity.START;
+          card.addView(capsule, capsuleParams);
+          
+          // 标题
+          android.widget.TextView titleView = new android.widget.TextView(this);
+          titleView.setText(title);
+          titleView.setTextSize(21);
+          titleView.setTextColor(0xff17334f);
+          titleView.setTypeface(null, android.graphics.Typeface.BOLD);
+          titleView.setPadding(0, dp(14), 0, dp(8));
+          card.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
+          
+          // 可滚动内容区域（自适应高度）
+          android.widget.TextView messageView = new android.widget.TextView(this);
+          messageView.setText(message);
+          messageView.setTextSize(13);
+          messageView.setTextColor(0xff4c647a);
+          messageView.setPadding(0, 0, 0, dp(18));
+          
+          card.addView(messageView, new LinearLayout.LayoutParams(-1, -2));
+          
+          // 按钮行
+          LinearLayout btnRow = new LinearLayout(this);
+          btnRow.setOrientation(LinearLayout.HORIZONTAL);
+          btnRow.setPadding(0, dp(8), 0, 0);
+          
+          if (cancelText != null && !cancelText.isEmpty()) {
+              android.widget.Button cancelBtn = createActionButton(cancelText, 0xff8fa1b8, 0xff6e7c93);
+              cancelBtn.setOnClickListener(v -> dialog.dismiss());
+              
+              LinearLayout.LayoutParams btnParams1 = new LinearLayout.LayoutParams(0, dp(44), 1f);
+              btnParams1.rightMargin = dp(8);
+              btnRow.addView(cancelBtn, btnParams1);
+          }
+          
+          android.widget.Button confirmBtn = createActionButton(confirmText, 0xff35A8C4, 0xff0E7D95);
+          confirmBtn.setOnClickListener(v -> {
+              dialog.dismiss();
+              if (onConfirm != null) onConfirm.run();
+          });
+          
+          int confirmWeight = (cancelText == null || cancelText.isEmpty()) ? -1 : 0;
+          int confirmHeight = dp(44);
+          float weight = (cancelText == null || cancelText.isEmpty()) ? 0f : 1f;
+          btnRow.addView(confirmBtn, new LinearLayout.LayoutParams(confirmWeight, confirmHeight, weight));
+          card.addView(btnRow, new LinearLayout.LayoutParams(-1, -2));
+          
+          dialog.setContentView(card, new android.view.ViewGroup.LayoutParams(
+              (int)(getResources().getDisplayMetrics().widthPixels * 0.88),
+              android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+          ));
+          dialog.getWindow().setDimAmount(0.58f);
+          dialog.show();
+      }
+      
+      private android.widget.Button createActionButton(String text, int startColor, int endColor) {
+          android.widget.Button btn = new android.widget.Button(this);
+          btn.setText(text);
+          btn.setTextSize(14);
+          btn.setTextColor(0xffffffff);
+          btn.setTypeface(null, android.graphics.Typeface.BOLD);
+          btn.setAllCaps(false);
+          
+          android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable(
+              android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+              new int[]{startColor, endColor}
+          );
+          bg.setCornerRadius(999 * getResources().getDisplayMetrics().density);
+          btn.setBackground(bg);
+          btn.setStateListAnimator(null);
+          btn.setElevation(0);
+          
+          return btn;
+      }
+
       private void extractPartitions(List<AdbManager.PartitionInfo> partitions) {
           // v3.30.13：提取镜像保存到 /storage/emulated/0/PDNA/image（不再用 DsuManager 文件夹）
           String outputDir = "/storage/emulated/0/PDNA/image";
@@ -5673,12 +5787,16 @@ public class MainActivity extends BaseActivity {
               partListBuilder.append("...(").append(t("共", "Total ")).append(partitions.size()).append(t("个", " partitions")).append(")");
           }
           
-          new android.app.AlertDialog.Builder(this)
-              .setTitle(t("确认提取", "Confirm Extract"))
-              .setMessage(t("将提取以下分区:\n\n", "Extract the following partitions:\n\n") + 
+          String extractMessage = t("将提取以下分区:\n\n", "Extract the following partitions:\n\n") + 
                          partListBuilder.toString() + 
-                         "\n" + t("保存到: ", "Save to: ") + outputDir)
-              .setPositiveButton(t("提取", "Extract"), (dialog, which) -> {
+                         "\n\n" + t("保存到: ", "Save to: ") + outputDir;
+          
+          showModernDialog(
+              t("确认提取", "Confirm Extract"),
+              extractMessage,
+              t("取消", "Cancel"),
+              t("提取", "Extract"),
+              () -> {
                   new Thread(() -> {
                       runOnUiThread(() -> {
                           if (partitionLogView != null) partitionLogView.setText("");
@@ -5690,6 +5808,7 @@ public class MainActivity extends BaseActivity {
                       int success = 0;
                       int failed = 0;
                       final int total = partitions.size();
+                      StringBuilder successList = new StringBuilder();
                       
                       for (int i = 0; i < partitions.size(); i++) {
                           AdbManager.PartitionInfo partition = partitions.get(i);
@@ -5710,6 +5829,7 @@ public class MainActivity extends BaseActivity {
                           
                           if (result.isSuccess()) {
                               success++;
+                              successList.append("• ").append(partition.name).append(" (").append(partition.getSizeMB()).append(" MB)\n");
                               partitionAppendLog(t("- 已提取", "- Extracted ") + partition.name + 
                                                t(" 分区到：", " partition to: ") + outputPath + "\n\n");
                           } else {
@@ -5720,23 +5840,30 @@ public class MainActivity extends BaseActivity {
                       
                       final int finalSuccess = success;
                       final int finalFailed = failed;
+                      final String finalSuccessList = successList.toString();
                       partitionAppendLog(t("=== 提取完成 ===\n", "=== Extract Complete ===\n"));
                       partitionAppendLog(t("成功: ", "Success: ") + finalSuccess + "\n");
                       partitionAppendLog(t("失败: ", "Failed: ") + finalFailed + "\n");
                       
                       runOnUiThread(() -> {
-                          new android.app.AlertDialog.Builder(this)
-                              .setTitle(t("提取完成", "Extract Complete"))
-                              .setMessage(t("成功: ", "Success: ") + finalSuccess + "\n" + 
-                                        t("失败: ", "Failed: ") + finalFailed + "\n" +
-                                        t("保存位置: ", "Location: ") + outputDir)
-                              .setPositiveButton(t("确定", "OK"), null)
-                              .show();
+                          String resultMessage = "";
+                          if (finalSuccess > 0) {
+                              resultMessage = t("已提取分区:\n", "Extracted partitions:\n") + finalSuccessList + "\n";
+                          }
+                          resultMessage += t("成功: ", "Success: ") + finalSuccess + "\n" + 
+                                         t("失败: ", "Failed: ") + finalFailed + "\n\n" +
+                                         t("保存位置:\n", "Location:\n") + outputDir;
+                          showModernDialog(
+                              t("提取完成", "Extract Complete"),
+                              resultMessage,
+                              "",
+                              t("确定", "OK"),
+                              null
+                          );
                       });
                   }).start();
-              })
-              .setNegativeButton(t("取消", "Cancel"), null)
-              .show();
+              }
+          );
       }
 
       // 刷入模式：保存待刷入的分区
@@ -5798,14 +5925,18 @@ public class MainActivity extends BaseActivity {
       private void flashSinglePartitionWithPath(String imagePath, String selectedName, AdbManager.PartitionInfo partition) {
           if (partition == null || imagePath == null || imagePath.isEmpty()) return;
           
-          new android.app.AlertDialog.Builder(this)
-              .setTitle(t("⚠️ 确认刷入", "⚠️ Confirm Flash"))
-              .setMessage(t("分区: ", "Partition: ") + partition.name + "\n" +
+          String flashMessage = t("分区: ", "Partition: ") + partition.name + "\n" +
                          t("大小: ", "Size: ") + partition.getSizeMB() + " MB\n" +
                          t("设备: ", "Device: ") + partition.blockDevice + "\n\n" +
                          t("镜像文件: ", "Image file: ") + selectedName + "\n" + imagePath + "\n\n" +
-                         t("⚠️ 刷入错误的镜像可能导致设备无法启动！", "⚠️ Flashing wrong image may brick your device!"))
-              .setPositiveButton(t("确认刷入", "Confirm"), (dialog, which) -> {
+                         t("⚠️ 刷入错误的镜像可能导致设备无法启动！", "⚠️ Flashing wrong image may brick your device!");
+          
+          showModernDialog(
+              t("确认刷入", "Confirm Flash"),
+              flashMessage,
+              t("取消", "Cancel"),
+              t("确认刷入", "Confirm"),
+              () -> {
                   new Thread(() -> {
                       runOnUiThread(() -> {
                           if (partitionLogView != null) partitionLogView.setText("");
@@ -5834,20 +5965,31 @@ public class MainActivity extends BaseActivity {
                           partitionAppendLog(t("=== 刷入完成 ===\n", "=== Flash Complete ===\n"));
                           
                           runOnUiThread(() -> {
-                              Toast.makeText(this, t("刷入成功", "Flash successful"), Toast.LENGTH_SHORT).show();
+                              showModernDialog(
+                                  t("刷入完成", "Flash Complete"),
+                                  t("已成功刷入 ", "Successfully flashed ") + partition.name + t(" 分区", " partition"),
+                                  "",
+                                  t("确定", "OK"),
+                                  null
+                              );
                           });
                       } else {
                           partitionAppendLog(t("\n❌ 刷入 ", "\n❌ Flash ") + partition.name + t(" 失败\n", " failed\n"));
                           partitionAppendLog(t("=== 刷入失败 ===\n", "=== Flash Failed ===\n"));
                           
                           runOnUiThread(() -> {
-                              Toast.makeText(this, t("刷入失败", "Flash failed"), Toast.LENGTH_SHORT).show();
+                              showModernDialog(
+                                  t("刷入失败", "Flash Failed"),
+                                  t("刷入 ", "Failed to flash ") + partition.name + t(" 分区失败", " partition"),
+                                  "",
+                                  t("确定", "OK"),
+                                  null
+                              );
                           });
                       }
                   }).start();
-              })
-              .setNegativeButton(t("取消", "Cancel"), null)
-              .show();
+              }
+          );
       }
 
       private void partitionAppendLog(String text) {

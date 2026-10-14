@@ -57,12 +57,109 @@ class OtgFlashHelper(
             isAllCaps = false
             setPadding(0, dp(9), 0, dp(9))
             typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
             stateListAnimator = null
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
                 intArrayOf(startColor, endColor)
             ).apply { cornerRadius = dp(13).toFloat() }
         }
+    }
+    
+    private fun showModernDialogWithInput(
+        title: String,
+        message: String,
+        inputHint: String,
+        defaultValue: String,
+        cancelText: String = "取消",
+        confirmText: String,
+        onConfirm: (String) -> Unit
+    ) {
+        val dialog = Dialog(activity)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        
+        val card = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xffeffaff.toInt(), 0xffdceafa.toInt(), 0xfff3e8ff.toInt())
+            ).apply {
+                cornerRadius = dp(26).toFloat()
+                setStroke(dp(1), 0xd8ffffff.toInt())
+            }
+        }
+        
+        // 顶部胶囊标签
+        val capsule = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = rounded(0x247d98bd.toInt(), 0x887d98bd.toInt(), 15)
+        }
+        capsule.addView(label("OTG ASSISTANT  ·  输入参数", 10, 0xff35617e.toInt(), true))
+        card.addView(capsule, LinearLayout.LayoutParams(-2, -2).apply { 
+            gravity = Gravity.START 
+        })
+        
+        // 标题
+        val titleView = label(title, 21, 0xff17334f.toInt(), true).apply {
+            setPadding(0, dp(14), 0, dp(8))
+        }
+        card.addView(titleView, LinearLayout.LayoutParams(-1, -2))
+        
+        // 提示文字
+        val messageView = label(message, 13, 0xff4c647a.toInt(), false).apply {
+            setPadding(0, 0, 0, dp(12))
+        }
+        card.addView(messageView, LinearLayout.LayoutParams(-1, -2))
+        
+        // 输入框
+        val inputField = EditText(activity).apply {
+            setText(defaultValue)
+            hint = inputHint
+            setSelectAllOnFocus(true)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            textSize = 13f
+            setTextColor(0xff17334f.toInt())
+            setHintTextColor(0xffadb8c9.toInt())
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xf2ffffff.toInt())
+                cornerRadius = dp(10).toFloat()
+                setStroke(dp(1), 0xc8d0dce8.toInt())
+            }
+        }
+        card.addView(inputField, LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(18)
+        })
+        
+        // 按钮行
+        val btnRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        val cancelBtn = actionButton(cancelText, 0xff8fa1b8.toInt(), 0xff6e7c93.toInt()).apply {
+            setOnClickListener { dialog.dismiss() }
+        }
+        val confirmBtn = actionButton(confirmText, 0xff35A8C4.toInt(), 0xff0E7D95.toInt()).apply {
+            setOnClickListener { 
+                val input = inputField.text.toString().trim()
+                if (input.isNotEmpty()) {
+                    dialog.dismiss()
+                    onConfirm(input)
+                }
+            }
+        }
+        btnRow.addView(cancelBtn, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(8) })
+        btnRow.addView(confirmBtn, LinearLayout.LayoutParams(0, dp(44), 1f))
+        card.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
+        
+        dialog.setContentView(card, ViewGroup.LayoutParams(
+            (activity.resources.displayMetrics.widthPixels * 0.88).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        dialog.window?.setDimAmount(0.58f)
+        dialog.show()
     }
     
     private fun showModernDialog(
@@ -105,11 +202,16 @@ class OtgFlashHelper(
         }
         card.addView(titleView, LinearLayout.LayoutParams(-1, -2))
         
-        // 描述
-        val messageView = label(message, 13, 0xff4c647a.toInt(), false).apply {
-            setPadding(0, 0, 0, dp(18))
+        // 可滚动内容区域（固定高度）
+        val messageView = label(message, 13, 0xff4c647a.toInt(), false)
+        val scrollView = android.widget.ScrollView(activity).apply {
+            addView(messageView)
         }
-        card.addView(messageView, LinearLayout.LayoutParams(-1, -2))
+        // 固定内容区最大高度为屏幕 40%
+        val maxContentHeight = (activity.resources.displayMetrics.heightPixels * 0.4).toInt()
+        card.addView(scrollView, LinearLayout.LayoutParams(-1, maxContentHeight).apply {
+            bottomMargin = dp(18)
+        })
         
         // 按钮行
         val btnRow = LinearLayout(activity).apply {
@@ -181,11 +283,104 @@ class OtgFlashHelper(
                     parsedPartitions = partitions
                     appendLog("解析到 ${partitions.size} 个分区，退出码 ${result.exitCode}\n")
                     setOperationActive(false)
+                    // 弹窗显示分区列表
+                    if (partitions.isNotEmpty()) {
+                        showPartitionListDialog(partitions)
+                    }
                 }
             } catch (e: Exception) {
                 postUi { appendLog("读取分区表失败：${e.message}\n"); setOperationActive(false) }
             }
         }.start()
+    }
+    
+    private fun showPartitionListDialog(partitions: List<OtgAssistantCore.PartitionInfo>) {
+        val dialog = Dialog(activity)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        
+        val panel = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xffeffaff.toInt(), 0xffdceafa.toInt(), 0xfff3e8ff.toInt())
+            ).apply {
+                cornerRadius = dp(26).toFloat()
+                setStroke(dp(1), 0xd8ffffff.toInt())
+            }
+        }
+        
+        // 顶部胶囊
+        val capsule = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = rounded(0x247d98bd.toInt(), 0x887d98bd.toInt(), 15)
+        }
+        capsule.addView(label("OTG ASSISTANT  ·  目标设备分区", 10, 0xff35617e.toInt(), true))
+        panel.addView(capsule, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.START })
+        
+        // 标题
+        val title = label("分区表 · 共 ${partitions.size} 个分区", 21, 0xff17334f.toInt(), true).apply {
+            setPadding(0, dp(14), 0, dp(8))
+        }
+        panel.addView(title, LinearLayout.LayoutParams(-1, -2))
+        
+        // 可滚动分区列表
+        val scroll = android.widget.ScrollView(activity)
+        val list = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        
+        for (partition in partitions) {
+            val item = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = rounded(0x18000000.toInt(), 0x00000000.toInt(), 12)
+            }
+            
+            val nameView = TextView(activity).apply {
+                text = partition.name
+                textSize = 14f
+                setTextColor(0xff17334f.toInt())
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            }
+            
+            val sizeView = TextView(activity).apply {
+                text = partition.size ?: "未知"
+                textSize = 13f
+                setTextColor(0xff35A8C4.toInt())
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                gravity = Gravity.END
+            }
+            
+            item.addView(nameView)
+            item.addView(sizeView)
+            list.addView(item, LinearLayout.LayoutParams(-1, -2).apply { 
+                bottomMargin = dp(6)
+            })
+        }
+        
+        scroll.addView(list)
+        // 固定高度 500dp，参考 DNA 分解 bin 弹窗
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, dp(500)).apply {
+            topMargin = dp(8)
+            bottomMargin = dp(18)
+        })
+        
+        // 关闭按钮
+        val closeBtn = actionButton("关闭", 0xff35A8C4.toInt(), 0xff0E7D95.toInt()).apply {
+            setOnClickListener { dialog.dismiss() }
+        }
+        panel.addView(closeBtn, LinearLayout.LayoutParams(-1, dp(44)))
+        
+        dialog.setContentView(panel, ViewGroup.LayoutParams(
+            (activity.resources.displayMetrics.widthPixels * 0.88).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        dialog.window?.setDimAmount(0.58f)
+        dialog.show()
     }
 
     /** Linux-Dsu OtgAssistantPage 的设备扫描逻辑；主界面只负责显示结果。 */
@@ -250,28 +445,25 @@ class OtgFlashHelper(
             return
         }
         val names = parsedPartitions.map { it.name }.toTypedArray()
-        AlertDialog.Builder(activity)
-            .setTitle("选择目标分区")
-            .setItems(names) { _, which ->
-                selectedPartition = names[which]
-                // v3.66.70：换用内置文件管理器
-                FileBrowserDialog.show(
-                    activity,
-                    "选择单分区镜像（.img / .bin）",
-                    arrayOf(".img", ".bin", ".dat"),
-                    null
-                ) { path -> 
-                    // 添加刷入前确认弹窗
-                    showModernDialog(
-                        title = "确认刷入分区？",
-                        message = "即将刷入：\n分区名：$selectedPartition\n镜像文件：${File(path).name}\n\n刷入后需重启生效，错误的镜像可能导致无法开机。",
-                        confirmText = "开始刷入"
-                    ) {
-                        prepareSingleImage(path)
-                    }
+        showPartitionSelectionDialog(names) { which ->
+            selectedPartition = names[which]
+            // v3.66.70：换用内置文件管理器
+            FileBrowserDialog.show(
+                activity,
+                "选择单分区镜像（.img / .bin）",
+                arrayOf(".img", ".bin", ".dat"),
+                null
+            ) { path -> 
+                // 添加刷入前确认弹窗
+                showModernDialog(
+                    title = "确认刷入分区？",
+                    message = "即将刷入：\n分区名：$selectedPartition\n镜像文件：${File(path).name}\n\n刷入后需重启生效，错误的镜像可能导致无法开机。",
+                    confirmText = "开始刷入"
+                ) {
+                    prepareSingleImage(path)
                 }
             }
-            .show()
+        }
     }
     
     fun prepareSingleImage(filePath: String) {
@@ -349,8 +541,7 @@ class OtgFlashHelper(
         }
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(24), dp(20), dp(24), dp(20))
+            setPadding(dp(20), dp(18), dp(20), dp(20))
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
                 intArrayOf(0xffeffaff.toInt(), 0xffdceafa.toInt(), 0xfff3e8ff.toInt())
@@ -358,15 +549,32 @@ class OtgFlashHelper(
                 cornerRadius = dp(26).toFloat()
                 setStroke(dp(1), 0xd8ffffff.toInt())
             }
+            
+            // 顶部胶囊
+            val capsule = LinearLayout(activity).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(10), dp(6), dp(10), dp(6))
+                background = rounded(0x247d98bd.toInt(), 0x887d98bd.toInt(), 15)
+            }
+            capsule.addView(label("OTG ASSISTANT  ·  解包任务", 10, 0xff35617e.toInt(), true))
+            addView(capsule, LinearLayout.LayoutParams(-2, -2).apply { 
+                gravity = Gravity.START
+                bottomMargin = dp(12)
+            })
+            
             addView(label("正在解包 OTA", 18, 0xff17334f.toInt(), true))
             addView(progressText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
             addView(hint, LinearLayout.LayoutParams(-1, -2))
         }
-        val dialog = AlertDialog.Builder(activity)
-            .setView(content)
-            .setCancelable(false)
-            .create()
+        val dialog = Dialog(activity)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(false)
+        dialog.setContentView(content)
         dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        dialog.window?.setLayout(
+            (activity.resources.displayMetrics.widthPixels * 0.80).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
         dialog.show()
     }
     
@@ -530,18 +738,15 @@ class OtgFlashHelper(
     fun prepareAdbPush(filePath: String) {
         val file = File(filePath)
         val name = file.name
-        val destination = EditText(activity).apply {
-            setText("/sdcard/Download/$name")
-            setSelectAllOnFocus(true)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+        showModernDialogWithInput(
+            title = "ADB 推送文件",
+            message = "文件: $name\n请输入设备上的目标路径",
+            inputHint = "目标路径",
+            defaultValue = "/sdcard/Download/$name",
+            confirmText = "推送"
+        ) { destination ->
+            adbPush(file, destination)
         }
-        AlertDialog.Builder(activity)
-            .setTitle("ADB 推送文件")
-            .setMessage("文件: $name\n请输入设备上的目标路径")
-            .setView(destination)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("推送") { _, _ -> adbPush(file, destination.text.toString().trim()) }
-            .show()
     }
     
     private fun adbPush(sourceFile: File, destination: String) {
@@ -618,7 +823,7 @@ class OtgFlashHelper(
             setPadding(dp(10), dp(6), dp(10), dp(6))
             background = rounded(0x247d98bd.toInt(), 0x887d98bd.toInt(), 15)
         }
-        capsule.addView(label("OTG ASSISTANT  ·  本机重启", 10, 0xff35617e.toInt(), true))
+        capsule.addView(label("OTG ASSISTANT  ·  目标设备重启", 10, 0xff35617e.toInt(), true))
         card.addView(capsule, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.START })
         
         val titleView = label("高级重启选项", 21, 0xff17334f.toInt(), true).apply {
@@ -749,5 +954,81 @@ class OtgFlashHelper(
     
     private fun dp(value: Int): Int {
         return (value * activity.resources.displayMetrics.density).toInt()
+    }
+    
+    private fun showPartitionSelectionDialog(items: Array<String>, onSelect: (Int) -> Unit) {
+        val dialog = Dialog(activity)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        
+        val card = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(16))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xffeffaff.toInt(), 0xffdceafa.toInt(), 0xfff3e8ff.toInt())
+            ).apply {
+                cornerRadius = dp(26).toFloat()
+                setStroke(dp(1), 0xd8ffffff.toInt())
+            }
+        }
+        
+        // 顶部胶囊
+        val capsule = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = rounded(0x247d98bd.toInt(), 0x887d98bd.toInt(), 15)
+        }
+        capsule.addView(label("OTG ASSISTANT  ·  目标设备分区", 10, 0xff35617e.toInt(), true))
+        card.addView(capsule, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.START })
+        
+        // 标题
+        val title = label("选择目标分区", 21, 0xff17334f.toInt(), true)
+        card.addView(title, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        
+        // 可滚动列表
+        val scroll = android.widget.ScrollView(activity)
+        val list = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        
+        items.forEachIndexed { index, name ->
+            val item = TextView(activity).apply {
+                text = name
+                textSize = 15f
+                setTextColor(0xff17334f.toInt())
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                background = rounded(0x18000000.toInt(), 0x00000000.toInt(), 16)
+                setOnClickListener {
+                    dialog.dismiss()
+                    onSelect(index)
+                }
+            }
+            list.addView(item, LinearLayout.LayoutParams(-1, -2).apply {
+                if (index > 0) topMargin = dp(8)
+            })
+        }
+        
+        scroll.addView(list)
+        card.addView(scroll, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(12)
+            bottomMargin = dp(16)
+        })
+        
+        // 取消按钮
+        val cancelBtn = actionButton("取消", 0xff8297a8.toInt(), 0xff687f93.toInt()).apply {
+            setOnClickListener { dialog.dismiss() }
+        }
+        card.addView(cancelBtn, LinearLayout.LayoutParams(-1, dp(46)))
+        
+        dialog.setContentView(card)
+        dialog.window?.setLayout(
+            (activity.resources.displayMetrics.widthPixels * 0.88).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        dialog.window?.setDimAmount(0.58f)
+        dialog.show()
     }
 }
