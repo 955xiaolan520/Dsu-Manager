@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -55,6 +56,15 @@ public final class ShortVideoImagesActivity extends BaseActivity {
     private final Runnable hideControls = () -> setControlsVisible(false);
     private boolean english;
     private int requestGeneration;
+    private float scaleFactor = 1.0f;
+    private float focusX = 0f;
+    private float focusY = 0f;
+    private float translateX = 0f;
+    private float translateY = 0f;
+    private float lastTouchX = 0f;
+    private float lastTouchY = 0f;
+    private boolean isDragging = false;
+    private ScaleGestureDetector scaleDetector;
 
     private String t(String zh, String en) { return english ? en : zh; }
     private int dp(float value) { return (int) (value * getResources().getDisplayMetrics().density + 0.5f); }
@@ -115,16 +125,57 @@ public final class ShortVideoImagesActivity extends BaseActivity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         imageView = new ImageView(this);
-        imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        imageView.setScaleType(ImageView.ScaleType.MATRIX);
         root.addView(imageView, new FrameLayout.LayoutParams(-1, -1));
 
-        GestureDetector gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            @Override public boolean onDown(MotionEvent event) { return true; }
-            @Override public boolean onSingleTapConfirmed(MotionEvent event) {
-                toggleControls();
+        scaleDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScale(ScaleGestureDetector detector) {
+                scaleFactor *= detector.getScaleFactor();
+                scaleFactor = Math.max(1.0f, Math.min(scaleFactor, 5.0f));
+                focusX = detector.getFocusX();
+                focusY = detector.getFocusY();
+                applyTransformation();
                 return true;
             }
+        });
+
+        GestureDetector gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onDown(MotionEvent event) { 
+                lastTouchX = event.getX();
+                lastTouchY = event.getY();
+                return true; 
+            }
+            @Override public boolean onSingleTapConfirmed(MotionEvent event) {
+                if (scaleFactor <= 1.0f) {
+                    toggleControls();
+                }
+                return true;
+            }
+            @Override public boolean onDoubleTap(MotionEvent event) {
+                if (scaleFactor > 1.0f) {
+                    scaleFactor = 1.0f;
+                    translateX = 0f;
+                    translateY = 0f;
+                } else {
+                    scaleFactor = 2.5f;
+                    focusX = event.getX();
+                    focusY = event.getY();
+                }
+                applyTransformation();
+                return true;
+            }
+            @Override public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
+                if (scaleFactor > 1.0f) {
+                    translateX -= distanceX;
+                    translateY -= distanceY;
+                    applyTransformation();
+                    return true;
+                }
+                return false;
+            }
             @Override public boolean onFling(MotionEvent first, MotionEvent last, float velocityX, float velocityY) {
+                if (scaleFactor > 1.0f) return false;
                 float dx = last.getX() - first.getX();
                 float dy = last.getY() - first.getY();
                 if (Math.abs(dx) > dp(55) && Math.abs(dx) > Math.abs(dy)) {
@@ -134,7 +185,15 @@ public final class ShortVideoImagesActivity extends BaseActivity {
                 return false;
             }
         });
-        imageView.setOnTouchListener((v, event) -> gestures.onTouchEvent(event));
+        
+        imageView.setOnTouchListener((v, event) -> {
+            scaleDetector.onTouchEvent(event);
+            boolean result = gestures.onTouchEvent(event);
+            if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                isDragging = false;
+            }
+            return result;
+        });
 
         statusView = text(t("正在加载图片…", "Loading image…"), 13, Color.WHITE, true);
         statusView.setGravity(Gravity.CENTER);
@@ -217,6 +276,7 @@ public final class ShortVideoImagesActivity extends BaseActivity {
         }
         index = Math.max(0, Math.min(selected, imageUrls.size() - 1));
         setControlsVisible(true);
+        resetImageTransform();
         final int generation = ++requestGeneration;
         String selectedUrl = imageUrls.get(index);
         counterView.setText((index + 1) + " / " + imageUrls.size());
@@ -273,6 +333,7 @@ public final class ShortVideoImagesActivity extends BaseActivity {
     private void showLocalImage(String path) {
         statusView.setVisibility(View.VISIBLE);
         statusView.setText(t("正在打开图片…", "Opening image…"));
+        resetImageTransform();
         imageWorker.execute(() -> {
             Bitmap bitmap = null;
             try {
@@ -299,6 +360,61 @@ public final class ShortVideoImagesActivity extends BaseActivity {
                 }
             });
         });
+    }
+
+    private void resetImageTransform() {
+        scaleFactor = 1.0f;
+        translateX = 0f;
+        translateY = 0f;
+        focusX = 0f;
+        focusY = 0f;
+        applyTransformation();
+    }
+
+    private void applyTransformation() {
+        if (imageView == null) return;
+        android.graphics.Matrix matrix = new android.graphics.Matrix();
+        
+        if (scaleFactor <= 1.0f) {
+            imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            imageView.setImageMatrix(matrix);
+            return;
+        }
+        
+        imageView.setScaleType(ImageView.ScaleType.MATRIX);
+        
+        float viewWidth = imageView.getWidth();
+        float viewHeight = imageView.getHeight();
+        
+        if (viewWidth == 0 || viewHeight == 0) return;
+        
+        android.graphics.drawable.Drawable drawable = imageView.getDrawable();
+        if (drawable == null) return;
+        
+        float imageWidth = drawable.getIntrinsicWidth();
+        float imageHeight = drawable.getIntrinsicHeight();
+        
+        float fitScale = Math.min(viewWidth / imageWidth, viewHeight / imageHeight);
+        float scaledImageWidth = imageWidth * fitScale;
+        float scaledImageHeight = imageHeight * fitScale;
+        
+        float dx = (viewWidth - scaledImageWidth) / 2f;
+        float dy = (viewHeight - scaledImageHeight) / 2f;
+        
+        matrix.postTranslate(dx, dy);
+        matrix.postScale(fitScale, fitScale, 0, 0);
+        
+        float px = focusX > 0 ? focusX : viewWidth / 2f;
+        float py = focusY > 0 ? focusY : viewHeight / 2f;
+        matrix.postScale(scaleFactor, scaleFactor, px, py);
+        
+        float maxTranslateX = (scaledImageWidth * scaleFactor - viewWidth) / 2f;
+        float maxTranslateY = (scaledImageHeight * scaleFactor - viewHeight) / 2f;
+        translateX = Math.max(-maxTranslateX, Math.min(translateX, maxTranslateX));
+        translateY = Math.max(-maxTranslateY, Math.min(translateY, maxTranslateY));
+        
+        matrix.postTranslate(translateX, translateY);
+        imageView.setImageMatrix(matrix);
     }
 
     private void enterImmersiveMode() {

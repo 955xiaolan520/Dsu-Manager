@@ -270,19 +270,68 @@ public class MainActivity extends BaseActivity {
             r.close();
             f.delete();
             final String crash = sb.toString();
+            
+            android.widget.LinearLayout container = new android.widget.LinearLayout(this);
+            container.setOrientation(android.widget.LinearLayout.VERTICAL);
+            android.graphics.drawable.GradientDrawable bgDrawable = new android.graphics.drawable.GradientDrawable();
+            bgDrawable.setColor(0xff1a2638);
+            bgDrawable.setCornerRadius(dp(24));
+            container.setBackground(bgDrawable);
+            container.setPadding(dp(20), dp(20), dp(20), dp(20));
+            
+            TextView titleView = new TextView(this);
+            titleView.setText("检测到上次崩溃");
+            titleView.setTextSize(18);
+            titleView.setTextColor(0xffff5252);
+            titleView.setTypeface(null, android.graphics.Typeface.BOLD);
+            titleView.setPadding(0, 0, 0, dp(16));
+            container.addView(titleView);
+            
             android.widget.ScrollView sv = new android.widget.ScrollView(this);
+            android.graphics.drawable.GradientDrawable scrollBg = new android.graphics.drawable.GradientDrawable();
+            scrollBg.setColor(0xff0f1419);
+            scrollBg.setCornerRadius(dp(12));
+            sv.setBackground(scrollBg);
+            
             TextView tv = new TextView(this);
-            tv.setPadding(dp(16), dp(48), dp(16), dp(16));
+            tv.setPadding(dp(16), dp(16), dp(16), dp(16));
             tv.setTextSize(11);
-            tv.setTextColor(0xffff3333);
+            tv.setTextColor(0xffff9999);
             tv.setTextIsSelectable(true);
             tv.setText("上次崩溃堆栈 (长按复制):\n\n" + crash);
             sv.addView(tv);
-            new AlertDialog.Builder(this)
-                    .setTitle("检测到上次崩溃")
-                    .setView(sv)
-                    .setPositiveButton("关闭", null)
-                    .show();
+            
+            android.widget.LinearLayout.LayoutParams scrollParams = new android.widget.LinearLayout.LayoutParams(-1, dp(400));
+            container.addView(sv, scrollParams);
+            
+            android.widget.LinearLayout buttonLayout = new android.widget.LinearLayout(this);
+            buttonLayout.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            buttonLayout.setGravity(android.view.Gravity.END);
+            buttonLayout.setPadding(0, dp(16), 0, 0);
+            
+            TextView closeButton = new TextView(this);
+            closeButton.setText("关闭");
+            closeButton.setTextSize(16);
+            closeButton.setTextColor(0xff51d6cb);
+            closeButton.setGravity(android.view.Gravity.CENTER);
+            closeButton.setPadding(dp(24), dp(12), dp(24), dp(12));
+            android.graphics.drawable.GradientDrawable btnBg = new android.graphics.drawable.GradientDrawable();
+            btnBg.setColor(0x4451d6cb);
+            btnBg.setCornerRadius(dp(999));
+            closeButton.setBackground(btnBg);
+            
+            buttonLayout.addView(closeButton);
+            container.addView(buttonLayout);
+            
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                    .setView(container)
+                    .create();
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            }
+            
+            closeButton.setOnClickListener(v -> dialog.dismiss());
+            dialog.show();
         } catch (Throwable ignored) { }
     }
 

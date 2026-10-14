@@ -14,7 +14,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.GestureDetector;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
@@ -59,7 +61,30 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
     private View videoTopControls;
     private View videoBottomControls;
     private View videoSourceLabel;
+    private TextView subtitleView;
+    private TextView subtitleButton;
+    private TextView qualityButton;
     private boolean videoControlsVisible = true;
+    private boolean subtitlesEnabled = false;
+    private String currentSubtitleLanguage = "简体中文";
+    private int currentSubtitleStyleIndex = 0;
+    private int currentQualityIndex = 0;
+    private final String[] subtitleLanguages = {"简体中文", "繁體中文", "English", "日本語", "한국어"};
+    private final String[] subtitleStyles = {"默认白色", "黄色描边", "红色粗体", "蓝色发光", "绿色阴影", "彩虹渐变"};
+    private final String[] qualityOptions = {"自动", "超清 1080P", "高清 720P", "标清 480P", "流畅 360P"};
+    private java.util.List<SubtitleItem> subtitleItems = new java.util.ArrayList<>();
+    private int currentSubtitleIndex = -1;
+    private final Runnable subtitleUpdater = new Runnable() {
+        @Override public void run() {
+            if (player != null && prepared && subtitlesEnabled) {
+                try {
+                    int position = player.getCurrentPosition();
+                    updateSubtitleForPosition(position);
+                } catch (IllegalStateException ignored) { }
+            }
+            handler.postDelayed(this, 200);
+        }
+    };
     private final Runnable hideVideoControls = () -> setVideoControlsVisible(false);
     private MediaPlayer player;
     private Surface playerSurface;
@@ -69,6 +94,27 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
     private boolean wasPlayingBeforePause;
     private boolean firstFrameSeen;
     private boolean coverWasRequested;
+    private boolean isLongPressing = false;
+    private long longPressStartTime = 0L;
+    private int seekDirection = 0;
+    private int longPressSeekPosition = 0;
+    private float playbackSpeed = 1.0f;
+    private int currentSpeedIndex = 2;
+    private final float[] speedOptions = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 4.0f, 8.0f, 16.0f};
+    private final String[] speedLabels = {"0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x", "4x", "8x", "16x"};
+    private final Runnable seekUpdater = new Runnable() {
+        @Override public void run() {
+            if (isLongPressing && player != null && prepared && seekDirection != 0) {
+                try {
+                    longPressSeekPosition += (seekDirection * 2000);
+                    longPressSeekPosition = Math.max(0, Math.min(longPressSeekPosition, player.getDuration()));
+                    player.seekTo(longPressSeekPosition);
+                    updateSeekStatusText();
+                } catch (IllegalStateException ignored) { }
+                handler.postDelayed(this, 500);
+            }
+        }
+    };
     private int videoWidth;
     private int videoHeight;
     private int resumePosition;
@@ -156,7 +202,74 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
 
         textureView = new TextureView(this);
         textureView.setOpaque(true);
-        textureView.setOnClickListener(v -> toggleVideoControls());
+        
+        GestureDetector videoGestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onDown(MotionEvent event) { return true; }
+            @Override public boolean onSingleTapConfirmed(MotionEvent event) {
+                toggleVideoControls();
+                return true;
+            }
+            @Override public boolean onDoubleTap(MotionEvent event) {
+                togglePlayback();
+                return true;
+            }
+        });
+        
+        textureView.setOnTouchListener((v, event) -> {
+            boolean gestureHandled = videoGestures.onTouchEvent(event);
+            
+            int action = event.getAction();
+            float x = event.getX();
+            float viewWidth = v.getWidth();
+            
+            if (action == MotionEvent.ACTION_DOWN) {
+                if (x < viewWidth * 0.3f) {
+                    isLongPressing = true;
+                    seekDirection = -1;
+                    longPressStartTime = System.currentTimeMillis();
+                    try {
+                        longPressSeekPosition = player.getCurrentPosition();
+                    } catch (Exception e) {
+                        longPressSeekPosition = 0;
+                    }
+                    handler.postDelayed(() -> {
+                        if (isLongPressing && System.currentTimeMillis() - longPressStartTime >= 500) {
+                            handler.post(seekUpdater);
+                            statusView.setVisibility(View.VISIBLE);
+                            statusView.setText(t("快速后退中...", "Rewinding..."));
+                        }
+                    }, 500);
+                } else if (x > viewWidth * 0.7f) {
+                    isLongPressing = true;
+                    seekDirection = 1;
+                    longPressStartTime = System.currentTimeMillis();
+                    try {
+                        longPressSeekPosition = player.getCurrentPosition();
+                    } catch (Exception e) {
+                        longPressSeekPosition = 0;
+                    }
+                    handler.postDelayed(() -> {
+                        if (isLongPressing && System.currentTimeMillis() - longPressStartTime >= 500) {
+                            handler.post(seekUpdater);
+                            statusView.setVisibility(View.VISIBLE);
+                            statusView.setText(t("快速前进中...", "Fast forwarding..."));
+                        }
+                    }, 500);
+                }
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                if (isLongPressing) {
+                    isLongPressing = false;
+                    seekDirection = 0;
+                    handler.removeCallbacks(seekUpdater);
+                    if (System.currentTimeMillis() - longPressStartTime >= 500) {
+                        statusView.setVisibility(View.GONE);
+                    }
+                }
+            }
+            
+            return gestureHandled;
+        });
+        
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
                 preparePlayer(surface);
@@ -235,13 +348,15 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
 
         rotateButton = pill("横屏", 72);
         top.addView(rotateButton);
-        LinearLayout.LayoutParams coverBtnLp = new LinearLayout.LayoutParams(dp(60), dp(44));
-        coverBtnLp.leftMargin = dp(7);
-        TextView coverButton = pill(t("封面", "Cover"), -1);
-        coverButton.setLayoutParams(coverBtnLp);
-        top.addView(coverButton);
         rotateButton.setOnClickListener(v -> { toggleOrientation(); setVideoControlsVisible(true); });
-        coverButton.setOnClickListener(v -> showCover());
+        
+        LinearLayout.LayoutParams settingsBtnLp = new LinearLayout.LayoutParams(dp(60), dp(44));
+        settingsBtnLp.leftMargin = dp(7);
+        TextView settingsButton = pill(t("设置", "Set"), -1);
+        settingsButton.setLayoutParams(settingsBtnLp);
+        top.addView(settingsButton);
+        settingsButton.setOnClickListener(v -> showSettingsMenu());
+        
         updateRotateButton();
 
         LinearLayout controls = new LinearLayout(this);
@@ -254,10 +369,20 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
         videoBottomControls = controls;
         root.addView(controls, controlsLp);
 
+        TextView rewindButton = text("↶15", 11, Color.WHITE, true);
+        rewindButton.setGravity(Gravity.CENTER);
+        controls.addView(rewindButton, new LinearLayout.LayoutParams(dp(38), -1));
+        rewindButton.setOnClickListener(v -> seekRelative(-15000));
+
         playButton = text("▶", 17, Color.WHITE, true);
         playButton.setGravity(Gravity.CENTER);
         controls.addView(playButton, new LinearLayout.LayoutParams(dp(44), -1));
         playButton.setOnClickListener(v -> togglePlayback());
+
+        TextView forwardButton = text("15↷", 11, Color.WHITE, true);
+        forwardButton.setGravity(Gravity.CENTER);
+        controls.addView(forwardButton, new LinearLayout.LayoutParams(dp(38), -1));
+        forwardButton.setOnClickListener(v -> seekRelative(15000));
 
         positionView = text("00:00", 10, Color.WHITE, false);
         positionView.setGravity(Gravity.CENTER);
@@ -290,6 +415,16 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
         sourceLp.bottomMargin = dp(82);
         videoSourceLabel = source;
         root.addView(source, sourceLp);
+
+        subtitleView = text("", 14, Color.WHITE, true);
+        subtitleView.setGravity(Gravity.CENTER);
+        subtitleView.setPadding(dp(16), dp(8), dp(16), dp(8));
+        subtitleView.setBackground(rounded(0xcc000000, 0, 8));
+        subtitleView.setShadowLayer(4f, 0f, 2f, 0xff000000);
+        subtitleView.setVisibility(View.GONE);
+        FrameLayout.LayoutParams subtitleLp = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        subtitleLp.bottomMargin = dp(90);
+        root.addView(subtitleView, subtitleLp);
 
         ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
             androidx.core.graphics.Insets safe = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.systemBars());
@@ -353,6 +488,11 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
                 if (videoWidth <= 0 || videoHeight <= 0) {
                     videoWidth = mp.getVideoWidth();
                     videoHeight = mp.getVideoHeight();
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    try {
+                        mp.setPlaybackParams(mp.getPlaybackParams().setSpeed(playbackSpeed));
+                    } catch (Exception ignored) { }
                 }
                 if (videoWidth > 0 && videoHeight > 0) {
                     applyVideoTransform();
@@ -536,6 +676,95 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
         rotateButton.setText(landscape ? t("竖屏", "Portrait") : t("横屏", "Landscape"));
     }
 
+    private void updateSubtitleButton() {
+        if (subtitleButton == null) return;
+        subtitleButton.setAlpha(subtitlesEnabled ? 1.0f : 0.5f);
+    }
+
+    private void toggleSubtitles() {
+        subtitlesEnabled = !subtitlesEnabled;
+        
+        if (subtitlesEnabled) {
+            statusView.setVisibility(View.VISIBLE);
+            statusView.setText(t("AI字幕功能已启用\n注意：当前为演示模式，需要语音识别API才能显示真实字幕", "AI subtitles enabled\nNote: Demo mode, requires speech recognition API for real subtitles"));
+            handler.postDelayed(() -> statusView.setVisibility(View.GONE), 3000);
+            
+            if (subtitleView != null) {
+                subtitleView.setVisibility(View.GONE);
+            }
+        } else {
+            handler.removeCallbacks(subtitleUpdater);
+            if (subtitleView != null) {
+                subtitleView.animate().alpha(0f).setDuration(300).withEndAction(() -> {
+                    if (subtitleView != null) subtitleView.setVisibility(View.GONE);
+                }).start();
+            }
+            statusView.setVisibility(View.VISIBLE);
+            statusView.setText(t("AI字幕已关闭", "AI subtitles disabled"));
+            handler.postDelayed(() -> statusView.setVisibility(View.GONE), 1500);
+        }
+        setVideoControlsVisible(true);
+    }
+
+    private void showSubtitleWithEffect(String text) {
+        if (subtitleView == null) return;
+        subtitleView.setText(text);
+        subtitleView.setAlpha(0f);
+        subtitleView.setScaleX(0.8f);
+        subtitleView.setScaleY(0.8f);
+        subtitleView.setVisibility(View.VISIBLE);
+        subtitleView.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(300)
+            .start();
+    }
+
+    private void cyclePlaybackSpeed(TextView speedButton) {
+        currentSpeedIndex = (currentSpeedIndex + 1) % speedOptions.length;
+        playbackSpeed = speedOptions[currentSpeedIndex];
+        if (player != null && prepared) {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    player.setPlaybackParams(player.getPlaybackParams().setSpeed(playbackSpeed));
+                }
+            } catch (Exception ignored) { }
+        }
+        speedButton.setText(speedLabels[currentSpeedIndex]);
+        statusView.setVisibility(View.VISIBLE);
+        statusView.setText(t("播放速度: " + speedLabels[currentSpeedIndex], "Speed: " + speedLabels[currentSpeedIndex]));
+        handler.postDelayed(() -> statusView.setVisibility(View.GONE), 1500);
+        setVideoControlsVisible(true);
+    }
+
+    private void updateSeekStatusText() {
+        if (player == null || !prepared) return;
+        try {
+            String timeText = formatTime(longPressSeekPosition);
+            String directionText = seekDirection > 0 
+                ? t("快进至 ", "Forward to ") 
+                : t("后退至 ", "Rewind to ");
+            statusView.setText(directionText + timeText);
+        } catch (Exception ignored) { }
+    }
+
+    private void seekRelative(int milliseconds) {
+        if (player == null || !prepared) return;
+        try {
+            int current = player.getCurrentPosition();
+            int duration = player.getDuration();
+            int newPosition = Math.max(0, Math.min(current + milliseconds, duration));
+            player.seekTo(newPosition);
+            setVideoControlsVisible(true);
+            statusView.setVisibility(View.VISIBLE);
+            statusView.setText(milliseconds > 0 
+                ? t("快进 " + (milliseconds / 1000) + " 秒", "Forward " + (milliseconds / 1000) + "s")
+                : t("后退 " + (-milliseconds / 1000) + " 秒", "Rewind " + (-milliseconds / 1000) + "s"));
+            handler.postDelayed(() -> statusView.setVisibility(View.GONE), 1000);
+        } catch (IllegalStateException ignored) { }
+    }
+
     private void enterImmersiveMode() {
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
@@ -601,5 +830,298 @@ public final class ShortVideoPreviewActivity extends BaseActivity {
         imageExecutor.shutdownNow();
         releasePlayer();
         super.onDestroy();
+    }
+
+    private void showSettingsMenu() {
+        String[] options = {
+            t("播放倍速", "Playback Speed"),
+            t("显示封面", "Show Cover")
+        };
+        
+        showRoundedDialog(t("播放设置", "Player Settings"), options, -1, (dialog, which) -> {
+            switch (which) {
+                case 0: showSpeedSelector(); break;
+                case 1: showCover(); break;
+            }
+
+        });
+        setVideoControlsVisible(true);
+    }
+
+    private void showSpeedSelector() {
+        showRoundedDialog(t("选择播放速度", "Select Playback Speed"), speedLabels, currentSpeedIndex, (dialog, which) -> {
+            android.util.Log.d("ShortVideo", "Speed selected: " + which);
+            currentSpeedIndex = which;
+            playbackSpeed = speedOptions[which];
+            if (player != null && prepared) {
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        player.setPlaybackParams(player.getPlaybackParams().setSpeed(playbackSpeed));
+                    }
+                } catch (Exception ignored) { }
+            }
+            statusView.setVisibility(View.VISIBLE);
+            statusView.setText(t("播放速度: " + speedLabels[which], "Speed: " + speedLabels[which]));
+            handler.postDelayed(() -> statusView.setVisibility(View.GONE), 1500);
+
+        });
+        setVideoControlsVisible(true);
+    }
+
+    private void showSubtitleSettings() {
+        String[] options = {
+            t("字幕开关", "Toggle Subtitles"),
+            t("字幕语言", "Subtitle Language"),
+            t("字幕特效", "Subtitle Style")
+        };
+        
+        showRoundedDialog(t("字幕设置", "Subtitle Settings"), options, -1, (dialog, which) -> {
+            switch (which) {
+                case 0: toggleSubtitles(); break;
+                case 1: showSubtitleLanguageSelector(); break;
+                case 2: showSubtitleStyleSelector(); break;
+            }
+
+        });
+        setVideoControlsVisible(true);
+    }
+
+    private void showSubtitleLanguageSelector() {
+        int currentIndex = java.util.Arrays.asList(subtitleLanguages).indexOf(currentSubtitleLanguage);
+        showRoundedDialog(t("选择字幕语言", "Select Subtitle Language"), subtitleLanguages, currentIndex, (dialog, which) -> {
+            currentSubtitleLanguage = subtitleLanguages[which];
+            statusView.setVisibility(View.VISIBLE);
+            statusView.setText(t("字幕语言: ", "Subtitle Language: ") + subtitleLanguages[which]);
+            handler.postDelayed(() -> statusView.setVisibility(View.GONE), 1500);
+            if (subtitlesEnabled) {
+                showSubtitleWithEffect(t("已切换到 ", "Switched to ") + subtitleLanguages[which]);
+            }
+
+        });
+        setVideoControlsVisible(true);
+    }
+
+    private void showSubtitleStyleSelector() {
+        showRoundedDialog(t("选择字幕特效", "Select Subtitle Style"), subtitleStyles, currentSubtitleStyleIndex, (dialog, which) -> {
+            currentSubtitleStyleIndex = which;
+            applySubtitleStyle(which);
+            statusView.setVisibility(View.VISIBLE);
+            statusView.setText(t("字幕特效: ", "Subtitle Style: ") + subtitleStyles[which]);
+            handler.postDelayed(() -> statusView.setVisibility(View.GONE), 1500);
+            if (subtitlesEnabled) {
+                showSubtitleWithEffect(t("特效已应用: ", "Style applied: ") + subtitleStyles[which]);
+            }
+
+        });
+        setVideoControlsVisible(true);
+    }
+    
+    private void showRoundedDialog(String title, String[] items, int checkedItem, android.content.DialogInterface.OnClickListener listener) {
+        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
+        
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setBackground(rounded(0xff1a2638, 0, 24));
+        container.setPadding(dp(20), dp(20), dp(20), dp(20));
+        
+        TextView titleView = text(title, 16, 0xffffffff, true);
+        titleView.setPadding(0, 0, 0, dp(16));
+        container.addView(titleView);
+        
+        builder.setView(container);
+        android.app.AlertDialog dialog = builder.create();
+        
+        final int[] currentSelection = {checkedItem};
+        java.util.List<LinearLayout> itemLayouts = new java.util.ArrayList<>();
+        java.util.List<TextView> radioButtons = new java.util.ArrayList<>();
+        
+        for (int i = 0; i < items.length; i++) {
+            final int index = i;
+            LinearLayout itemLayout = new LinearLayout(this);
+            itemLayout.setOrientation(LinearLayout.HORIZONTAL);
+            itemLayout.setGravity(Gravity.CENTER_VERTICAL);
+            itemLayout.setPadding(dp(12), dp(14), dp(12), dp(14));
+            itemLayout.setBackground(rounded(checkedItem == i ? 0x4451d6cb : 0x33ffffff, 0, 12));
+            LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(-1, -2);
+            itemLp.topMargin = dp(8);
+            
+            TextView radio = null;
+            if (checkedItem >= 0) {
+                radio = text(checkedItem == i ? "●" : "○", 14, 0xff51d6cb, false);
+                radio.setPadding(0, 0, dp(12), 0);
+                itemLayout.addView(radio, new LinearLayout.LayoutParams(-2, -2));
+                radioButtons.add(radio);
+            }
+            
+            TextView itemText = text(items[i], 14, 0xffffffff, false);
+            itemLayout.addView(itemText, new LinearLayout.LayoutParams(0, -2, 1f));
+            
+            itemLayouts.add(itemLayout);
+            final TextView finalRadio = radio;
+            
+            itemLayout.setOnClickListener(v -> {
+                currentSelection[0] = index;
+                
+                for (int j = 0; j < itemLayouts.size(); j++) {
+                    LinearLayout layout = itemLayouts.get(j);
+                    layout.setBackground(rounded(j == index ? 0x4451d6cb : 0x33ffffff, 0, 12));
+                    if (checkedItem >= 0 && j < radioButtons.size()) {
+                        radioButtons.get(j).setText(j == index ? "●" : "○");
+                    }
+                }
+                
+                if (listener != null) {
+                    listener.onClick(dialog, index);
+                }
+                
+                handler.postDelayed(() -> {
+                    if (dialog != null && dialog.isShowing()) {
+                        dialog.dismiss();
+                    }
+                }, 200);
+            });
+            
+            container.addView(itemLayout, itemLp);
+        }
+        
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        }
+        dialog.show();
+    }
+
+    private void applySubtitleStyle(int styleIndex) {
+        if (subtitleView == null) return;
+        
+        switch (styleIndex) {
+            case 0: // 默认白色
+                subtitleView.setTextColor(Color.WHITE);
+                subtitleView.setTextSize(14);
+                subtitleView.setShadowLayer(4f, 0f, 2f, 0xff000000);
+                subtitleView.setBackground(rounded(0xcc000000, 0, 8));
+                break;
+            case 1: // 黄色描边
+                subtitleView.setTextColor(0xffffeb3b);
+                subtitleView.setTextSize(16);
+                subtitleView.setShadowLayer(6f, 0f, 0f, 0xff000000);
+                subtitleView.setBackground(rounded(0xaa000000, 0xffffeb3b, 8));
+                break;
+            case 2: // 红色粗体
+                subtitleView.setTextColor(0xffff5252);
+                subtitleView.setTextSize(17);
+                subtitleView.setShadowLayer(8f, 2f, 2f, 0xff000000);
+                subtitleView.setBackground(rounded(0xbb000000, 0, 10));
+                break;
+            case 3: // 蓝色发光
+                subtitleView.setTextColor(0xff64b5f6);
+                subtitleView.setTextSize(15);
+                subtitleView.setShadowLayer(12f, 0f, 0f, 0xff2196f3);
+                subtitleView.setBackground(rounded(0xaa001a33, 0xff64b5f6, 12));
+                break;
+            case 4: // 绿色阴影
+                subtitleView.setTextColor(0xff66bb6a);
+                subtitleView.setTextSize(16);
+                subtitleView.setShadowLayer(10f, 3f, 3f, 0xff1b5e20);
+                subtitleView.setBackground(rounded(0xaa000000, 0xff66bb6a, 10));
+                break;
+            case 5: // 彩虹渐变
+                subtitleView.setTextColor(Color.WHITE);
+                subtitleView.setTextSize(18);
+                subtitleView.setShadowLayer(8f, 0f, 0f, 0xffff00ff);
+                android.graphics.drawable.GradientDrawable gradient = new android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                    new int[]{0xffff0080, 0xff8000ff, 0xff00ffff}
+                );
+                gradient.setCornerRadius(dp(12));
+                subtitleView.setBackground(gradient);
+                break;
+        }
+    }
+
+    private void showQualitySelector() {
+        showRoundedDialog(t("选择画质", "Select Quality"), qualityOptions, currentQualityIndex, (dialog, which) -> {
+            android.util.Log.d("ShortVideo", "Quality selected: " + which);
+            currentQualityIndex = which;
+            updateQualityButton();
+            statusView.setVisibility(View.VISIBLE);
+            statusView.setText(t("画质: ", "Quality: ") + qualityOptions[which]);
+            handler.postDelayed(() -> statusView.setVisibility(View.GONE), 1500);
+
+        });
+        setVideoControlsVisible(true);
+    }
+    
+    private void updateQualityButton() {
+        if (qualityButton == null) return;
+        String[] shortLabels = {t("自动", "Auto"), "1080P", "720P", "480P", "360P"};
+        qualityButton.setText(shortLabels[currentQualityIndex]);
+    }
+    
+    private void generateSimulatedSubtitles() {
+        subtitleItems.clear();
+        String[][] sampleSubtitles = {
+            {"0", "3000", "欢迎观看短视频", "Welcome to the video"},
+            {"3000", "6000", "这是AI生成的字幕", "This is AI-generated subtitle"},
+            {"6000", "9000", "根据视频时间轴显示", "Displayed based on video timeline"},
+            {"9000", "12000", "支持多种语言切换", "Supports multiple languages"},
+            {"12000", "15000", "可以选择不同特效", "You can choose different effects"},
+            {"15000", "18000", "字幕会自动同步", "Subtitles sync automatically"},
+            {"18000", "21000", "享受您的观看体验", "Enjoy your viewing experience"},
+            {"21000", "24000", "感谢使用本播放器", "Thank you for using this player"},
+            {"24000", "27000", "更多功能敬请期待", "More features coming soon"},
+            {"27000", "30000", "祝您观影愉快", "Happy watching"}
+        };
+        
+        for (String[] sub : sampleSubtitles) {
+            subtitleItems.add(new SubtitleItem(
+                Integer.parseInt(sub[0]),
+                Integer.parseInt(sub[1]),
+                sub[2],
+                sub[3]
+            ));
+        }
+    }
+    
+    private void updateSubtitleForPosition(int position) {
+        if (subtitleItems.isEmpty()) return;
+        
+        SubtitleItem matchedItem = null;
+        for (int i = 0; i < subtitleItems.size(); i++) {
+            SubtitleItem item = subtitleItems.get(i);
+            if (position >= item.startTime && position < item.endTime) {
+                matchedItem = item;
+                currentSubtitleIndex = i;
+                break;
+            }
+        }
+        
+        if (matchedItem != null) {
+            String text = currentSubtitleLanguage.contains("中文") || currentSubtitleLanguage.equals("简体中文")
+                ? matchedItem.textChinese
+                : matchedItem.textEnglish;
+            if (subtitleView != null && !text.equals(subtitleView.getText().toString())) {
+                showSubtitleWithEffect(text);
+            }
+        } else {
+            if (subtitleView != null && subtitleView.getVisibility() == View.VISIBLE) {
+                subtitleView.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                    if (subtitleView != null) subtitleView.setVisibility(View.GONE);
+                }).start();
+            }
+        }
+    }
+    
+    private static class SubtitleItem {
+        int startTime;
+        int endTime;
+        String textChinese;
+        String textEnglish;
+        
+        SubtitleItem(int start, int end, String cn, String en) {
+            this.startTime = start;
+            this.endTime = end;
+            this.textChinese = cn;
+            this.textEnglish = en;
+        }
     }
 }
