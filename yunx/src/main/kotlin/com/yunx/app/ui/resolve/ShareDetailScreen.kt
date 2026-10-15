@@ -198,7 +198,8 @@ fun ShareDetailScreen(
 
     /** 百度分享下载前检查：>300MB 且未忽略时弹提示，确认后执行 */
     fun checkBaiduLimit(file: ShareFile, proceed: () -> Unit) {
-        if (viewModel.isBaidu && !baiduLimitDismissed && file.fsize > BAIDU_LIMIT_BYTES) {
+        // 免登录公益解析不走百度会员限速链路，不显示“非会员 >300MB”误导弹窗。
+        if (viewModel.isBaidu && !viewModel.isGuest && !baiduLimitDismissed && file.fsize > BAIDU_LIMIT_BYTES) {
             pendingBaiduAction = proceed
             showBaiduLimitDialog = true
         } else {
@@ -449,7 +450,7 @@ fun ShareDetailScreen(
                         MultiSelectAction("下载", Icons.Outlined.Download, MaterialTheme.colorScheme.primary) {
                             // 百度批量下载：选中项含 >300MB 文件时先弹限速提示
                             val hasBig = viewModel.selected.any { it.fsize > BAIDU_LIMIT_BYTES }
-                            if (viewModel.isBaidu && !baiduLimitDismissed && hasBig) {
+                            if (viewModel.isBaidu && !viewModel.isGuest && !baiduLimitDismissed && hasBig) {
                                 pendingBaiduAction = { viewModel.batchDownload() }
                                 showBaiduLimitDialog = true
                             } else {
@@ -629,6 +630,8 @@ private fun GuestBrowseNotice(platform: SharePlatform) {
                         "未登录浏览：可直接下载约 50MB 以内的小文件；更大的文件和转存需先到「网盘」页登录"
                     SharePlatform.UC ->
                         "未登录浏览：可直接下载（不限大小）；转存需先到「网盘」页登录"
+                    SharePlatform.BAIDU ->
+                        "百度免登录解析：可直接查看并下载分享文件；转存需先登录百度网盘"
                     else ->
                         "未登录浏览：可查看文件列表，下载/转存需先到「网盘」页登录"
                 },

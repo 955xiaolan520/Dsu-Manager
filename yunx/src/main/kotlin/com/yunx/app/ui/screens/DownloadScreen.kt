@@ -135,6 +135,7 @@ fun DownloadScreen(
     val tasks by viewModel.tasks.collectAsState()
     val stats by viewModel.stats.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
+    var showBtDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<DownloadTaskEntity?>(null) }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
     // 「调试信息」页打开的任务 id（null = 不显示）。本页在「下载」Tab 内全屏展开，与 ResolveScreen 内嵌
@@ -235,7 +236,27 @@ fun DownloadScreen(
             }
         }
 
-        // 添加任务 FAB（手动粘贴直链 / 磁力链接的唯一入口）
+        // 明确的 BT 入口：种子/磁力不再藏在普通“+”按钮里。
+        Button(
+            onClick = {
+                if (needLegacyPermission && !hasPermission) {
+                    permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                } else {
+                    showBtDialog = true
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 20.dp, bottom = 24.dp),
+            shape = RoundedCornerShape(18.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("种子 / 磁力下载", maxLines = 1)
+        }
+
+        // 普通添加任务 FAB（HTTP(S) 直链）
         // ★ 曾经被 c829083「添加关于页」误删（连同 permissionLauncher/hasPermission 变成死代码、
         //   空状态文案却还在说「点击右下角按钮」）——恢复时注意别再连着删掉。
         FloatingActionButton(
@@ -259,6 +280,16 @@ fun DownloadScreen(
             onDismiss = { showAddDialog = false },
             onConfirm = { url, name ->
                 showAddDialog = false
+                viewModel.enqueue(url, name)
+            }
+        )
+    }
+    if (showBtDialog) {
+        AddDownloadDialog(
+            btOnly = true,
+            onDismiss = { showBtDialog = false },
+            onConfirm = { url, name ->
+                showBtDialog = false
                 viewModel.enqueue(url, name)
             }
         )
@@ -1228,7 +1259,8 @@ private fun installApk(context: android.content.Context, savePath: String, fileN
 @Composable
 private fun AddDownloadDialog(
     onDismiss: () -> Unit,
-    onConfirm: (url: String, name: String) -> Unit
+    onConfirm: (url: String, name: String) -> Unit,
+    btOnly: Boolean = false
 ) {
     var url by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
@@ -1236,7 +1268,7 @@ private fun AddDownloadDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加下载任务") },
+        title = { Text(if (btOnly) "种子 / 磁力下载" else "添加下载任务") },
         text = {
             // 横屏/小屏时内容超高可滚动，避免按钮被挤出屏幕
             Column(
@@ -1265,7 +1297,9 @@ private fun AddDownloadDialog(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("文件直链、磁力链接或 .torrent 地址") },
+                    placeholder = {
+                        Text(if (btOnly) "粘贴 magnet 链接或 .torrent 地址" else "文件直链、磁力链接或 .torrent 地址")
+                    },
                     singleLine = true
                 )
                 if (isMagnet) {
@@ -1289,8 +1323,8 @@ private fun AddDownloadDialog(
             Button(
                 onClick = { onConfirm(url.trim(), name.trim()) },
                 // 磁力允许留空文件名：真正的名字要等引擎拿到元数据（DownloadManager 会自己兜底）
-                enabled = url.isNotBlank() && (name.isNotBlank() || isMagnet)
-            ) { Text("开始下载") }
+                enabled = url.isNotBlank() && (!btOnly || isMagnet) && (name.isNotBlank() || isMagnet)
+            ) { Text(if (btOnly) "开始 BT 下载" else "开始下载") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
