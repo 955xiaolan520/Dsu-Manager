@@ -19,6 +19,7 @@
 package com.yunx.app.data.download
 
 import java.net.URLDecoder
+import java.net.URLEncoder
 
 /**
  * 磁力链接（`magnet:?xt=urn:btih:...`）的识别与信息提取。
@@ -42,13 +43,38 @@ object MagnetLink {
     /** `dn` 里的换行/制表符：显示名要进通知栏与列表，先压成空格 */
     private val BLANK_CHARS = Regex("[\\r\\n\\t]+")
 
+    /** 从剪贴板粘贴磁力时常见的换行/空格，磁力 URI 本身不应包含这些空白 */
+    private val URI_WHITESPACE = Regex("\\s+")
+
     /** 显示名上限：`dn` 可能很长（有的站点把简介都塞进去），截断后 UI 与通知栏才不会被撑爆 */
     private const val MAX_NAME_CHARS = 80
+
+    /** 无 Tracker 的磁力在部分移动网络上很难只靠 DHT 找到元数据，补充标准公开 Tracker。 */
+    private val FALLBACK_TRACKERS = listOf(
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+        "udp://exodus.desync.com:6969/announce",
+        "udp://tracker.moeking.me:6969/announce"
+    )
 
     /** 是不是磁力链接（大小写不敏感，允许前后空白；只有 `magnet:` 光杆不算） */
     fun isMagnet(url: String): Boolean {
         val text = url.trim()
         return text.length > SCHEME.length && text.regionMatches(0, SCHEME, 0, SCHEME.length, ignoreCase = true)
+    }
+
+    /** 去掉剪贴板换行和不可见空白；已编码的 %20 不会被破坏。 */
+    fun normalize(url: String): String = url.trim().replace(URI_WHITESPACE, "")
+
+    /** 交给 Gopeed 的最终磁力链接：规范化，并在原链接缺少 tr 时补 Tracker。 */
+    fun forEngine(url: String): String {
+        val normalized = normalize(url)
+        if (!isMagnet(normalized) || normalized.contains("tr=", ignoreCase = true)) return normalized
+        val separator = if (normalized.contains('?')) "&" else "?"
+        return normalized + FALLBACK_TRACKERS.joinToString(separator = separator, prefix = separator) {
+            "tr=" + URLEncoder.encode(it, "UTF-8").replace("+", "%20")
+        }
     }
 
     /**
@@ -58,7 +84,7 @@ object MagnetLink {
      *   下完后会用引擎给的真实名字覆盖（见 DownloadManager.completeEngineTask）。
      */
     fun displayName(url: String): String {
-        val dn = param(url, "dn").replace(BLANK_CHARS, " ").trim()
+        val dn = param(normalize(url), "dn").replace(BLANK_CHARS, " ").trim()
         if (dn.isNotEmpty()) return dn.take(MAX_NAME_CHARS)
         val hash = infoHash(url)
         return if (hash.length >= 8) "磁力_${hash.take(8)}" else "磁力任务"
@@ -66,11 +92,11 @@ object MagnetLink {
 
     /** info hash（统一大写，取不到返回空串）；仅用于显示与日志，不参与去重 */
     fun infoHash(url: String): String =
-        BTIH.find(url)?.groupValues?.get(1)?.uppercase().orEmpty()
+        BTIH.find(normalize(url))?.groupValues?.get(1)?.uppercase().orEmpty()
 
     /** 取第一个 `key=value` 参数的值（`dn` 理论上唯一，出现多次也只认第一个） */
     private fun param(url: String, key: String): String {
-        val query = url.substringAfter('?', "")
+        val query = normalize(url).substringAfter('?', "")
         if (query.isBlank()) return ""
         for (part in query.split('&')) {
             val eq = part.indexOf('=')

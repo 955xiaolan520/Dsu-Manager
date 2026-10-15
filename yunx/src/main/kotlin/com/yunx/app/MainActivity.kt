@@ -98,9 +98,12 @@ class MainActivity : ComponentActivity() {
         pendingTab.value = tabFromIntent(intent)
     }
 
-    /** 实况通知（EXTRA_OPEN_TAB=download）→ 下载 Tab；其余情况不指定 Tab */
-    private fun tabFromIntent(intent: Intent?): MainTab? =
-        if (intent?.getStringExtra(EXTRA_OPEN_TAB) == TAB_DOWNLOAD) MainTab.Download else null
+    /** 外部入口可直接打开解析/下载标签页；其余情况不指定 Tab。 */
+    private fun tabFromIntent(intent: Intent?): MainTab? = when (intent?.getStringExtra(EXTRA_OPEN_TAB)) {
+        TAB_DOWNLOAD -> MainTab.Download
+        TAB_RESOLVE -> MainTab.Resolve
+        else -> null
+    }
 
     companion object {
         /** 「点击后打开哪个 Tab」的 intent extra 键（由 DownloadService 的通知 contentIntent 写入） */
@@ -108,5 +111,8 @@ class MainActivity : ComponentActivity() {
 
         /** [EXTRA_OPEN_TAB] 的取值：打开「下载」Tab */
         const val TAB_DOWNLOAD = "download"
+
+        /** [EXTRA_OPEN_TAB] 的取值：打开「解析」Tab（百度公共分享可匿名查看） */
+        const val TAB_RESOLVE = "resolve"
     }
 }

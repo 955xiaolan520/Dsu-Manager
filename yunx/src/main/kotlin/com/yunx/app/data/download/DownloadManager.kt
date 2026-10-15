@@ -653,7 +653,9 @@ class DownloadManager(
         }
         // Embedded Dsu build: every network-drive download (including account-browser and batch
         // downloads) must enter the host DownloadService, never YunX's own queue/notification.
-        val nativeRoute = DsuNativeDownloadRouter.submit(
+        // Dsu 原生通道是 aria2c HTTP(S) 通道，明确不支持 magnet；磁力必须继续走下面的
+        // Gopeed 分支，否则会在这里被拦截，根本到不了 BT 引擎。
+        val nativeRoute = if (isMagnet) null else DsuNativeDownloadRouter.submit(
             context = context,
             url = url,
             fileName = safeName,
@@ -720,7 +722,8 @@ class DownloadManager(
         }
         if (shouldUseEngine(taskPlatform)) {
             // 任务登记、下载页展示、完成清理回调都与内置下载器完全一致，只有「执行」交给 Gopeed 引擎
-            startViaEngine(id, url, safeName, headers, taskPlatform)
+            val engineUrl = if (isMagnet) MagnetLink.forEngine(url) else url
+            startViaEngine(id, engineUrl, safeName, headers, taskPlatform)
         } else {
             start(id, headers)
         }

@@ -3812,6 +3812,9 @@ public class MainActivity extends BaseActivity {
            TextView subtitle = text(t("网盘解析与各品牌 ROM 工具", "Netdisk parsing and ROM tools"), 13, 0xffe5edf7);
             page.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
              page.addView(romVendorCard("网盘分享解析", "多网盘链接解析 · aria2c 多线程下载", R.drawable.vendor_glass_yunx, "yunx"));
+             // 独立保留高频入口：避免必须先进入网盘解析页才能找到磁力/百度功能。
+             page.addView(romVendorCard("磁力下载", "Gopeed BT / Magnet · DHT + Tracker 元数据解析", R.drawable.vendor_glass_cyan, "magnet"));
+             page.addView(romVendorCard("百度网盘免登录解析", "公共分享可匿名查看文件列表，下载/转存按页面提示操作", R.drawable.vendor_glass_blue, "baidu_guest"));
              page.addView(romVendorCard("短视频无水印下载", "抖音 · 快手 · B站等分享链接解析", R.drawable.vendor_glass_video, "shortvideo"));
              page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.vendor_glass_blue, "xiaomi"));
              page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.vendor_glass_purple, "vivo"));
@@ -3834,8 +3837,8 @@ public class MainActivity extends BaseActivity {
            TextView desc = text(detail, 13, 0xE6FFFFFF);
            card.addView(desc, new LinearLayout.LayoutParams(-1, dp(30)));
            Button enter = new Button(this, null, 0);
-           enter.setText(t("shortvideo".equals(vendorId) ? "开始解析" : "进入查询",
-                   "shortvideo".equals(vendorId) ? "Start parsing" : "Open lookup"));
+           enter.setText(t(("shortvideo".equals(vendorId) || "magnet".equals(vendorId) || "baidu_guest".equals(vendorId)) ? "开始使用" : "进入查询",
+                   ("shortvideo".equals(vendorId) || "magnet".equals(vendorId) || "baidu_guest".equals(vendorId)) ? "Open" : "Open lookup"));
            enter.setAllCaps(false);
            enter.setTextSize(14.5f);
            enter.setGravity(Gravity.CENTER);
@@ -3860,10 +3863,12 @@ public class MainActivity extends BaseActivity {
                                    : "vivo".equals(vendorId) ? VivoActivity.class
                                    : "extract".equals(vendorId) ? PayloadDumperActivity.class
                                    : "otamerge".equals(vendorId) ? OtaMergeActivity.class
-                                   : "yunx".equals(vendorId) ? com.yunx.app.MainActivity.class
+                           : ("yunx".equals(vendorId) || "magnet".equals(vendorId) || "baidu_guest".equals(vendorId)) ? com.yunx.app.MainActivity.class
                                    : "shortvideo".equals(vendorId) ? ShortVideoActivity.class
                                    : RomActivity.class);
-                  if (!"extract".equals(vendorId) && !"otamerge".equals(vendorId) && !"yunx".equals(vendorId) && !"shortvideo".equals(vendorId)) intent.putExtra("vendor", vendorId);
+                  if ("magnet".equals(vendorId)) intent.putExtra(com.yunx.app.MainActivity.EXTRA_OPEN_TAB, com.yunx.app.MainActivity.TAB_DOWNLOAD);
+                  if ("baidu_guest".equals(vendorId)) intent.putExtra(com.yunx.app.MainActivity.EXTRA_OPEN_TAB, com.yunx.app.MainActivity.TAB_RESOLVE);
+                  if (!"extract".equals(vendorId) && !"otamerge".equals(vendorId) && !"yunx".equals(vendorId) && !"magnet".equals(vendorId) && !"baidu_guest".equals(vendorId) && !"shortvideo".equals(vendorId)) intent.putExtra("vendor", vendorId);
                   startActivity(intent);
                   // 不同厂商使用不同的炸裂转场动画
                   if ("oppo".equals(vendorId)) {
@@ -3878,7 +3883,7 @@ public class MainActivity extends BaseActivity {
                 } else if ("otamerge".equals(vendorId)) {
                     // OTA合并: 缩放淡入
                     overridePendingTransition(R.anim.zoom_in, R.anim.zoom_out);
-                } else if ("yunx".equals(vendorId)) {
+                } else if ("yunx".equals(vendorId) || "magnet".equals(vendorId) || "baidu_guest".equals(vendorId)) {
                     // 网盘解析：底部滑入
                     overridePendingTransition(R.anim.slide_up_in, R.anim.slide_up_out);
                 } else if ("shortvideo".equals(vendorId)) {
@@ -6050,17 +6055,79 @@ public class MainActivity extends BaseActivity {
           });
       }
 
+      /** 液态玻璃风格的二次确认，覆盖本机分区的全部重启动作。 */
+      private void showPartitionRebootConfirm(String label, String command) {
+          final Dialog dialog = new Dialog(this);
+          LinearLayout root = new LinearLayout(this);
+          root.setOrientation(LinearLayout.VERTICAL);
+          root.setPadding(dp(22), dp(20), dp(22), dp(16));
+          GradientDrawable panel = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                  new int[]{0xfff4fbff, 0xffe9f2ff, 0xfff9efff});
+          panel.setCornerRadius(dp(28));
+          panel.setStroke(dp(1), 0x88ffffff);
+          root.setBackground(panel);
+          TextView badge = new TextView(this);
+          badge.setText("⚡  " + t("高级重启", "POWER ACTION"));
+          badge.setTextColor(0xff536fc0);
+          badge.setTextSize(12);
+          badge.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+          root.addView(badge, new LinearLayout.LayoutParams(-1, -2));
+          TextView title = new TextView(this);
+          title.setText(t("确认" + label + "？", "Confirm " + label + "?"));
+          title.setTextColor(0xff18253d);
+          title.setTextSize(22);
+          title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+          title.setPadding(0, dp(9), 0, dp(5));
+          root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          TextView message = new TextView(this);
+          message.setText(t(rebootDescription(label), rebootDescriptionEnglish(label)) + "\n\n" + t("命令：", "Command: ") + command);
+          message.setTextColor(0xff5d6e84);
+          message.setTextSize(14);
+          message.setLineSpacing(0f, 1.15f);
+          root.addView(message, new LinearLayout.LayoutParams(-1, -2));
+          LinearLayout actions = new LinearLayout(this);
+          actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+          actions.setPadding(0, dp(18), 0, 0);
+          TextView cancel = new TextView(this);
+          cancel.setText(t("先不操作", "Cancel"));
+          cancel.setTextColor(0xff64758a);
+          cancel.setGravity(Gravity.CENTER);
+          cancel.setPadding(dp(15), dp(11), dp(15), dp(11));
+          cancel.setOnClickListener(v -> dialog.dismiss());
+          TextView confirm = new TextView(this);
+          confirm.setText(t("确认执行", "Confirm"));
+          confirm.setTextColor(Color.WHITE);
+          confirm.setGravity(Gravity.CENTER);
+          confirm.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+          confirm.setPadding(dp(18), dp(11), dp(18), dp(11));
+          GradientDrawable confirmBg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                  new int[]{0xff5d8fdb, 0xff9a70c8});
+          confirmBg.setCornerRadius(dp(18));
+          confirm.setBackground(confirmBg);
+          confirm.setOnClickListener(v -> { dialog.dismiss(); executePartitionReboot(command, label); });
+          actions.addView(cancel, new LinearLayout.LayoutParams(-2, -2));
+          LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-2, -2);
+          confirmLp.leftMargin = dp(8);
+          actions.addView(confirm, confirmLp);
+          root.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+          dialog.setContentView(root);
+          dialog.show();
+          if (dialog.getWindow() != null) {
+              Window window = dialog.getWindow();
+              window.setBackgroundDrawableResource(android.R.color.transparent);
+              WindowManager.LayoutParams attrs = window.getAttributes();
+              attrs.dimAmount = 0.34f;
+              window.setAttributes(attrs);
+              window.setLayout((int)(getResources().getDisplayMetrics().widthPixels * 0.88f), -2);
+          }
+      }
+
       private void addPartitionRebootButton(LinearLayout row, String label, String command, boolean needsConfirm, boolean iconAbove) {
           Button button = buildCompactPartitionActionButton(label, iconAbove);
           button.setOnClickListener(v -> {
               Haptics.perform(v);
               if (needsConfirm) {
-                  new android.app.AlertDialog.Builder(this)
-                      .setTitle(t("确认操作", "Confirm action"))
-                      .setMessage(t(rebootDescription(label), rebootDescriptionEnglish(label)))
-                      .setPositiveButton(t("确认", "Confirm"), (dialog, which) -> executePartitionReboot(command, label))
-                      .setNegativeButton(t("取消", "Cancel"), null)
-                      .show();
+                  showPartitionRebootConfirm(label, command);
               } else {
                   executePartitionReboot(command, label);
               }

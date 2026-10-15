@@ -831,8 +831,8 @@ class OtgFlashHelper(
         }
         card.addView(titleView, LinearLayout.LayoutParams(-1, -2))
         
-        val items = arrayOf("正常重启", "正常关机", "Recovery", "Fastboot", "9008 (EDL)")
-        val commands = arrayOf("reboot", "reboot poweroff", "reboot recovery", "reboot bootloader", "reboot edl")
+        val items = arrayOf("正常重启", "正常关机", "Recovery", "Fastboot", "FastbootD", "9008 (EDL)")
+        val commands = arrayOf("reboot", "reboot poweroff", "reboot recovery", "reboot bootloader", "reboot fastboot", "reboot edl")
         
         items.forEachIndexed { index, itemName ->
             val btn = Button(activity, null, 0).apply {
@@ -845,7 +845,7 @@ class OtgFlashHelper(
                 background = rounded(0x20ffffff.toInt(), 0x8effffff.toInt(), 13)
                 setOnClickListener {
                     dialog.dismiss()
-                    executeRebootMode(commands[index])
+                    confirmRebootMode(itemName, commands[index])
                 }
             }
             card.addView(btn, LinearLayout.LayoutParams(-1, -2).apply {
@@ -864,6 +864,41 @@ class OtgFlashHelper(
         ))
         dialog.window?.setDimAmount(0.58f)
         dialog.show()
+    }
+
+    /** 第二层确认，明确显示模式和命令，避免误触导致设备立即重启。 */
+    private fun confirmRebootMode(name: String, target: String) {
+        val confirm = Dialog(activity)
+        confirm.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        confirm.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        val card = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(20), dp(22), dp(16))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xfff5fbff.toInt(), 0xffe7f1ff.toInt(), 0xfffaefff.toInt())
+            ).apply { cornerRadius = dp(28).toFloat(); setStroke(dp(1), 0xd8ffffff.toInt()) }
+        }
+        card.addView(label("⚡  POWER ACTION", 11, 0xff536fc0.toInt(), true))
+        card.addView(label("确认进入$name？", 21, 0xff18253d.toInt(), true), LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(10); bottomMargin = dp(6)
+        })
+        card.addView(label("设备将执行：adb $target\n请确认设备已连接且已保存重要数据。", 14, 0xff5d6e84.toInt(), false))
+        val actions = LinearLayout(activity).apply { gravity = Gravity.END; setPadding(0, dp(18), 0, 0) }
+        val cancel = actionButton("先不操作", 0xff8fa1b8.toInt(), 0xff6e7c93.toInt()).apply {
+            setOnClickListener { confirm.dismiss() }
+        }
+        val go = actionButton("确认执行", 0xff5d8fdb.toInt(), 0xff9a70c8.toInt()).apply {
+            setOnClickListener { confirm.dismiss(); executeRebootMode(target) }
+        }
+        actions.addView(cancel, LinearLayout.LayoutParams(0, dp(44), 1f))
+        actions.addView(go, LinearLayout.LayoutParams(0, dp(44), 1f).apply { leftMargin = dp(8) })
+        card.addView(actions, LinearLayout.LayoutParams(-1, -2))
+        confirm.setContentView(card, ViewGroup.LayoutParams(
+            (activity.resources.displayMetrics.widthPixels * 0.88).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        confirm.window?.setDimAmount(0.34f)
+        confirm.show()
     }
 
     private fun executeRebootMode(target: String) {
