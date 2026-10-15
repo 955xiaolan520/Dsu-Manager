@@ -93,6 +93,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -109,6 +110,7 @@ import androidx.core.content.FileProvider
 import com.yunx.app.data.db.DownloadTaskEntity
 import com.yunx.app.data.download.DownloadStats
 import com.yunx.app.data.download.MagnetLink
+import com.yunx.app.data.gopeed.KernelProvisioner
 import com.yunx.app.ui.SnackbarController
 import com.yunx.app.ui.viewmodel.DownloadViewModel
 import com.yunx.app.ui.components.FileNameText
@@ -117,6 +119,7 @@ import com.yunx.app.ui.theme.effectsDefault
 import com.yunx.app.ui.theme.effectsFast
 import com.yunx.app.ui.theme.spatialDefault
 import com.yunx.app.ui.theme.spatialFast
+import kotlinx.coroutines.launch
 import java.io.File
 
 /**
@@ -135,7 +138,6 @@ fun DownloadScreen(
     val tasks by viewModel.tasks.collectAsState()
     val stats by viewModel.stats.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
-    var showBtDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<DownloadTaskEntity?>(null) }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
     // 「调试信息」页打开的任务 id（null = 不显示）。本页在「下载」Tab 内全屏展开，与 ResolveScreen 内嵌
@@ -236,27 +238,7 @@ fun DownloadScreen(
             }
         }
 
-        // 明确的 BT 入口：种子/磁力不再藏在普通“+”按钮里。
-        Button(
-            onClick = {
-                if (needLegacyPermission && !hasPermission) {
-                    permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                } else {
-                    showBtDialog = true
-                }
-            },
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 20.dp, bottom = 24.dp),
-            shape = RoundedCornerShape(18.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(7.dp))
-            Text("种子 / 磁力下载", maxLines = 1)
-        }
-
-        // 普通添加任务 FAB（HTTP(S) 直链）
+        // 下载入口：普通直链、种子和磁力统一在同一个下载弹窗内处理。
         // ★ 曾经被 c829083「添加关于页」误删（连同 permissionLauncher/hasPermission 变成死代码、
         //   空状态文案却还在说「点击右下角按钮」）——恢复时注意别再连着删掉。
         FloatingActionButton(
@@ -284,17 +266,6 @@ fun DownloadScreen(
             }
         )
     }
-    if (showBtDialog) {
-        AddDownloadDialog(
-            btOnly = true,
-            onDismiss = { showBtDialog = false },
-            onConfirm = { url, name ->
-                showBtDialog = false
-                viewModel.enqueue(url, name)
-            }
-        )
-    }
-
     // 删除二次确认（可选同时删除本地文件）
     pendingDelete?.let { task ->
         DeleteConfirmDialog(
@@ -1262,13 +1233,24 @@ private fun AddDownloadDialog(
     onConfirm: (url: String, name: String) -> Unit,
     btOnly: Boolean = false
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var url by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+    var kernelMessage by remember { mutableStateOf<String?>(null) }
     val isMagnet = MagnetLink.isBitTorrent(url)
+    val torrentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        url = uri.toString()
+        if (name.isBlank()) name = "种子任务"
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (btOnly) "种子 / 磁力下载" else "添加下载任务") },
+        title = { Text("种子 / 磁力下载") },
         text = {
             // 横屏/小屏时内容超高可滚动，避免按钮被挤出屏幕
             Column(
@@ -1279,7 +1261,7 @@ private fun AddDownloadDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "下载文件将保存到 ${Environment.DIRECTORY_DOWNLOADS} 目录",
+                    text = "磁力和种子使用 Gopeed BT 内核，下载文件由 Dsu 下载服务写入目标目录",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1297,18 +1279,51 @@ private fun AddDownloadDialog(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = {
-                        Text(if (btOnly) "粘贴 magnet 链接或 .torrent 地址" else "文件直链、磁力链接或 .torrent 地址")
-                    },
+                    placeholder = { Text("magnet 链接或 .torrent 地址") },
                     singleLine = true
                 )
-                if (isMagnet) {
-                    // 磁力只有 Gopeed 内核能下（内置分片下载器是纯 HTTP 实现），提前说清楚省得白等
-                    Text(
-                        text = "磁力 / .torrent 将自动使用 Gopeed；首次使用会从云端准备 BT 内核",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = { if (url.isNotBlank()) onConfirm(url.trim(), name.trim()) },
+                        enabled = isMagnet,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(18.dp)
+                    ) { Text("解析种子") }
+                    TextButton(
+                        onClick = { torrentPicker.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*")) },
+                        modifier = Modifier.weight(1.35f)
+                    ) {
+                        Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Dsu 文件管理器", maxLines = 1)
+                    }
+                }
+                TextButton(
+                    onClick = {
+                        if (KernelProvisioner.phase.value is KernelProvisioner.Phase.Idle) {
+                            kernelMessage = "正在获取 Gopeed BT 内核…"
+                            scope.launch {
+                                KernelProvisioner.loadRelease()
+                                    .onSuccess { release ->
+                                        KernelProvisioner.start(context, release, KernelProvisioner.Source.GITHUB_MIRROR)
+                                        kernelMessage = "已开始下载/管理 Gopeed BT 内核"
+                                    }
+                                    .onFailure { error -> kernelMessage = error.message ?: "获取 Gopeed 内核失败" }
+                            }
+                        } else {
+                            kernelMessage = "Gopeed 内核任务正在进行中，请查看下载引擎状态"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("下载 / 管理 Gopeed BT 内核", color = MaterialTheme.colorScheme.primary)
+                }
+                kernelMessage?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 OutlinedTextField(
                     value = name,
@@ -1323,8 +1338,8 @@ private fun AddDownloadDialog(
             Button(
                 onClick = { onConfirm(url.trim(), name.trim()) },
                 // 磁力允许留空文件名：真正的名字要等引擎拿到元数据（DownloadManager 会自己兜底）
-                enabled = url.isNotBlank() && (!btOnly || isMagnet) && (name.isNotBlank() || isMagnet)
-            ) { Text(if (btOnly) "开始 BT 下载" else "开始下载") }
+                enabled = url.isNotBlank() && isMagnet
+            ) { Text("开始 BT 下载") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
