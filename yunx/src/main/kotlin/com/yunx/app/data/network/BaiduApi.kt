@@ -36,7 +36,8 @@ data class BaiduShareList(
     val title: String,
     val shareId: String,
     val uk: String,
-    val files: List<ShareFile>
+    val files: List<ShareFile>,
+    val sekey: String = ""
 )
 
 /**
@@ -46,6 +47,8 @@ data class BaiduTransferResult(
     val fsId: String,
     val path: String
 )
+
+data class BaiduPublicDownload(val url: String, val userAgent: String)
 
 /**
  * 百度网盘 API 封装（OkHttp + Cookie 认证）：
@@ -59,10 +62,94 @@ class BaiduApi(
     private val client get() = clientProvider()
 
     private val formMediaType = "application/x-www-form-urlencoded".toMediaType()
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+    @Volatile private var publicPassword: String? = null
+    @Volatile private var publicPasswordDay: String = ""
 
     /** bdstoken 缓存（登录态内长期有效） */
     @Volatile
     private var cachedBdstoken: String? = null
+
+    /** wenxi BaiduPublicParser 兼容的百度分享游客解析。 */
+    private suspend fun publicPassword(): String = withContext(Dispatchers.IO) {
+        val day = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
+            .format(java.util.Date())
+        publicPassword?.takeIf { publicPasswordDay == day }?.let { return@withContext it }
+        val request = Request.Builder()
+            .url("https://gitee.com/dzys/cs/raw/master/ls.json")
+            .header("User-Agent", BaiduConstants.UA_WEB).get().build()
+        val text = client.newCall(request).execute().use { it.body?.string().orEmpty() }
+        val value = runCatching {
+            val json = JSONObject(text.trim())
+            json.optString("password").ifBlank { json.optString("parse_password") }
+                .ifBlank { json.optJSONObject("data")?.optString("password").orEmpty() }
+        }.getOrDefault("").ifBlank { text.lineSequence().firstOrNull().orEmpty() }
+            .filter { it in '\u3400'..'\u9fff' }
+        if (value.isBlank()) throw BaiduApiException("百度免登录解析密码获取失败，请稍后重试")
+        publicPassword = value; publicPasswordDay = day
+        value
+    }
+
+    private suspend fun publicRequest(operation: String, body: JSONObject): JSONObject =
+        withContext(Dispatchers.IO) {
+            val payload = JSONObject(body.toString()).put("parse_password", publicPassword())
+            val request = Request.Builder()
+                .url("https://mf.dg22.top/api/v1/user/parse/$operation")
+                .header("User-Agent", "Dart/3.13 (dart:io)")
+                .header("Accept", "application/json")
+                .header("Origin", "https://mf.dg22.top")
+                .header("Referer", "https://mf.dg22.top/user/parse")
+                .post(payload.toString().toRequestBody(jsonMediaType)).build()
+            val json = executeJson(request)
+            if (json.optInt("code") != 200) {
+                throw BaiduApiException("百度公益解析：${json.optString("message").ifBlank { "服务暂不可用" }}")
+            }
+            json
+        }
+
+    suspend fun publicListShare(surl: String, pwd: String, dir: String): BaiduShareList {
+        val short = "1${surl.trimStart('1')}"
+        val response = publicRequest("get_file_list", JSONObject().apply {
+            put("url", "https://pan.baidu.com/s/$short"); put("surl", short)
+            put("pwd", pwd); put("dir", dir.ifBlank { "/" })
+        })
+        val data = response.optJSONObject("data") ?: throw BaiduApiException("公益解析未返回文件列表")
+        val array = data.optJSONArray("list") ?: throw BaiduApiException("公益解析文件列表为空")
+        val files = buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val isDir = item.optInt("isdir", item.optInt("is_dir", 0)) == 1 ||
+                    item.optBoolean("isdir") || item.optBoolean("is_dir")
+                val path = item.optString("path", dir.ifBlank { "/" })
+                add(ShareFile(if (isDir) path else item.optString("fs_id"),
+                    item.optString("server_filename").ifBlank { item.optString("filename") },
+                    item.optLong("size"), isDir, path, path, item.optString("server_mtime")))
+            }
+        }
+        return BaiduShareList(data.optString("title").ifBlank { "百度分享" },
+            data.optString("shareid"), data.optString("uk"), files,
+            data.optString("randsk"))
+    }
+
+    suspend fun publicDownloadLink(
+        surl: String, pwd: String, dir: String, file: ShareFile, share: BaiduShareList
+    ): BaiduPublicDownload {
+        val response = publicRequest("get_download_links", JSONObject().apply {
+            put("randsk", share.sekey); put("uk", share.uk); put("shareid", share.shareId)
+            put("fs_id", org.json.JSONArray().put(file.fid.toLongOrNull() ?: file.fid))
+            put("surl", "1${surl.trimStart('1')}"); put("dir", dir.ifBlank { "/" })
+            put("pwd", pwd); put("token", "guest"); put("download_folder", 0)
+        })
+        val item = response.optJSONArray("data")?.optJSONObject(0)
+            ?: throw BaiduApiException("百度公益解析没有返回文件直链")
+        val urls = item.optJSONArray("urls") ?: throw BaiduApiException("百度公益解析直链为空")
+        val url = (0 until urls.length()).asSequence().map { urls.optString(it) }
+            .firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
+            ?: throw BaiduApiException("百度公益解析没有有效下载地址")
+        return BaiduPublicDownload(url,
+            item.optString("ua").ifBlank { item.optString("user_agent") }
+                .ifBlank { BaiduConstants.UA_WEB })
+    }
 
     // ---------- 账号 ----------
 

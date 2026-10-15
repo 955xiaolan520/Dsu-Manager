@@ -3812,9 +3812,8 @@ public class MainActivity extends BaseActivity {
            TextView subtitle = text(t("网盘解析与各品牌 ROM 工具", "Netdisk parsing and ROM tools"), 13, 0xffe5edf7);
             page.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
              page.addView(romVendorCard("网盘分享解析", "多网盘链接解析 · aria2c 多线程下载", R.drawable.vendor_glass_yunx, "yunx"));
-             // 独立保留高频入口：避免必须先进入网盘解析页才能找到磁力/百度功能。
+             // GitHub main 原有入口：磁力/BT 下载统一进入 YunX 下载页。
              page.addView(romVendorCard("磁力下载", "Gopeed BT / Magnet · DHT + Tracker 元数据解析", R.drawable.vendor_glass_cyan, "magnet"));
-             page.addView(romVendorCard("百度网盘免登录解析", "公共分享可匿名查看文件列表，下载/转存按页面提示操作", R.drawable.vendor_glass_blue, "baidu_guest"));
              page.addView(romVendorCard("短视频无水印下载", "抖音 · 快手 · B站等分享链接解析", R.drawable.vendor_glass_video, "shortvideo"));
              page.addView(romVendorCard("小米 / Redmi / POCO", "HyperOS · Recovery / Fastboot · 多地区版本", R.drawable.vendor_glass_blue, "xiaomi"));
              page.addView(romVendorCard("vivo", "OriginOS · 官方系统更新查询", R.drawable.vendor_glass_purple, "vivo"));

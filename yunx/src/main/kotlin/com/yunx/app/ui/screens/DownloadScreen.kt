@@ -1232,7 +1232,7 @@ private fun AddDownloadDialog(
 ) {
     var url by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
-    val isMagnet = MagnetLink.isMagnet(url)
+    val isMagnet = MagnetLink.isBitTorrent(url)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1257,7 +1257,7 @@ private fun AddDownloadDialog(
                         url = it
                         // 磁力链接的落盘名字由种子决定（引擎解析出元数据才知道），这里先拿 dn= 里的显示名占位
                         if (name.isBlank()) {
-                            name = if (MagnetLink.isMagnet(it)) {
+                            name = if (MagnetLink.isBitTorrent(it)) {
                                 MagnetLink.displayName(it)
                             } else {
                                 it.substringAfterLast('/').take(80)
@@ -1265,13 +1265,13 @@ private fun AddDownloadDialog(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("文件直链 URL 或磁力链接") },
+                    placeholder = { Text("文件直链、磁力链接或 .torrent 地址") },
                     singleLine = true
                 )
                 if (isMagnet) {
                     // 磁力只有 Gopeed 内核能下（内置分片下载器是纯 HTTP 实现），提前说清楚省得白等
                     Text(
-                        text = "磁力链接需要 Gopeed 引擎：内核未导入或未切换时会直接提示，不会被当成普通链接去下载",
+                        text = "磁力 / .torrent 将自动使用 Gopeed；首次使用会从云端准备 BT 内核",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

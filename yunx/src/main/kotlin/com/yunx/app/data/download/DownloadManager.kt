@@ -25,6 +25,7 @@ import com.yunx.app.util.LogRedactor
 import com.yunx.app.data.db.DownloadTaskDao
 import com.yunx.app.data.db.DownloadTaskEntity
 import com.yunx.app.data.gopeed.GopeedEngine
+import com.yunx.app.data.gopeed.KernelProvisioner
 import com.yunx.app.data.prefs.SettingsRepository
 import com.yunx.app.data.security.AndroidKeystoreCredentialCipher
 import com.yunx.app.data.security.CredentialCipher
@@ -639,7 +640,7 @@ class DownloadManager(
         onComplete: suspend () -> Unit = {}
     ): Long {
         // 磁力链接只能交给 Gopeed 引擎（见 magnetBlockReason）；平台标识同时落库，便于事后区分
-        val isMagnet = MagnetLink.isMagnet(url)
+        val isMagnet = MagnetLink.isBitTorrent(url)
         val taskPlatform = if (isMagnet) DownloadPlatform.MAGNET else platform
         // 文件名兜底：空白时从 URL 推导，避免保存时变成时间戳。
         // 磁力链接走 dn= 里自带的显示名（元数据到手后再换成真正的种子名，见 completeEngineTask）
@@ -704,6 +705,11 @@ class DownloadManager(
         taskCallbacks[id] = onComplete
         // 磁力但引擎不可用：立刻落一条**带原因的失败任务**并结束。若照常走内置下载器，
         // 它会把 magnet: 当普通 URL 发 HTTP 请求，最后抛一个和「该去导入内核」毫无关系的协议错误。
+        // 磁力是下载页的 BT 专用入口：首次使用时自动从云端获取并导入 Gopeed
+        // 内核，不再把用户赶回设置页手动找引擎。
+        if (isMagnet && !GopeedEngine.isInstalled(context)) {
+            ensureMagnetEngine()
+        }
         val blocked = magnetBlockReason(isMagnet)
         if (blocked != null) {
             Log.w(TAG, "磁力任务被拦下：id=$id 原因=$blocked")
@@ -731,11 +737,14 @@ class DownloadManager(
     }
 
     /** 是否把任务交给 Gopeed 引擎：设置里选了引擎 + 引擎已导入；GitHub 走镜像回退（引擎不支持），始终用内置下载器 */
-    private fun shouldUseEngine(platform: String): Boolean =
-        !Aria2DownloadBackendRegistry.isInstalled &&
+    private fun shouldUseEngine(platform: String): Boolean {
+        // BT/magnet 不允许被 aria2c 或内置 HTTP 分片器接管。
+        if (platform == DownloadPlatform.MAGNET) return GopeedEngine.isInstalled(context)
+        return !Aria2DownloadBackendRegistry.isInstalled &&
             platform != DownloadPlatform.GITHUB &&
             settings.downloadEngine == SettingsRepository.ENGINE_GOPEED &&
             GopeedEngine.isInstalled(context)
+    }
 
     /**
      * 磁力链接是否可下：返回 null = 可以（交给引擎），否则是给用户看的拦截原因。
@@ -745,16 +754,21 @@ class DownloadManager(
      */
     private fun magnetBlockReason(isMagnet: Boolean): String? {
         if (!isMagnet) return null
-        if (Aria2DownloadBackendRegistry.isInstalled) {
-            return "当前集成统一使用 aria2c，仅支持 HTTP(S) 直链，暂不支持磁力/BT 链接"
-        }
         if (!GopeedEngine.isInstalled(context)) {
-            return "磁力下载需要先在「设置 → 下载 → 下载引擎」里导入 Gopeed 内核"
-        }
-        if (settings.downloadEngine != SettingsRepository.ENGINE_GOPEED) {
-            return "磁力下载需要先在「设置 → 下载」里把下载引擎切换为 Gopeed"
+            return "磁力下载内核云端下载失败，请检查网络后重试"
         }
         return null
+    }
+
+    /** 自动准备 BT 内核；失败时由入队逻辑落一条可见的失败任务。 */
+    private suspend fun ensureMagnetEngine() {
+        if (GopeedEngine.isInstalled(context)) return
+        val release = KernelProvisioner.loadRelease().getOrNull() ?: return
+        KernelProvisioner.start(context, release, KernelProvisioner.Source.GITHUB_MIRROR)
+        withTimeoutOrNull(5 * 60 * 1000L) {
+            while (KernelProvisioner.isRunning()) delay(300)
+        }
+        GopeedEngine.syncInstalledState(context)
     }
 
     /**
@@ -991,7 +1005,7 @@ class DownloadManager(
     suspend fun redownload(id: Long): Boolean {
         val task = dao.get(id) ?: return false
         val headers = loadPersistedHeaders(id)
-        if (!MagnetLink.isMagnet(task.url)) {
+        if (!MagnetLink.isBitTorrent(task.url)) {
             val valid = runCatching { downloader.getTotalSize(task.url, headers) != null }.getOrDefault(false)
             if (!valid) return false
         }
@@ -1304,7 +1318,7 @@ class DownloadManager(
             DownloadDebugLog.record(id, "aria2c 下载", DownloadDebugLog.environmentSnapshot(context))
         }
 
-        if (MagnetLink.isMagnet(task.url)) {
+        if (MagnetLink.isBitTorrent(task.url)) {
             throw IllegalStateException("当前集成统一使用 aria2c，暂不支持磁力/BT 链接")
         }
         if (task.url.contains(".m3u8", true) || task.url.contains(".m3u", true)) {

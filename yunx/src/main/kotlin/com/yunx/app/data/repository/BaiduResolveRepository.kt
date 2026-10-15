@@ -37,15 +37,23 @@ class BaiduResolveRepository(private val api: BaiduApi) : ShareResolveRepository
 
     /** surl -> (share_id, uk)，由列表接口返回（转存必需） */
     private val shareInfos = mutableMapOf<String, Pair<String, String>>()
+    private val publicSessions = mutableSetOf<String>()
+    private val publicLists = mutableMapOf<String, com.yunx.app.data.network.BaiduShareList>()
 
     override suspend fun createSession(link: String, pwd: String?, cookie: String): Result<ShareSession> =
         runCatching {
             val parsed = ShareLinkParser.parse(link)
                 ?: throw IllegalArgumentException("无法识别百度分享链接")
             val surl = parsed.shareId
+            val effectivePwd = pwd?.takeIf { it.isNotBlank() } ?: parsed.pwd
+            // 未登录时使用 wenxi 的百度公益解析，不再要求用户登录百度账号。
+            if (cookie.isBlank()) {
+                publicSessions += surl
+                sekeys[surl] = effectivePwd.orEmpty()
+                return@runCatching ShareSession(surl, effectivePwd.orEmpty(), "")
+            }
             // 修复：公共分享（pwd 为空）不强制提取码——跳过 verify，sekey 置空，
             // listShare 将不带 sekey 直接列出（抓包实证：公共分享无需 sekey/Cookie 即 errno=0）
-            val effectivePwd = pwd?.takeIf { it.isNotBlank() } ?: parsed.pwd
             val sekey = if (effectivePwd.isNullOrBlank()) {
                 ""
             } else {
@@ -61,6 +69,12 @@ class BaiduResolveRepository(private val api: BaiduApi) : ShareResolveRepository
     override suspend fun listFiles(session: ShareSession, dirFid: String, cookie: String): Result<List<ShareFile>> =
         runCatching {
             val sekey = session.stoken.ifBlank { sekeys[session.shareId] ?: "" }
+            if (session.shareId in publicSessions) {
+                val result = api.publicListShare(session.shareId, sekey, dirFid)
+                publicLists[session.shareId] = result
+                shareInfos[session.shareId] = result.shareId to result.uk
+                return@runCatching result.files
+            }
             // 顶层 dirFid 为空/"/"；子目录 dirFid 为目录 path（如 /folder）
             val all = mutableListOf<ShareFile>()
             var page = 1
@@ -118,6 +132,17 @@ class BaiduResolveRepository(private val api: BaiduApi) : ShareResolveRepository
         file: ShareFile,
         cookie: String
     ): Result<DownloadLink> = runCatching {
+        if (session.shareId in publicSessions) {
+            val share = publicLists[session.shareId]
+                ?: api.publicListShare(session.shareId, session.stoken, file.pdirFid)
+            val direct = api.publicDownloadLink(
+                session.shareId, session.stoken, file.pdirFid, file, share
+            )
+            return@runCatching DownloadLink(
+                fid = file.fid, filename = file.fname, downloadUrl = direct.url,
+                size = file.fsize
+            )
+        }
         val (shareId, uk) = requireShareInfo(session, cookie)
         val dirPath = ensureTempDir(cookie).getOrThrow()
         val transferred = api.transfer(shareId, uk, session.stoken, file.fid, dirPath, cookie)

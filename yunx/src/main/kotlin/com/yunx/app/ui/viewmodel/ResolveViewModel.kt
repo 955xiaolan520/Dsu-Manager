@@ -563,7 +563,13 @@ class ResolveViewModel(
                         // 游客态（凭据为空）走游客取链：夸克/UC 分享直链不要求账号，带游客 __pugs 即可下载；
                         // 登录态优先免转存，夸克失败时自动回退到转存取链
                         val linkResult = if (credential.isBlank()) {
-                            currentRepo().getGuestShareDownloadLink(s, file)
+                            if (currentPlatform == SharePlatform.BAIDU) {
+                                // 百度游客解析由 BaiduResolveRepository 的公益链路处理，
+                                // 不走默认的「仅夸克/UC」游客接口。
+                                currentRepo().getShareDownloadLink(s, file, "")
+                            } else {
+                                currentRepo().getGuestShareDownloadLink(s, file)
+                            }
                         } else {
                             resolveShareLink(currentRepo(), s, file, quarkCred)
                         }
@@ -1595,6 +1601,7 @@ class ResolveViewModel(
     private fun supportsGuestDownload(): Boolean =
         currentPlatform == SharePlatform.QUARK ||
             currentPlatform == SharePlatform.UC ||
+            currentPlatform == SharePlatform.BAIDU ||
             currentPlatform == SharePlatform.GUANGYA ||
             currentPlatform == SharePlatform.ILANZOU ||
             currentPlatform == SharePlatform.LANZOU
@@ -1665,7 +1672,11 @@ class ResolveViewModel(
                         downloadError = "下载需要先登录${platformName()}（未登录仅能浏览文件列表）"
                         return@launch
                     }
-                    currentRepo().getGuestShareDownloadLink(s, file)
+                    if (currentPlatform == SharePlatform.BAIDU) {
+                        currentRepo().getShareDownloadLink(s, file, "")
+                    } else {
+                        currentRepo().getGuestShareDownloadLink(s, file)
+                    }
                         .onSuccess { downloadLink = it }
                         .onFailure { downloadError = it.message ?: "获取下载链接失败" }
                     return@launch

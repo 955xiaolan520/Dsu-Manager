@@ -64,6 +64,14 @@ object MagnetLink {
         return text.length > SCHEME.length && text.regionMatches(0, SCHEME, 0, SCHEME.length, ignoreCase = true)
     }
 
+    /** 远程种子文件也走 Gopeed BT；文件内容由引擎从 URL 获取。 */
+    fun isBitTorrent(url: String): Boolean {
+        val text = url.trim().lowercase()
+        return isMagnet(text) ||
+            (text.startsWith("http://") || text.startsWith("https://")) &&
+            text.substringBefore('?').substringBefore('#').endsWith(".torrent")
+    }
+
     /** 去掉剪贴板换行和不可见空白；已编码的 %20 不会被破坏。 */
     fun normalize(url: String): String = url.trim().replace(URI_WHITESPACE, "")
 
