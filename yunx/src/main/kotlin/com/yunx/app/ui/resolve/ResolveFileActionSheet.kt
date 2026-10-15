@@ -194,11 +194,11 @@ internal fun ResolveFileActionSheet(
                         },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("今日百度公益解析口令") },
-                        placeholder = { Text("从官方“获取解析密码”页面复制") },
+                        placeholder = { Text("粘贴服务端当前有效的每日口令") },
                         singleLine = true
                     )
                     Text(
-                        "口令会保存在本机；每天需手动更新。解析时分享链接、提取码和口令会发送至 mf.dg22.top，不发送百度账号 Cookie。",
+                        "口令会保存在本机；每天需手动更新。请填写公益解析服务端口令（不是百度分享提取码）。解析时分享链接、提取码和口令会发送至 mf.dg22.top，不发送百度账号 Cookie。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
