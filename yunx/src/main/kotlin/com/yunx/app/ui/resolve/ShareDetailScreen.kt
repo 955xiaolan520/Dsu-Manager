@@ -189,6 +189,7 @@ fun ShareDetailScreen(
     val context = LocalContext.current
     val baiduSettings = remember { SettingsRepository(context) }
     var baiduLimitDismissed by remember { mutableStateOf(baiduSettings.baiduLimitHintDismissed) }
+    var baiduPublicParserPassword by remember { mutableStateOf(baiduSettings.baiduPublicParsePassword) }
     var showBaiduLimitDialog by remember { mutableStateOf(false) }
     var pendingBaiduAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     // 「添加至收藏」弹窗
@@ -564,6 +565,17 @@ fun ShareDetailScreen(
                 // 百度分享 >300MB 限速提示（与原来直接点击文件时一致）
                 checkBaiduLimit(file) { viewModel.fetchDownloadLink(file) }
             },
+            onPublicDownload = if (viewModel.isBaidu && !file.isdir) {
+                {
+                    actionFile = null
+                    viewModel.fetchBaiduPublicDownloadLink(file)
+                }
+            } else null,
+            manualPublicPassword = baiduPublicParserPassword,
+            onManualPublicPasswordChange = { value ->
+                baiduPublicParserPassword = value
+                baiduSettings.baiduPublicParsePassword = value
+            },
             onDownloadFolder = {
                 actionFile = null
                 viewModel.downloadFolder(file)
@@ -629,6 +641,8 @@ private fun GuestBrowseNotice(platform: SharePlatform) {
                         "未登录浏览：可直接下载约 50MB 以内的小文件；更大的文件和转存需先到「网盘」页登录"
                     SharePlatform.UC ->
                         "未登录浏览：可直接下载（不限大小）；转存需先到「网盘」页登录"
+                    SharePlatform.BAIDU ->
+                        "未登录浏览：可查看分享列表；单个小于 10 GiB 的文件可选公益解析下载，账号下载/转存需登录"
                     else ->
                         "未登录浏览：可查看文件列表，下载/转存需先到「网盘」页登录"
                 },

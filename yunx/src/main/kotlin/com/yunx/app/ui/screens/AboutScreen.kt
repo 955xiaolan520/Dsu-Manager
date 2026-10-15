@@ -157,7 +157,13 @@ fun AboutScreen(
                 InfoCard(
                     icon = Icons.Outlined.Info,
                     title = "功能由来",
-                    description = "本功能集成自 CYQawa/YunX 开源网盘解析项目，保留多平台登录、分享解析与文件浏览能力，并适配 Dsu 管理器原生 aria2c 下载通道及 DNA 液态玻璃界面。",
+                    description = "本功能集成自 CYQawa/YunX 开源网盘解析项目，保留多平台登录、分享解析与文件浏览能力，并适配 Dsu 管理器原生 aria2c 下载通道及 DNA 液态玻璃界面。百度免登录公益解析参考 z7786/wenxi；种子/磁力任务接入 Gopeed 官方引擎，并由 Dsu 内置文件管理器选取本地种子。",
+                    embeddedMode = true
+                )
+                InfoCard(
+                    icon = Icons.Outlined.Code,
+                    title = "开源来源与感谢",
+                    description = "感谢 CYQawa/YunX 提供网盘解析基础，感谢 z7786/wenxi 的百度公益解析流程参考，感谢 GopeedLab/gopeed 提供 BT/磁力引擎与 API 设计，以及 CYQawa/yunx_gopeed_build 提供按设备架构分发的内核。百度公益解析会将分享链接和提取码发送给第三方解析服务；Gopeed 内核由用户按需下载，不随 APK 打包。",
                     embeddedMode = true
                 )
                 FeatureCard(embeddedMode = true)

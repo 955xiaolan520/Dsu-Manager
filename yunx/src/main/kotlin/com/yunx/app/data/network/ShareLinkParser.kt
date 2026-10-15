@@ -37,6 +37,11 @@ data class ParsedShare(
 object ShareLinkParser {
 
     private val urlRegex = Regex("""https?://[^\s]+""")
+    // 百度分享文案常把 /s/、分享码、?pwd= 拆成多行；在百度专用分支先跨空白拼回 URL。
+    private val baiduShareBlockRegex = Regex(
+        """(https?://pan\.baidu\.com/s/)\s*([A-Za-z0-9_-](?:[\sA-Za-z0-9_-]{0,120}))(?:\?([A-Za-z0-9_=&%-]+))?""",
+        RegexOption.IGNORE_CASE
+    )
     private val quarkShareIdRegex = Regex("""pan\.quark\.cn/s/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
     private val ucShareIdRegex = Regex("""drive\.uc\.cn/s/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
     private val xunleiShareIdRegex = Regex("""pan\.xunlei\.com/s/([A-Za-z0-9_-]+)""", RegexOption.IGNORE_CASE)
@@ -74,7 +79,11 @@ object ShareLinkParser {
     private val pwdInTextRegex = Regex("""(?:提取码|访问码|密码)[：:]\s*([A-Za-z0-9]{4,8})""")
 
     fun parse(text: String): ParsedShare? {
-        val url = urlRegex.find(text.trim())?.value
+        val baiduUrl = baiduShareBlockRegex.find(text)?.let { match ->
+            match.groupValues[1] + match.groupValues[2].filterNot(Char::isWhitespace) +
+                match.groupValues[3].takeIf(String::isNotBlank)?.let { "?$it" }.orEmpty()
+        }
+        val url = (baiduUrl ?: urlRegex.find(text.trim())?.value)
             ?.trimEnd('。', '，', ',', '；', ';', ')', ']', '}', '"', '\'')
             ?: return null
         // 夸克链接

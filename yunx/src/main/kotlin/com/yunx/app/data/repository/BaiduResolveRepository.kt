@@ -20,23 +20,33 @@ package com.yunx.app.data.repository
 
 import com.yunx.app.data.network.BaiduApi
 import com.yunx.app.data.network.BaiduConstants
+import com.yunx.app.data.network.BaiduPublicParser
 import com.yunx.app.data.network.ShareLinkParser
 import com.yunx.app.data.network.model.DownloadLink
 import com.yunx.app.data.network.model.ShareFile
 import com.yunx.app.data.network.model.ShareSession
+import com.yunx.app.data.prefs.SettingsRepository
 
 /**
  * 百度分享解析仓库：verify 拿 sekey → xpan/share 列文件 → 转存临时目录（自动创建，失败回退根目录）→ locatedownload 拿 appall 高速链 → 立即删除临时转存。
  * 全部基于抓包链路（share/verify → xpan/share list → share/transfer → locatedownload）。
  * appall 直链 URL 自带签名、删除转存后仍有效，故取链成功后立即删除临时转存（失败不阻断）。
  */
-class BaiduResolveRepository(private val api: BaiduApi) : ShareResolveRepository {
+class BaiduResolveRepository(
+    private val api: BaiduApi,
+    private val settings: SettingsRepository? = null
+) : ShareResolveRepository {
 
     /** surl -> sekey（verify 返回的 randsk） */
     private val sekeys = mutableMapOf<String, String>()
 
     /** surl -> (share_id, uk)，由列表接口返回（转存必需） */
     private val shareInfos = mutableMapOf<String, Pair<String, String>>()
+    /** 分享口令只保留在内存中，供用户显式选择的免登录解析调用使用。 */
+    private val sharePasswords = mutableMapOf<String, String>()
+    private val publicParser = BaiduPublicParser(
+        passwordProvider = { settings?.baiduPublicParsePassword.orEmpty() }
+    )
 
     override suspend fun createSession(link: String, pwd: String?, cookie: String): Result<ShareSession> =
         runCatching {
@@ -46,6 +56,8 @@ class BaiduResolveRepository(private val api: BaiduApi) : ShareResolveRepository
             // 修复：公共分享（pwd 为空）不强制提取码——跳过 verify，sekey 置空，
             // listShare 将不带 sekey 直接列出（抓包实证：公共分享无需 sekey/Cookie 即 errno=0）
             val effectivePwd = pwd?.takeIf { it.isNotBlank() } ?: parsed.pwd
+            sharePasswords[surl] = effectivePwd.orEmpty()
+            while (sharePasswords.size > 64) sharePasswords.remove(sharePasswords.keys.first())
             val sekey = if (effectivePwd.isNullOrBlank()) {
                 ""
             } else {
@@ -132,6 +144,14 @@ class BaiduResolveRepository(private val api: BaiduApi) : ShareResolveRepository
             downloadUrl = dlink,
             size = file.fsize
         )
+    }.fold(
+        onSuccess = { Result.success(it) },
+        onFailure = { Result.failure(it) }
+    )
+
+    /** 用户显式选择后，通过匿名公益解析服务获取单文件直链；不发送百度账号 Cookie。 */
+    suspend fun getPublicShareDownloadLink(session: ShareSession, file: ShareFile): Result<DownloadLink> = runCatching {
+        publicParser.downloadLink(session.shareId, sharePasswords[session.shareId].orEmpty(), file)
     }.fold(
         onSuccess = { Result.success(it) },
         onFailure = { Result.failure(it) }

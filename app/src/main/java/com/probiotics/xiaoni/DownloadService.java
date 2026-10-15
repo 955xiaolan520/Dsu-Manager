@@ -10,6 +10,7 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import com.yunx.app.data.gopeed.GopeedEngine;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -33,6 +34,7 @@ import org.json.JSONObject;
  */
 public final class DownloadService extends Service {
     public static final String ACTION_START = "com.probiotics.xiaoni.download.START";
+    public static final String ACTION_START_BT = "com.probiotics.xiaoni.download.START_BT";
     public static final String ACTION_PAUSE = "com.probiotics.xiaoni.download.PAUSE";
     public static final String ACTION_RESUME = "com.probiotics.xiaoni.download.RESUME";
     public static final String ACTION_CANCEL = "com.probiotics.xiaoni.download.CANCEL";
@@ -56,6 +58,9 @@ public final class DownloadService extends Service {
     public static final String EXTRA_HEADERS_ENCRYPTED = "headers_encrypted";
     /** Optional top-level directory grouping for files originating from a YunX folder download. */
     public static final String EXTRA_FOLDER_ROOT = "folder_root";
+    public static final String EXTRA_BT_NAME = "bt_name";
+    public static final String EXTRA_BT_SELECTED_FILES = "bt_selected_files";
+    public static final String EXTRA_BT_DIRECTORY = "bt_directory";
     /** Source partition: "yunx" for parser downloads, "dsu" for host downloads. */
     public static final String EXTRA_SOURCE = "source";
     public static final String SOURCE_DSU = "dsu";
@@ -106,18 +111,23 @@ public final class DownloadService extends Service {
 
     /** 单个下载任务：独立的状态、断点、通知槽位与工作线程 */
     private static final class Task {
-        final String id;          // 输出文件绝对路径（唯一标识）
+        String id;                // 唯一标识；BT 任务完成后输出路径会变，ID 保持稳定
         final String address;     // 原始下载地址（持久化与镜像回退的基准，不可变）
         volatile String liveAddress;   // v3.9.16：实际下载地址（GitHub 镜像回退时改写）
         int mirrorIndex;          // v3.9.16：已尝试的加速镜像数
-        final File output;
+        volatile File output;
         final String page;        // 来源页面（RomActivity / VivoActivity / OPlusOtaActivity…）
         final String pkg;         // 包类型文案（卡刷包 / vivo OTA / OPlus OTA…）
         final int threads;
         final long chunkMB;
         final String headersEncrypted;
-        final String folderRoot;
+        volatile String folderRoot;
         final String source;
+        volatile boolean gopeedBt;
+        volatile String gopeedTaskId = "";
+        volatile String btName = "";
+        volatile File btDirectory;
+        volatile int[] btSelectedFiles = new int[0];
         final Object pauseLock = new Object();
         volatile boolean paused;
         volatile boolean cancelled;
@@ -261,6 +271,45 @@ public final class DownloadService extends Service {
             synchronized (listLock) { tasks.add(task); }
             startOrQueue(task);
             ensureForeground();   // 有活跃任务必须满足 startForegroundService 5 秒契约
+        } else if (ACTION_START_BT.equals(action)) {
+            String address = intent.getStringExtra(EXTRA_ADDRESS);
+            String output = intent.getStringExtra(EXTRA_OUTPUT);
+            String directory = intent.getStringExtra(EXTRA_BT_DIRECTORY);
+            if (address == null || !address.startsWith("magnet:") || output == null || directory == null) {
+                quitIdle(startId);
+                return START_NOT_STICKY;
+            }
+            warnIfNotificationsDisabled();
+            Task task = findTask(output);
+            if (task != null) {
+                broadcastTask(task, task.message, -1, -1);
+                ensureForeground();
+                return START_STICKY;
+            }
+            File saveDir;
+            try {
+                saveDir = new File(directory).getCanonicalFile();
+                if (!saveDir.isDirectory() && !saveDir.mkdirs()) throw new IllegalStateException("无法创建下载目录");
+                if (!saveDir.isDirectory() || !saveDir.canWrite()) throw new IllegalStateException("下载目录不可写");
+            } catch (Exception error) {
+                android.widget.Toast.makeText(getApplicationContext(),
+                        "BT 下载目录不可用：" + (error.getMessage() == null ? "请检查存储权限" : error.getMessage()),
+                        android.widget.Toast.LENGTH_LONG).show();
+                quitIdle(startId);
+                return START_NOT_STICKY;
+            }
+            String pkg = intent.getStringExtra(EXTRA_PACKAGE) == null ? "BT 种子/磁力" : intent.getStringExtra(EXTRA_PACKAGE);
+            task = new Task(output, address, new File(output),
+                    intent.getStringExtra(EXTRA_PAGE) == null ? "DownloadManagerActivity" : intent.getStringExtra(EXTRA_PAGE),
+                    pkg, 1, 1, "", "", inferSource(intent.getStringExtra(EXTRA_SOURCE), pkg));
+            task.gopeedBt = true;
+            task.btName = intent.getStringExtra(EXTRA_BT_NAME) == null ? "BT 下载" : intent.getStringExtra(EXTRA_BT_NAME);
+            task.btDirectory = saveDir;
+            int[] indexes = intent.getIntArrayExtra(EXTRA_BT_SELECTED_FILES);
+            task.btSelectedFiles = indexes == null ? new int[0] : indexes.clone();
+            synchronized (listLock) { tasks.add(task); }
+            startOrQueue(task);
+            ensureForeground();
         } else if (ACTION_PAUSE.equals(action)) {
             Task task = targetTask(intent);
             if (task == null || task.pending) {
@@ -429,6 +478,10 @@ public final class DownloadService extends Service {
     // ---------- 任务工作线程（每任务一个，逻辑同 v3.8.6 单任务引擎） ----------
 
     private void runTask(Task task) {
+        if (task.gopeedBt) {
+            runGopeedBtTask(task);
+            return;
+        }
         if (!isValidHttpAddress(task.address)) {
             broadcastTask(task, "下载地址无效，请重新获取完整 HTTP(S) 直链", task.output.length(), -1);
             endTask(task, "下载地址无效", false);
@@ -540,6 +593,142 @@ public final class DownloadService extends Service {
         }
     }
 
+    /** BT/magnet tasks use the already integrated Gopeed engine; no extra runtime is added to the APK. */
+    private void runGopeedBtTask(Task task) {
+        try {
+            if (task.btDirectory == null || task.btSelectedFiles.length == 0) {
+                endTask(task, "BT 文件选择为空", false);
+                return;
+            }
+            broadcastTask(task, "正在连接 Gopeed BT 引擎…", -1, -1);
+            GopeedEngine.INSTANCE.syncInstalledState(this);
+            if (!GopeedEngine.INSTANCE.isInstalled(this)) throw new IllegalStateException("未导入 Gopeed 下载引擎");
+            GopeedEngine.INSTANCE.start(this, task.btDirectory);
+            java.util.List<Integer> selected = new java.util.ArrayList<>();
+            for (int index : task.btSelectedFiles) selected.add(index);
+            if (task.gopeedTaskId == null || task.gopeedTaskId.isEmpty()) {
+                task.gopeedTaskId = GopeedEngine.INSTANCE.createTask(task.address, task.btDirectory,
+                        java.util.Collections.emptyMap(), 0, task.btName,
+                        java.util.Collections.singletonMap("dsu_task_id", task.id), selected);
+                persistTasks();
+            } else {
+                try {
+                    GopeedEngine.TaskView existing = GopeedEngine.INSTANCE.taskStatus(task.gopeedTaskId);
+                    if ("pause".equalsIgnoreCase(existing.getStatus())) GopeedEngine.INSTANCE.continueTask(task.gopeedTaskId);
+                } catch (Throwable staleId) {
+                    task.gopeedTaskId = GopeedEngine.INSTANCE.createTask(task.address, task.btDirectory,
+                            java.util.Collections.emptyMap(), 0, task.btName,
+                            java.util.Collections.singletonMap("dsu_task_id", task.id), selected);
+                    persistTasks();
+                }
+            }
+            broadcastTask(task, "正在下载 BT：" + task.btName, 0, -1);
+            boolean enginePaused = false;
+            long lastProgressAt = System.currentTimeMillis();
+            long lastProgressBytes = task.done;
+            while (!task.cancelled) {
+                if (task.paused) {
+                    if (!enginePaused) {
+                        runCatchingGopeedPause(task.gopeedTaskId, true);
+                        enginePaused = true;
+                    }
+                    synchronized (task.pauseLock) {
+                        while (task.paused && !task.cancelled) {
+                            try { task.pauseLock.wait(); } catch (InterruptedException ignored) { }
+                        }
+                    }
+                    if (task.cancelled) break;
+                    runCatchingGopeedPause(task.gopeedTaskId, false);
+                    enginePaused = false;
+                }
+                GopeedEngine.TaskView status = GopeedEngine.INSTANCE.taskStatus(task.gopeedTaskId);
+                task.done = status.getDownloaded();
+                task.total = status.getTotal();
+                task.speed = status.getSpeed();
+                task.eta = task.speed > 0 && task.total > task.done ? (task.total - task.done) / task.speed : -1;
+                if (task.done > lastProgressBytes) {
+                    lastProgressBytes = task.done;
+                    lastProgressAt = System.currentTimeMillis();
+                }
+                if ("done".equalsIgnoreCase(status.getStatus())) {
+                    GopeedEngine.TaskDetail detail = GopeedEngine.INSTANCE.taskDetail(task.gopeedTaskId);
+                    String resolvedName = detail.getName().isBlank() ? task.btName : detail.getName();
+                    File actual = new File(task.btDirectory, safeBtOutputName(resolvedName));
+                    if (!actual.exists()) throw new IllegalStateException("Gopeed 报告完成，但目标文件或目录不存在：" + actual.getName());
+                    task.output = actual;
+                    task.btName = actual.getName();
+                    task.folderRoot = detail.getFolder() ? actual.getAbsolutePath() : "";
+                    long size = folderBytes(actual);
+                    if (size <= 0L) size = Math.max(task.done, task.total);
+                    task.done = size;
+                    task.total = size;
+                    recordHistory(this, actual.getName(), actual.getAbsolutePath(), size,
+                            "done", task.folderRoot, task.source);
+                    broadcastTask(task, "下载完成 · " + Aria2Downloader.formatBytes(size), size, size);
+                    endTask(task, "下载完成 · " + Aria2Downloader.formatBytes(size), true);
+                    return;
+                }
+                if ("error".equalsIgnoreCase(status.getStatus())) {
+                    endTask(task, "下载失败：Gopeed BT 引擎返回错误", false);
+                    return;
+                }
+                String normalizedStatus = status.getStatus() == null ? "" : status.getStatus().toLowerCase(java.util.Locale.ROOT);
+                String state;
+                if ("pause".equals(normalizedStatus) || "paused".equals(normalizedStatus)) {
+                    state = "已暂停";
+                } else if ("wait".equals(normalizedStatus) || "ready".equals(normalizedStatus)) {
+                    state = "wait".equals(normalizedStatus) ? "等待 BT 下载队列" : "正在准备 BT 连接";
+                } else if (System.currentTimeMillis() - lastProgressAt >= 25_000L) {
+                    state = "等待 BT 数据源（尚未收到分片，请检查 Tracker/DHT 与做种者）";
+                } else {
+                    state = "正在下载 BT：" + task.btName;
+                }
+                broadcastTask(task, state, task.done, task.total);
+                notifyTaskThrottled(task);
+                Thread.sleep(1000L);
+            }
+            if (!task.gopeedTaskId.isEmpty()) runCatchingGopeedDelete(task.gopeedTaskId);
+            endTask(task, "下载已取消", false);
+        } catch (Throwable error) {
+            if (task.cancelled) {
+                if (task.gopeedTaskId != null && !task.gopeedTaskId.isEmpty()) runCatchingGopeedDelete(task.gopeedTaskId);
+                endTask(task, "下载已取消", false);
+                return;
+            }
+            endTask(task, "下载失败：" + (error.getMessage() == null ? "Gopeed BT 任务异常" : error.getMessage()), false);
+        }
+    }
+
+    private String safeBtOutputName(String name) {
+        String value = name == null ? "" : name.replace('\\', '/');
+        int slash = value.lastIndexOf('/');
+        if (slash >= 0) value = value.substring(slash + 1);
+        value = value.replaceAll("[\\p{Cntrl}]", "_").trim();
+        if (value.isEmpty() || value.equals(".") || value.equals("..")) return "BT 下载";
+        return value;
+    }
+
+    private long folderBytes(File file) {
+        if (file.isFile()) return file.length();
+        File[] children = file.listFiles();
+        if (children == null) return 0L;
+        long total = 0L;
+        for (File child : children) {
+            long size = folderBytes(child);
+            total = Long.MAX_VALUE - total < size ? Long.MAX_VALUE : total + size;
+        }
+        return total;
+    }
+
+    private void runCatchingGopeedPause(String id, boolean pause) {
+        try { if (pause) GopeedEngine.INSTANCE.pauseTask(id); else GopeedEngine.INSTANCE.continueTask(id); }
+        catch (Throwable ignored) { }
+    }
+
+    private void runCatchingGopeedDelete(String id) {
+        try { GopeedEngine.INSTANCE.deleteTask(id); } catch (Throwable ignored) { }
+    }
+
     /**
      * 任务结束统一收尾：移除任务、取消槽位通知、发最终通知、
      * 接续排队任务、必要时重新绑定前台通知或停止服务。
@@ -647,7 +836,16 @@ public final class DownloadService extends Service {
                         .put("done", task.done)
                         .put("total", task.total)
                         .put("speed", task.speed)
-                        .put("eta", task.eta);
+                        .put("eta", task.eta)
+                        .put("gopeed_bt", task.gopeedBt)
+                        .put("gopeed_task_id", task.gopeedTaskId)
+                        .put("display_name", task.gopeedBt ? task.btName : task.output.getName());
+                if (task.gopeedBt) {
+                    row.put("bt_directory", task.btDirectory == null ? "" : task.btDirectory.getAbsolutePath());
+                    JSONArray selected = new JSONArray();
+                    for (int index : task.btSelectedFiles) selected.put(index);
+                    row.put("bt_selected_files", selected);
+                }
                 runtime.put(row);
                 if (SOURCE_YUNX.equals(task.source)) yunxQueue.put(row);
                 else dsuQueue.put(row);
@@ -687,6 +885,19 @@ public final class DownloadService extends Service {
                             item.optString("headers_encrypted", ""),
                             item.optString("folder_root", ""),
                             inferSource(item.optString("source", ""), pkg));
+                    task.id = item.optString("id", output);
+                    task.gopeedBt = item.optBoolean("gopeed_bt", false);
+                    task.gopeedTaskId = item.optString("gopeed_task_id", "");
+                    task.btName = item.optString("display_name", item.optString("bt_name", "BT 下载"));
+                    String btDir = item.optString("bt_directory", "");
+                    task.btDirectory = task.gopeedBt
+                            ? new File(btDir.isEmpty() ? new File(output).getParent() : btDir)
+                            : null;
+                    JSONArray selected = item.optJSONArray("bt_selected_files");
+                    if (selected != null) {
+                        task.btSelectedFiles = new int[selected.length()];
+                        for (int j = 0; j < selected.length(); j++) task.btSelectedFiles[j] = selected.optInt(j, -1);
+                    }
                     task.pending = "pending".equals(item.optString("state", "downloading"));
                     task.paused = "paused".equals(item.optString("state", "downloading"));
                     task.message = item.optString("message", "正在准备下载");
@@ -789,8 +1000,7 @@ public final class DownloadService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         long done = task.done, total = task.total;
         int percent = total > 0 && done >= 0 ? (int) (done * 100 / total) : -1;
-        String title = task.paused ? "已暂停: " : "正在下载: " + task.output.getName();
-        if (task.paused) title = "已暂停: " + task.output.getName();
+        String title = task.paused ? "已暂停: " + taskDisplayName(task) : "正在下载: " + taskDisplayName(task);
         StringBuilder body = new StringBuilder();
         if (percent >= 0) body.append(percent).append("%");
         if (done >= 0 && total > 0) {
@@ -834,8 +1044,9 @@ public final class DownloadService extends Service {
         Intent open = managerIntent(task);
         PendingIntent pending = PendingIntent.getActivity(this, id, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        long actualSize = task.output.exists() ? task.output.length() : Math.max(0, task.done);
-        String fileName = task.output.getName();
+        long actualSize = task.gopeedBt ? Math.max(0, task.done)
+                : task.output.exists() ? task.output.length() : Math.max(0, task.done);
+        String fileName = taskDisplayName(task);
         String title = completed ? "下载完成：" + fileName
                 : (text != null && text.startsWith("下载已取消") ? "下载已取消：" : "下载失败：") + fileName;
         String body = completed
@@ -852,6 +1063,11 @@ public final class DownloadService extends Service {
                 .setAutoCancel(true)
                 .build();
         try { getSystemService(NotificationManager.class).notify(id, done); } catch (Exception ignored) { }
+    }
+
+    private String taskDisplayName(Task task) {
+        return task.gopeedBt && task.btName != null && !task.btName.isBlank()
+                ? task.btName : task.output.getName();
     }
 
     private Intent managerIntent(Task task) {

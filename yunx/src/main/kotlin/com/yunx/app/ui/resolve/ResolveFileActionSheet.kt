@@ -35,6 +35,9 @@ import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ModalBottomSheet
 import com.yunx.app.ui.components.rememberOperationSheetState
 import com.yunx.app.ui.components.OperationSheet
@@ -54,7 +57,7 @@ import com.yunx.app.ui.theme.effectsFast
 import kotlinx.coroutines.launch
 
 /** 解析页文件操作弹窗内的步骤：主菜单 / 转存目录选择 */
-private enum class ResolveActionStep { MENU, SAVE }
+private enum class ResolveActionStep { MENU, DOWNLOAD_METHOD, SAVE }
 
 /**
  * 解析页文件操作弹窗（点击文件行打开；文件夹行由行尾「更多」按钮打开）。
@@ -81,6 +84,11 @@ internal fun ResolveFileActionSheet(
     onDownload: () -> Unit,
     /** 文件夹：递归下载整个文件夹 */
     onDownloadFolder: () -> Unit,
+    /** 百度单文件：走匿名公益解析服务，UI 必须明确披露会发送分享链接/提取码 */
+    onPublicDownload: (() -> Unit)? = null,
+    /** 百度公益解析每日口令：应用私有本地缓存 */
+    manualPublicPassword: String = "",
+    onManualPublicPasswordChange: (String) -> Unit = {},
     /** 点「转存」时准备转存状态（`ResolveViewModel.requestSave`），随后切到转存步骤 */
     onSave: () -> Unit,
     onDismiss: () -> Unit,
@@ -88,6 +96,7 @@ internal fun ResolveFileActionSheet(
     saveStep: @Composable (onBack: () -> Unit, onDone: () -> Unit) -> Unit
 ) {
     var step by remember { mutableStateOf(ResolveActionStep.MENU) }
+    var publicPasswordMissing by remember { mutableStateOf(false) }
 
     val sheetState = rememberOperationSheetState(saving)
     val scope = rememberCoroutineScope()
@@ -138,9 +147,12 @@ internal fun ResolveFileActionSheet(
                         ActionItem(
                             icon = Icons.Outlined.Download,
                             title = "下载",
-                            desc = "获取下载链接并保存到本机",
+                            desc = if (onPublicDownload != null) "选择公益免登录解析，或使用百度账号下载" else "获取下载链接并保存到本机",
                             tint = MaterialTheme.colorScheme.primary,
-                            onClick = { act(onDownload) }
+                            onClick = {
+                                if (onPublicDownload != null) step = ResolveActionStep.DOWNLOAD_METHOD
+                                else act(onDownload)
+                            }
                         )
                     }
 
@@ -157,6 +169,67 @@ internal fun ResolveFileActionSheet(
                             }
                         )
                     }
+                }
+
+                ResolveActionStep.DOWNLOAD_METHOD -> Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 32.dp)
+                ) {
+                    FileSheetHeader(file = file)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text("解析方式", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "请选择百度网盘分享文件的下载方式。公益解析无需登录；账号下载使用已登录的百度账号。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = manualPublicPassword,
+                        onValueChange = { value ->
+                            val normalized = value.take(512)
+                            onManualPublicPasswordChange(normalized)
+                            publicPasswordMissing = normalized.isBlank()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("今日百度公益解析口令") },
+                        placeholder = { Text("从官方“获取解析密码”页面复制") },
+                        singleLine = true
+                    )
+                    Text(
+                        "口令会保存在本机；每天需手动更新。解析时分享链接、提取码和口令会发送至 mf.dg22.top，不发送百度账号 Cookie。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (publicPasswordMissing) {
+                        Text(
+                            "请先填写今日口令，再开始公益解析。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    ActionItem(
+                        icon = Icons.Outlined.Download,
+                        title = "公益解析",
+                        desc = "无需百度登录；仅支持单文件且小于 10 GiB。",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        onClick = {
+                            if (manualPublicPassword.isBlank()) {
+                                publicPasswordMissing = true
+                            } else {
+                                act { onPublicDownload?.invoke() }
+                            }
+                        }
+                    )
+                    ActionItem(
+                        icon = Icons.Outlined.Download,
+                        title = "账号下载",
+                        desc = "使用已登录的百度网盘账号获取下载链接；未登录时会提示先登录。",
+                        tint = MaterialTheme.colorScheme.primary,
+                        onClick = { act(onDownload) }
+                    )
+                    TextButton(onClick = { step = ResolveActionStep.MENU }) { Text("返回") }
                 }
 
                 // 转存步骤：转存中不允许返回菜单（返回后进度提示会随内容一起消失）

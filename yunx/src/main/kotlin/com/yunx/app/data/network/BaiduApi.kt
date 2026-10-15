@@ -402,28 +402,27 @@ suspend fun listShare(surl: String, sekey: String, dir: String, cookie: String, 
                 .header("Referer", "https://yun.baidu.com/disk/main")
                 .get()
                 .build()
-            val pageFiles = runCatching {
-                val json = executeJson(request)
-                if (json.optInt("errno") != 0) return@runCatching emptyList()
-                val array = json.optJSONArray("list") ?: return@runCatching emptyList()
-                buildList {
-                    for (i in 0 until array.length()) {
-                        val item = array.optJSONObject(i) ?: continue
-                        add(
-                            ShareFile(
-                                fid = item.optString("fs_id"),
-                                fname = item.optString("server_filename"),
-                                fsize = item.optLong("size"),
-                                isdir = item.optInt("isdir") == 1,
-                                pdirFid = dir,
-                                fidToken = item.optString("path"),
-                                modifyTime = item.optString("server_mtime")
-                            )
+            val json = executeJson(request)
+            checkErrno(json, "加载百度网盘目录失败")
+            val array = json.optJSONArray("list")
+                ?: throw BaiduApiException("百度网盘目录响应缺少文件列表，不能按空目录处理")
+            val pageFiles = buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    add(
+                        ShareFile(
+                            fid = item.optString("fs_id"),
+                            fname = item.optString("server_filename"),
+                            fsize = item.optLong("size"),
+                            isdir = item.optInt("isdir") == 1,
+                            pdirFid = dir,
+                            fidToken = item.optString("path"),
+                            modifyTime = item.optString("server_mtime")
                         )
-                    }
+                    )
                 }
-            }.getOrDefault(emptyList())
-            // 空页（含单页请求失败）视为已到末页，停止翻页
+            }
+            // 只有 errno=0 且 list=[] 才是合法空目录；网络错误、登录失效与畸形响应均继续向 UI 抛出。
             if (pageFiles.isEmpty()) break
             all += pageFiles
             // 本页未满 100 → 已是最后一页；封顶 100 页防止异常死循环
@@ -581,13 +580,17 @@ suspend fun listShare(surl: String, sekey: String, dir: String, cookie: String, 
 
     private fun executeJson(request: Request): JSONObject {
         val response = client.newCall(request).execute()
-        val body = response.use { it.body?.string() ?: throw BaiduApiException("请求失败：响应为空") }
-        return runCatching { JSONObject(body) }.getOrElse {
-            throw BaiduApiException("响应解析失败")
+        return response.use {
+            val body = it.body?.string() ?: throw BaiduApiException("请求失败：响应为空")
+            if (!it.isSuccessful) throw BaiduApiException("请求失败（HTTP ${it.code}）")
+            runCatching { JSONObject(body) }.getOrElse {
+                throw BaiduApiException("响应解析失败")
+            }
         }
     }
 
     private fun checkErrno(json: JSONObject, fallback: String) {
+        if (!json.has("errno")) throw BaiduApiException("$fallback：百度响应缺少 errno 字段")
         val errno = json.optInt("errno")
         if (errno != 0) {
             // 常见：errno=-12 提取码错误 / 403 分享已失效 / 31066 文件不存在

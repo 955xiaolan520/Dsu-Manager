@@ -78,6 +78,15 @@ class SettingsRepository(context: Context) {
             prefs.edit().putString("engine_download_dir", value.trim()).apply()
         }
 
+    /** 百度公益解析每日口令：用户手动更新，保存在应用私有 SharedPreferences，不随网络请求自动刷新。 */
+    var baiduPublicParsePassword: String
+        get() = prefs.getString("baidu_public_parse_password", "")?.take(512).orEmpty()
+        set(value) {
+            val normalized = value.trim().take(512)
+            if (normalized.isEmpty()) prefs.edit().remove("baidu_public_parse_password").apply()
+            else prefs.edit().putString("baidu_public_parse_password", normalized).apply()
+        }
+
     /**
      * 最大同时下载任务数（默认 3，超出的任务排队等待）。
      *

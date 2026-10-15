@@ -19,6 +19,8 @@
 package com.yunx.app.ui.screens
 
 import android.Manifest
+import android.content.Context
+import android.os.Environment
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -88,6 +90,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -110,6 +113,7 @@ import com.yunx.app.util.PermissionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * 下载引擎页（设置 → 下载引擎）：一张卡片里上下两段，对应两套下载器（圆角图标块 + 标题 + 小标签 +
@@ -139,7 +143,11 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun DownloadEngineScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    embeddedMode: Boolean = false
+) {
     BackHandler { onBack() }
 
     val context = LocalContext.current
@@ -172,7 +180,9 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val downloadDir = remember(allFilesReady, legacyStorageReady) { GopeedEngine.resolveDownloadDir(context) }
+    val downloadDir = remember(allFilesReady, legacyStorageReady, embeddedMode) {
+        if (embeddedMode) GopeedEngine.btWorkspaceDir(context) else GopeedEngine.resolveDownloadDir(context)
+    }
 
     val engineOn = engineChoice == SettingsRepository.ENGINE_GOPEED
     val installed = soBytes > 0L
@@ -183,7 +193,20 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     // 硬拦截、主按钮的文案/行为都要用，不能只留在 Gopeed 段内部。
     val needAllFiles = PermissionState.allFilesAccessRequired() && !allFilesReady
     val needLegacyStorage = PermissionState.engineStoragePermissionPending(context)
-    val storageBlocked = needAllFiles || needLegacyStorage
+    val btOutputStorageBlocked = needAllFiles || needLegacyStorage
+    // Embedded BT metadata resolution runs in filesDir and must not be blocked by shared-storage access.
+    val storageBlocked = !embeddedMode && btOutputStorageBlocked
+    @Suppress("DEPRECATION")
+    val publicDownloads = remember(context) {
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+    }
+    val dsuBtDirectory = remember(publicDownloads) { File(publicDownloads, "DsuManager/种子磁力") }
+    val yunxBtDirectory = remember(context, publicDownloads) {
+        val configured = context.getSharedPreferences("yunx_settings", Context.MODE_PRIVATE)
+            .getString("dsu_download_dir_path", "")?.trim().orEmpty()
+        val root = if (configured.isBlank()) File(publicDownloads, "DsuManager/Yunpan") else File(configured)
+        File(root, "种子磁力")
+    }
 
     // ---------- 内核的云端获取 ----------
     // 阶段状态全在 KernelProvisioner 单例里（下载跑在它自己的 scope 上，切页/退后台都不影响），
@@ -322,15 +345,18 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        containerColor = if (embeddedMode) Color.Transparent else MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("下载引擎", style = MaterialTheme.typography.titleLarge) },
+                title = { Text(if (embeddedMode) "BT / 磁力下载引擎" else "下载引擎", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = if (embeddedMode) Color.Transparent else MaterialTheme.colorScheme.surface
+                )
             )
         }
     ) { innerPadding ->
@@ -345,7 +371,8 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             // sharedBounds / OverlayPage），再叠一层淡入上移只会和形变打架。
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "下载引擎决定新任务由谁来执行，已存在的任务不受影响。",
+                    if (embeddedMode) "此页只管理 BT / 磁力引擎；Dsu 普通网盘和 HTTP(S) 下载仍由 aria2c 处理。"
+                    else "下载引擎决定新任务由谁来执行，已存在的任务不受影响。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -365,21 +392,24 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         ) {
                             EngineSectionHeader(
                                 icon = Icons.Outlined.Download,
-                                title = "内置分片下载器",
+                                title = if (embeddedMode) "Dsu aria2c 下载器" else "内置分片下载器",
                                 badge = null,
                                 highlighted = !engineOn
                             )
                             Text(
-                                "项目自带的下载器：按网盘分片并发、断点续传，保存位置走系统 SAF / MediaStore" +
-                                    "（Android 10+ 不需要任何存储权限）。",
+                                if (embeddedMode) {
+                                    "Dsu 网盘和普通 HTTP(S) 下载继续由 aria2c 处理；Gopeed 仅用于 BT/磁力解析与任务。"
+                                } else {
+                                    "项目自带的下载器：按网盘分片并发、断点续传，保存位置走系统 SAF / MediaStore（Android 10+ 不需要任何存储权限）。"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             EngineActionButton(
-                                selected = !engineOn,
+                                selected = embeddedMode || !engineOn,
                                 icon = Icons.Outlined.SwapHoriz,
-                                label = if (engineOn) "切换到此引擎" else "使用中",
-                                enabled = engineOn,
+                                label = if (embeddedMode) "Dsu aria2c 固定用于普通下载" else if (engineOn) "切换到此引擎" else "使用中",
+                                enabled = !embeddedMode && engineOn,
                                 onClick = { chooseEngine(SettingsRepository.ENGINE_BUILTIN) }
                             )
                         }
@@ -399,14 +429,16 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         ) {
                             EngineSectionHeader(
                                 icon = Icons.Outlined.SwapHoriz,
-                                title = "Gopeed 引擎",
-                                badge = "实验性",
-                                highlighted = engineOn
+                                title = if (embeddedMode) "Gopeed BT / 磁力下载引擎" else "Gopeed 引擎",
+                                badge = if (embeddedMode) "BT 必需" else "实验性",
+                                highlighted = if (embeddedMode) installed else engineOn
                             )
                             Text(
-                                "内置 gomobile 核心：多连接分片且自带断点续传；" +
-                                    "它是原生核心，只能按真实文件路径落盘（默认公共 Download 目录，" +
-                                    "可在设置 →「下载保存目录」里自定义）。",
+                                if (embeddedMode) {
+                                    "磁力元数据解析和 BT 下载需要此内核。内核按设备架构单独从云端下载，不打进 APK；普通网盘下载仍走 Dsu aria2c。"
+                                } else {
+                                    "内置 gomobile 核心：多连接分片且自带断点续传；它是原生核心，只能按真实文件路径落盘（默认公共 Download 目录，可在设置 →「下载保存目录」里自定义）。"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -449,7 +481,8 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                             Text(
                                 if (installed) {
                                     "内核：${formatSize(soBytes)}" +
-                                        (if (engineVersion.isNotBlank()) "　·　核心版本 $engineVersion" else "")
+                                        (if (engineVersion.isNotBlank()) "　·　核心版本 $engineVersion" else "") +
+                                        (if (embeddedMode) "　·　应用私有存储" else "")
                                 } else {
                                     "内核：未导入（需要 libgopeed-<abi>.aar）"
                                 },
@@ -457,50 +490,66 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            // 内核就绪后才出现的细节：下载目录 + 存储权限
+                            // 内核就绪后的路径说明。BT 元数据工作区和最终用户下载目录必须分开显示。
                             AnimatedVisibility(
                                 visible = installed,
                                 enter = fadeIn(effectsDefault()),
                                 exit = fadeOut(effectsFast())
                             ) {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(
-                                        "下载目录：${downloadDir.absolutePath}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Text(
-                                        when {
-                                            needAllFiles ->
-                                                "存储权限：「所有文件访问」未授权，现在只能下到应用私有目录" +
-                                                    "（Android 11+ 的文件管理器也看不到那里）"
-                                            needLegacyStorage ->
-                                                "存储权限：还没授予存储权限，现在只能下到应用私有目录"
-                                            else ->
-                                                "存储权限：已就绪，引擎可直接写进上面的真实目录"
-                                        },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (storageBlocked) {
-                                            MaterialTheme.colorScheme.error
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                    if (embeddedMode) {
+                                        Text(
+                                            "内核文件（仅供引擎加载）：${GopeedEngine.soFile(context).absolutePath}\n这是 libgojni.so 的应用私有存放位置，不是解析工作目录，也不会保存下载文件。",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            "BT 解析工作区：${downloadDir.absolutePath}\n此为应用私有目录，仅供 Gopeed 保存引擎状态和磁力元数据；不需要共享存储权限，也不是最终下载位置。",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            "最终 BT 文件只写入任务指定的共享下载目录：\nDsu 下载管理器：${dsuBtDirectory.absolutePath}\n网盘解析页：${yunxBtDirectory.absolutePath}\n创建任务时会再次检查目标目录可写性；内核 lib 目录与解析工作区均不会作为下载目标。",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            if (btOutputStorageBlocked) {
+                                                "共享 Download 保存授权：Android 当前报告未授权。加入 BT 任务前必须授权，并会再次检查目标目录是否可写。"
+                                            } else {
+                                                "共享 Download 保存授权：Android 系统报告已授权；加入任务时仍会对实际目标目录做写入检查。"
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (btOutputStorageBlocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        if (btOutputStorageBlocked) {
+                                            TextButton(onClick = { requestStoragePermission() }) {
+                                                Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(if (needAllFiles) "去系统设置授权所有文件访问" else "授予存储权限")
+                                            }
                                         }
-                                    )
-                                    if (storageBlocked) {
-                                        TextButton(onClick = { requestStoragePermission() }) {
-                                            Icon(
-                                                Icons.Outlined.FolderOpen,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(Modifier.width(6.dp))
-                                            Text(
-                                                if (needAllFiles) {
-                                                    "去开启「所有文件访问」"
-                                                } else {
-                                                    "授予存储权限"
-                                                }
-                                            )
+                                    } else {
+                                        Text(
+                                            "下载目录：${downloadDir.absolutePath}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            when {
+                                                needAllFiles -> "存储权限：「所有文件访问」未授权，现在只能下到应用私有目录（Android 11+ 的文件管理器也看不到那里）"
+                                                needLegacyStorage -> "存储权限：还没授予存储权限，现在只能下到应用私有目录"
+                                                else -> "存储权限：已就绪，引擎可直接写进上面的真实目录"
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (storageBlocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        if (storageBlocked) {
+                                            TextButton(onClick = { requestStoragePermission() }) {
+                                                Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(if (needAllFiles) "去开启「所有文件访问」" else "授予存储权限")
+                                            }
                                         }
                                     }
                                 }
@@ -517,17 +566,26 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                                         else -> Icons.Outlined.SwapHoriz
                                     },
                                     label = when {
-                                        !installed -> "导入内核"
+                                        !installed -> if (embeddedMode) "下载 Gopeed BT 内核" else "导入内核"
+                                        embeddedMode && running -> "BT 引擎运行中"
                                         engineOn -> "使用中"
                                         // 没存储权限就不给切：按钮直接变成权限入口（点它去开权限，而不是切完再报错）
                                         storageBlocked -> "先授予存储权限"
-                                        else -> "切换到此引擎"
+                                        else -> if (embeddedMode) "启动 BT 引擎" else "切换到此引擎"
                                     },
-                                    enabled = !busy && (!installed || !engineOn),
+                                    enabled = !busy && (!installed || if (embeddedMode) !running else !engineOn),
                                     onClick = {
                                         when {
                                             !installed -> showKernelMenu = true
                                             storageBlocked -> requestStoragePermission()
+                                            embeddedMode -> action {
+                                                withContext(Dispatchers.IO) { GopeedEngine.start(context, downloadDir) }
+                                                engineVersion = withContext(Dispatchers.IO) {
+                                                    runCatching { GopeedEngine.engineVersion() }.getOrDefault("")
+                                                }
+                                                failure = GopeedEngine.lastError
+                                                notice = "Gopeed BT 引擎已启动"
+                                            }
                                             else -> chooseEngine(SettingsRepository.ENGINE_GOPEED)
                                         }
                                     }
@@ -562,7 +620,7 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                                     // 更不该让用户去启动/停止它（用户反馈：没切到 Gopeed 却能点「启动引擎」）。
                                     // 而且只留「重启」——都切到 Gopeed 了，单独「停止引擎」这个动作没有意义；
                                     // 引擎卡住时能自救的才是重启（停止 + 再启动，stop 是幂等的）。
-                                    if (engineOn) {
+                                    if (engineOn || embeddedMode) {
                                         TextButton(onClick = {
                                             action {
                                                 withContext(Dispatchers.IO) {
@@ -583,7 +641,7 @@ fun DownloadEngineScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                                                 modifier = Modifier.size(16.dp)
                                             )
                                             Spacer(Modifier.width(6.dp))
-                                            Text("重启引擎")
+                                            Text(if (embeddedMode) "重启 BT 引擎" else "重启引擎")
                                         }
                                     }
                                     TextButton(onClick = {

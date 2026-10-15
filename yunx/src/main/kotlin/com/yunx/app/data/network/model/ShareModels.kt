@@ -89,7 +89,9 @@ data class DownloadLink(
      * 登录态直链为空串 —— 那时下载用登录 Cookie（见 ResolveViewModel.enqueueDownload）；
      * 游客态下登录 Cookie 不存在，只能靠这份令牌过 CDN 校验（缺了夸克返回 412、UC 返回 403）。
      */
-    val guestCookie: String = ""
+    val guestCookie: String = "",
+    /** 特定公开解析器要求的直链请求头；优先于平台账号 Cookie 默认头。 */
+    val headers: Map<String, String> = emptyMap()
 )
 
 /** UC 转码播放流（绕过非会员视频下载被换成宣传片的问题；url 为 m3u8/fmp4 分片地址） */

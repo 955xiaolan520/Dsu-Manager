@@ -98,10 +98,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.yunx.app.data.db.BookmarkEntity
+import com.yunx.app.data.download.DsuNativeDownloadRouter
 import com.yunx.app.data.network.GitHubLinkParser
 import com.yunx.app.data.network.ShareLinkParser
 import com.yunx.app.data.network.SharePlatform
 import com.yunx.app.ui.SnackbarController
+import com.yunx.app.ui.BtDownloadDialog
 import com.mikepenz.markdown.m3.Markdown
 import com.yunx.app.ui.components.FileNameText
 import com.yunx.app.ui.components.GitHubMarkdownImageTransformer
@@ -175,6 +177,7 @@ fun ResolveScreen(
     var link by rememberSaveable { mutableStateOf("") }
     var pwd by rememberSaveable { mutableStateOf("") }
     var pwdEdited by rememberSaveable { mutableStateOf(false) }
+    var showBtDialog by remember { mutableStateOf(false) }
 
     // 剪贴板分享链接提示状态：待提示的剪贴板文本 + 已忽略的文本
     // 用 rememberSaveable：切换 Tab 后返回仍保留（避免「忽略后切页回来又弹」）
@@ -189,7 +192,7 @@ fun ResolveScreen(
             text.isNotBlank() &&
             text != link &&
             text != ignoredClipboard &&
-            (ShareLinkParser.parse(text) != null || GitHubLinkParser.parse(text) != null)
+            (ShareLinkParser.parse(text) != null || GitHubLinkParser.parse(text) != null || isBtInput(text))
         ) {
             clipboardSuggestion = text
         }
@@ -387,6 +390,8 @@ fun ResolveScreen(
                         val github = GitHubLinkParser.parse(bookmark.link)
                         if (github != null) {
                             viewModel.startGitHubResolve(github)
+                        } else if (isBtInput(bookmark.link)) {
+                            showBtDialog = true
                         } else {
                             viewModel.startResolve(bookmark.link, bookmark.pwd)
                         }
@@ -395,6 +400,7 @@ fun ResolveScreen(
                     onRemoveShortcut = { bookmark ->
                         bookmarkViewModel.setHomePinned(bookmark.id, false)
                     },
+                    onStartBt = { showBtDialog = true },
                     dsuEmbeddedStyle = dsuEmbeddedStyle
                 )
             }
@@ -423,9 +429,10 @@ fun ResolveScreen(
                 val shareParsed = ShareLinkParser.parse(suggestion)
                 val githubParsed = GitHubLinkParser.parse(suggestion)
                 ClipboardSuggestCard(
-                    platformName = when {
-                        githubParsed != null -> "GitHub"
-                        shareParsed != null -> platformLabel(shareParsed.platform)
+                platformName = when {
+                    githubParsed != null -> "GitHub"
+                    isBtInput(suggestion) -> "BT 种子/磁力"
+                    shareParsed != null -> platformLabel(shareParsed.platform)
                         else -> "网盘"
                     },
                     onPaste = {
@@ -436,6 +443,8 @@ fun ResolveScreen(
                         // GitHub 链接走 ViewModel 的 GitHub 解析入口（复用 ShareDetailScreen 框架）
                         if (githubParsed != null) {
                             viewModel.startGitHubResolve(githubParsed)
+                        } else if (isBtInput(suggestion)) {
+                            showBtDialog = true
                         } else {
                             viewModel.startResolve(suggestion, shareParsed?.pwd)
                         }
@@ -447,6 +456,23 @@ fun ResolveScreen(
                 )
             }
         }
+    }
+
+    if (showBtDialog) {
+        BtDownloadDialog(
+            title = "种子 / 磁力解析",
+            onDismiss = { showBtDialog = false },
+            onSubmit = { url, name, selectedFiles ->
+                val submitted = DsuNativeDownloadRouter.submitTorrent(
+                    context, url, name, selectedFiles, "yunx"
+                ) == true
+                if (submitted) {
+                    viewModel.requestDownloadTab()
+                    SnackbarController.show("已加入 Dsu 下载管理")
+                }
+                submitted
+            }
+        )
     }
 
     // 获取下载直链加载弹窗（转存/取链需要时间，避免无反馈）
@@ -528,6 +554,7 @@ private fun ResolveInputContent(
     onOpenBookmarks: () -> Unit,
     /** 长按快捷方式确认后从主页移除 */
     onRemoveShortcut: (BookmarkEntity) -> Unit,
+    onStartBt: () -> Unit,
     dsuEmbeddedStyle: Boolean
 ) {
     val isLoading = state is ResolveUiState.Loading
@@ -535,6 +562,7 @@ private fun ResolveInputContent(
     val startResolve: () -> Unit = {
         val github = GitHubLinkParser.parse(link)
         if (github != null) viewModel.startGitHubResolve(github)
+        else if (isBtInput(link)) onStartBt()
         else viewModel.startResolve(link, pwd)
     }
 
@@ -1075,6 +1103,10 @@ private fun platformLabel(platform: SharePlatform): String = when (platform) {
     SharePlatform.LANZOU -> "蓝奏云"
     SharePlatform.GITHUB -> "GitHub"
 }
+
+private fun isBtInput(raw: String): Boolean =
+    Regex("(?i)magnet:\\?").containsMatchIn(raw) ||
+        Regex("(?i)https?://[^\\s<>\\\"]+\\.torrent(?:\\?[^\\s<>\\\"]*)?").containsMatchIn(raw)
 
 /** 剪贴板分享链接提示卡片：检测到分享链接时，询问是否粘贴解析 */
 @Composable

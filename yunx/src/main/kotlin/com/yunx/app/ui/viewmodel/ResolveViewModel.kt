@@ -715,6 +715,11 @@ class ResolveViewModel(
         }
     }
 
+    /** 外部下载服务（如 BT/磁力）成功入队后，通知宿主切到下载管理页。 */
+    fun requestDownloadTab() {
+        downloadStarted = true
+    }
+
     fun consumeDownloadStarted() {
         downloadStarted = false
     }
@@ -964,7 +969,9 @@ class ResolveViewModel(
                     val msg = e.message ?: "解析失败"
                     // 游客模式失败时补一句可执行的引导，而不是只抛服务端原文
                     uiState = ResolveUiState.Error(
-                        if (isGuest) "$msg（当前未登录，可到「网盘」页登录${platformName()}后重试）" else msg
+                        if (isGuest && currentPlatform == SharePlatform.BAIDU) {
+                            "$msg（百度分享列表支持匿名查看；也可选公益解析下载单个 10 GiB 以下文件，账号下载/转存才需要登录）"
+                        } else if (isGuest) "$msg（当前未登录，可到「网盘」页登录${platformName()}后重试）" else msg
                     )
                 }
         }
@@ -1686,6 +1693,27 @@ class ResolveViewModel(
         }
     }
 
+    /** 用户在百度文件操作菜单中明确选择公益解析后，匿名获取单文件直链。 */
+    fun fetchBaiduPublicDownloadLink(file: ShareFile) {
+        if (currentPlatform != SharePlatform.BAIDU) return
+        val currentSession = session ?: run {
+            downloadError = "请先解析百度分享"
+            return
+        }
+        viewModelScope.launch {
+            downloadLink = null
+            downloadError = null
+            isFetchingDownloadLink = true
+            try {
+                baiduResolveRepository.getPublicShareDownloadLink(currentSession, file)
+                    .onSuccess { downloadLink = it }
+                    .onFailure { downloadError = it.message ?: "百度公益解析取链失败" }
+            } finally {
+                isFetchingDownloadLink = false
+            }
+        }
+    }
+
     fun dismissDownloadDialog() {
         val link = downloadLink
         downloadLink = null
@@ -1743,7 +1771,7 @@ class ResolveViewModel(
         }
         val guestCookie = link.guestCookie
         val isGuestLink = guestCookie.isNotBlank()
-        val headers = when {
+        val headers = link.headers.takeIf { it.isNotEmpty() } ?: when {
             isXunlei -> mapOf("User-Agent" to XunleiConstants.APP_UA)
             isBaidu -> mapOf("Cookie" to credential, "User-Agent" to BaiduConstants.UA_NETDISK)
             isC139 -> mapOf("User-Agent" to C139Constants.PC_UA)
@@ -1845,7 +1873,7 @@ class ResolveViewModel(
                 return@launch
             }
             val credential = currentCredential().orEmpty()
-            if (credential.isBlank() && !supportsGuestDownload()) {
+            if (credential.isBlank() && !supportsGuestDownload() && link.headers.isEmpty()) {
                 downloadError = "下载需要先登录${platformName()}（未登录仅能浏览文件列表）"
                 return@launch
             }
@@ -1877,7 +1905,7 @@ class ResolveViewModel(
             }
             // 游客模式：夸克/UC 的小文件直链不要求登录（link 里已带游客 __pugs）
             val credential = currentCredential().orEmpty()
-            if (credential.isBlank() && !supportsGuestDownload()) {
+            if (credential.isBlank() && !supportsGuestDownload() && link.headers.isEmpty()) {
                 downloadError = "下载需要先登录${platformName()}（未登录仅能浏览文件列表）"
                 return@launch
             }

@@ -1,6 +1,8 @@
 package com.probiotics.xiaoni
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.app.Activity
 import android.content.Intent
 import android.os.Build
 import android.os.Environment
@@ -15,6 +17,26 @@ import java.io.File
 
 /** Submits YunX share downloads to the existing Dsu aria2c task service. */
 object DsuNativeDownloadSubmitter : DsuNativeDownloadRouter.Submitter {
+    override fun pickTorrentFile(context: Context, onPicked: (String?) -> Unit): Boolean {
+        val activity = context.findActivity() ?: return false
+        FileBrowserDialog.showFilePicker(
+            activity,
+            "选择 .torrent 种子文件",
+            arrayOf(".torrent"),
+            "/storage/emulated/0/Download",
+            { path -> onPicked(path) },
+            { onPicked(null) }
+        )
+        return true
+    }
+
+    override fun openGopeedEngineManager(context: Context): Boolean = runCatching {
+        val intent = Intent(context, DsuGopeedEngineActivity::class.java)
+        if (context.findActivity() == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+        true
+    }.getOrDefault(false)
+
     override fun submit(
         context: Context,
         url: String,
@@ -130,6 +152,71 @@ object DsuNativeDownloadSubmitter : DsuNativeDownloadRouter.Submitter {
         }
     }
 
+    override fun submitTorrent(
+        context: Context,
+        url: String,
+        torrentName: String,
+        selectedFiles: List<Int>,
+        source: String,
+        onComplete: suspend () -> Unit
+    ): Boolean {
+        val app = context.applicationContext
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        if (uri?.scheme != "magnet" || selectedFiles.isEmpty() || selectedFiles.size > 10000 || selectedFiles.any { it < 0 }) {
+            notify(app, "种子任务参数无效，请重新解析")
+            return false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            notify(app, "请先允许 Dsu 管理器访问下载目录")
+            runCatching {
+                val settingsIntent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    .setData(Uri.parse("package:${app.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                app.startActivity(settingsIntent)
+            }
+            return false
+        }
+        val sourceTag = if (source.equals("dsu", ignoreCase = true)) "dsu" else "yunx"
+        val configured = app.getSharedPreferences("yunx_settings", Context.MODE_PRIVATE)
+            .getString("dsu_download_dir_path", "")?.trim().orEmpty()
+        val root = when {
+            sourceTag == "yunx" && configured.isNotBlank() -> File(configured)
+            sourceTag == "yunx" -> File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DsuManager/Yunpan")
+            else -> File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DsuManager")
+        }
+        val directory = File(root, "种子磁力").absoluteFile
+        if ((!directory.exists() && !directory.mkdirs()) || !directory.isDirectory) {
+            notify(app, "无法创建 BT 下载目录：${directory.absolutePath}")
+            return false
+        }
+        val probe = File(directory, ".bt_write_test_${System.currentTimeMillis()}")
+        if (!runCatching { probe.createNewFile() && probe.delete() }.getOrDefault(false)) {
+            notify(app, "BT 下载目录不可写，请检查存储权限")
+            return false
+        }
+        val safeName = sanitizeName(torrentName)
+        val output = uniqueOutput(app, directory, "$safeName.bt-task")
+        val pkg = if (sourceTag == "yunx") "网盘 · BT 种子/磁力" else "BT 种子/磁力"
+        val intent = Intent(app, DownloadService::class.java)
+            .setAction(DownloadService.ACTION_START_BT)
+            .putExtra(DownloadService.EXTRA_ADDRESS, url)
+            .putExtra(DownloadService.EXTRA_OUTPUT, output.absolutePath)
+            .putExtra(DownloadService.EXTRA_PACKAGE, pkg)
+            .putExtra(DownloadService.EXTRA_PAGE, "DownloadManagerActivity")
+            .putExtra(DownloadService.EXTRA_SOURCE, sourceTag)
+            .putExtra(DownloadService.EXTRA_BT_NAME, safeName)
+            .putExtra(DownloadService.EXTRA_BT_SELECTED_FILES, selectedFiles.toIntArray())
+            .putExtra(DownloadService.EXTRA_BT_DIRECTORY, directory.absolutePath)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) app.startForegroundService(intent)
+            else app.startService(intent)
+            true
+        } catch (error: Throwable) {
+            notify(app, "提交 BT 下载任务失败：${error.message ?: "请稍后重试"}")
+            false
+        }
+    }
+
     private fun uniqueOutput(context: Context, directory: File, name: String): File {
         val base = name.substringBeforeLast('.', name).ifBlank { name }
         val suffix = name.substringAfterLast('.', "").let { if (it.isBlank()) "" else ".$it" }
@@ -170,6 +257,15 @@ object DsuNativeDownloadSubmitter : DsuNativeDownloadRouter.Submitter {
     private fun notify(context: Context, text: String) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun Context.findActivity(): Activity? {
+        var current: Context = this
+        while (true) {
+            if (current is Activity) return current
+            if (current !is ContextWrapper) return null
+            current = current.baseContext
         }
     }
 }

@@ -698,7 +698,7 @@ fun MainScreen(
         )
     }
     val baiduResolveRepository = remember {
-        BaiduResolveRepository(baiduApi)
+        BaiduResolveRepository(baiduApi, settings)
     }
     val c139ResolveRepository = remember {
         C139ResolveRepository(c139Api)
@@ -1277,11 +1277,7 @@ fun MainScreen(
                                     onAboutClick = { showAbout = true },
                                     onSupportClick = { showSupport = true },
                                     onGopeedClick = {
-                                        if (embeddedMode) {
-                                            SnackbarController.show("此集成版本统一使用 Dsu aria2c 下载引擎")
-                                        } else {
-                                            showGopeed = true
-                                        }
+                                        showGopeed = true
                                     },
                                     backupManager = backupManager,
                                     // 手动检查更新与开发调试预览都复用 MainScreen 的更新弹窗状态
@@ -1571,7 +1567,10 @@ fun MainScreen(
                                 onBack = { showTheme = false },
                                 embeddedMode = embeddedMode
                             )
-                            OVERLAY_KEY_GOPEED -> DownloadEngineScreen(onBack = { showGopeed = false })
+                            OVERLAY_KEY_GOPEED -> DownloadEngineScreen(
+                                onBack = { showGopeed = false },
+                                embeddedMode = embeddedMode
+                            )
                             OVERLAY_KEY_ANNOUNCEMENTS -> AnnouncementScreen(
                                 viewModel = announcementViewModel,
                                 onBack = { showAnnouncements = false },

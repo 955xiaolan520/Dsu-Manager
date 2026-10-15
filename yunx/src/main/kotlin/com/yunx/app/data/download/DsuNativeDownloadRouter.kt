@@ -29,6 +29,21 @@ object DsuNativeDownloadRouter {
             platform: String,
             onComplete: suspend () -> Unit
         ): Boolean
+
+        fun submitTorrent(
+            context: Context,
+            url: String,
+            torrentName: String,
+            selectedFiles: List<Int>,
+            source: String,
+            onComplete: suspend () -> Unit
+        ): Boolean = submit(context, url, torrentName, emptyMap(), "BT", onComplete)
+
+        /** Host-owned Dsu file browser; return false when this standalone host has no picker. */
+        fun pickTorrentFile(context: Context, onPicked: (String?) -> Unit): Boolean = false
+
+        /** Open the host's Gopeed kernel manager; BT tasks need the kernel downloaded separately. */
+        fun openGopeedEngineManager(context: Context): Boolean = false
     }
 
     private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -85,6 +100,22 @@ object DsuNativeDownloadRouter {
         onComplete: suspend () -> Unit = {}
     ): Boolean? = submitter?.submit(context, url, fileName, headers, platform, onComplete)
         ?: if (submitter == null) null else false
+
+    fun submitTorrent(
+        context: Context,
+        url: String,
+        torrentName: String,
+        selectedFiles: List<Int>,
+        source: String = "yunx",
+        onComplete: suspend () -> Unit = {}
+    ): Boolean? = submitter?.submitTorrent(context, url, torrentName, selectedFiles, source, onComplete)
+        ?: if (submitter == null) null else false
+
+    fun pickTorrentFile(context: Context, onPicked: (String?) -> Unit): Boolean =
+        submitter?.pickTorrentFile(context, onPicked) ?: false
+
+    fun openGopeedEngineManager(context: Context): Boolean =
+        submitter?.openGopeedEngineManager(context) ?: false
 
     /** Called by the host before it starts the service, avoiding a fast-completion race. */
     fun trackCompletion(taskId: String, callback: suspend () -> Unit) {

@@ -441,6 +441,15 @@ fun SettingsScreen(
         if (embeddedMode) {
             SectionLabel("下载")
             SettingsItem(
+                icon = Icons.Outlined.SwapHoriz,
+                title = "Gopeed BT / 磁力引擎",
+                description = "下载独立内核后使用磁力解析与种子下载；内核不打进 APK",
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.72f), RoundedCornerShape(24.dp)),
+                onClick = onGopeedClick
+            )
+            Spacer(modifier = Modifier.height(ListGroupGap))
+            SettingsItem(
                 icon = Icons.Outlined.FolderOpen,
                 title = "网盘下载位置",
                 description = dsuDownloadDirPath.ifBlank { "/storage/emulated/0/Download/DsuManager/Yunpan" },

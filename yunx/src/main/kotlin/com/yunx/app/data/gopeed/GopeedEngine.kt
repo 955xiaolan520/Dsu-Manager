@@ -133,6 +133,10 @@ object GopeedEngine {
     fun kernelTempDir(context: Context): File =
         File(context.getExternalFilesDir(null) ?: context.filesDir, "$DIR_NAME/kernel")
 
+    /** Magnet metadata lookup needs a writable workspace, not the final shared Download directory. */
+    fun btWorkspaceDir(context: Context): File =
+        File(context.filesDir, "$DIR_NAME/bt-workspace")
+
     /**
      * 把内存里的状态与真实文件对齐一次。
      *
@@ -338,6 +342,12 @@ object GopeedEngine {
      */
     fun start(context: Context, downloadDir: File): Int {
         if (_state.value == State.RUNNING) return port
+        if (!downloadDir.isDirectory && !downloadDir.mkdirs()) {
+            throw IllegalStateException("无法创建 Gopeed 工作目录：${downloadDir.absolutePath}")
+        }
+        if (!downloadDir.canWrite()) {
+            throw IllegalStateException("Gopeed 工作目录不可写：${downloadDir.absolutePath}")
+        }
         val so = soFile(context)
         Log.d(TAG, "启动引擎：${describe(so)} loaded=$loaded 下载目录=${downloadDir.absolutePath}")
         if (!so.isFile) {
@@ -386,7 +396,13 @@ object GopeedEngine {
      *
      * @return 响应信封 JSON（{code,msg,data}）；code != 0 时抛异常并带上服务端的 msg。
      */
-    fun invoke(method: String, path: String, query: String? = null, body: String? = null): JSONObject {
+    fun invoke(
+        method: String,
+        path: String,
+        query: String? = null,
+        body: String? = null,
+        timeoutSeconds: Long = 60L
+    ): JSONObject {
         if (_state.value != State.RUNNING) throw IllegalStateException("引擎未启动")
         val id = requestId.incrementAndGet()
         val latch = CountDownLatch(1)
@@ -403,9 +419,9 @@ object GopeedEngine {
         // 日志走项目统一的脱敏（§2 的 util/LogRedactor）：URL 只留 scheme://host，token/cookie 打码
         Log.d(TAG, "调用引擎：$method $path query=${query ?: ""} body=${LogRedactor.line(body ?: "").take(300)} id=$id")
         Libgopeed.invokeAsync(method, path, query ?: "", body ?: "", id, listener)
-        if (!latch.await(60, TimeUnit.SECONDS)) {
-            Log.e(TAG, "引擎调用超时（60 秒）：$method $path id=$id")
-            throw IllegalStateException("引擎调用超时（60 秒）：$method $path")
+        if (!latch.await(timeoutSeconds, TimeUnit.SECONDS)) {
+            Log.e(TAG, "引擎调用超时（${timeoutSeconds} 秒）：$method $path id=$id")
+            throw IllegalStateException("引擎调用超时（${timeoutSeconds} 秒）：$method $path")
         }
         if (!ok) {
             Log.e(TAG, "引擎调用失败：$method $path id=$id 返回=${LogRedactor.line(payload ?: "").take(300)}")
@@ -525,13 +541,27 @@ object GopeedEngine {
     fun taskStatus(id: String): TaskView {
         val data = invoke("GET", "/api/v1/tasks/$id/status").optJSONObject("data")
             ?: throw IllegalStateException("引擎没有返回任务状态")
+        // Gopeed 当前版本提供顶层 downloaded/total；BT 内核在部分版本/任务阶段
+        // 可能只更新 files[]。把已选文件的逐文件统计作为回退，避免 UI 永远显示 0%。
+        val files = data.optJSONArray("files")
+        var filesDownloaded = 0L
+        var filesTotal = 0L
+        for (index in 0 until (files?.length() ?: 0)) {
+            val file = files?.optJSONObject(index) ?: continue
+            val downloaded = file.optLong("downloaded").coerceAtLeast(0L)
+            val size = file.optLong("size").coerceAtLeast(0L)
+            filesDownloaded = if (Long.MAX_VALUE - filesDownloaded < downloaded) Long.MAX_VALUE else filesDownloaded + downloaded
+            filesTotal = if (Long.MAX_VALUE - filesTotal < size) Long.MAX_VALUE else filesTotal + size
+        }
+        val reportedDownloaded = data.optLong("downloaded").coerceAtLeast(0L)
+        val reportedTotal = data.optLong("total").coerceAtLeast(0L)
         return TaskView(
             id = id,
             name = "",
             status = data.optString("status"),
-            downloaded = data.optLong("downloaded"),
-            total = data.optLong("total"),
-            speed = data.optLong("speed")
+            downloaded = if (reportedDownloaded > 0L || filesDownloaded == 0L) reportedDownloaded else filesDownloaded,
+            total = if (reportedTotal > 0L || filesTotal == 0L) reportedTotal else filesTotal,
+            speed = data.optLong("speed").coerceAtLeast(0L)
         )
     }
 
@@ -583,7 +613,8 @@ object GopeedEngine {
         headers: Map<String, String> = emptyMap(),
         connections: Int = 0,
         name: String = "",
-        labels: Map<String, String> = emptyMap()
+        labels: Map<String, String> = emptyMap(),
+        selectedFiles: List<Int> = emptyList()
     ): String {
         val req = JSONObject().apply {
             put("url", url)
@@ -595,6 +626,9 @@ object GopeedEngine {
         val opts = JSONObject().apply {
             put("path", saveDir.absolutePath)
             if (name.isNotBlank()) put("name", name)
+            if (selectedFiles.isNotEmpty()) {
+                put("selectFiles", org.json.JSONArray().apply { selectedFiles.forEach { put(it) } })
+            }
             if (connections > 0) {
                 put("extra", JSONObject().apply { put("connections", connections) })
             }
@@ -604,6 +638,19 @@ object GopeedEngine {
             put("opts", opts)
         }
         return invoke("POST", "/api/v1/tasks", null, body.toString()).optString("data")
+    }
+
+    /**
+     * 解析 magnet / torrent 元数据（官方 POST /api/v1/resolve）。
+     * 返回 data 对象，torrent 资源位于 data.res，文件索引按 res.files 数组顺序。
+     */
+    fun resolveTorrent(url: String): JSONObject {
+        require(url.startsWith("magnet:", ignoreCase = true)) { "Gopeed 元数据解析仅接受 magnet 链接" }
+        val body = JSONObject()
+            .put("req", JSONObject().put("url", url))
+            .put("opts", JSONObject())
+        return invoke("POST", "/api/v1/resolve", null, body.toString(), timeoutSeconds = 180L).optJSONObject("data")
+            ?: throw IllegalStateException("引擎没有返回种子元数据")
     }
 
     /** 暂停 / 继续 / 删除任务 */

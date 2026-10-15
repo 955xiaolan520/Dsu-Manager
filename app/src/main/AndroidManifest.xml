@@ -43,6 +43,7 @@
         <activity android:name=".ShortVideoPreviewActivity" android:screenOrientation="fullSensor" android:configChanges="orientation|screenSize|smallestScreenSize" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ShortVideoImagesActivity" android:screenOrientation="fullSensor" android:configChanges="orientation|screenSize|smallestScreenSize" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".DownloadManagerActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".DsuGopeedEngineActivity" android:screenOrientation="portrait" android:exported="false" android:theme="@style/Theme.ComposeEmptyActivity" />
         <activity android:name=".DsuDirectoryPickerActivity" android:screenOrientation="portrait" android:exported="false" android:theme="@style/AppTheme" />
         <activity android:name=".VivoActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".OPlusActivity" android:screenOrientation="portrait" android:exported="false" />

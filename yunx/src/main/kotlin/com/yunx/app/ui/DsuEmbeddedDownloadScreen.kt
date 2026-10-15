@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.yunx.app.data.download.DsuNativeDownloadRouter
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
@@ -196,7 +197,7 @@ private fun readDsuEmbeddedTasks(context: Context, source: DsuDownloadListSource
         activePaths += path
         result += DsuEmbeddedTask(
             id = id,
-            name = File(path).name.ifBlank { "下载文件" },
+            name = row.optString("display_name", File(path).name).ifBlank { "下载文件" },
             path = path,
             packageName = row.optString("pkg", if (sourceTag == "yunx") "网盘下载" else "Dsu 下载"),
             state = row.optString("state", "downloading"),
@@ -244,6 +245,7 @@ fun DsuEmbeddedDownloadScreen(
     var tasks by remember(source) { mutableStateOf(readDsuEmbeddedTasks(context, source)) }
     var filter by remember { mutableStateOf("全部") }
     var pendingDelete by remember { mutableStateOf<DsuDeleteTarget?>(null) }
+    var showBtDialog by remember { mutableStateOf(false) }
     fun refresh() { tasks = readDsuEmbeddedTasks(context, source) }
     fun sendAction(action: String, id: String? = null) {
         val intent = Intent().setClassName(context.packageName, "com.probiotics.xiaoni.DownloadService")
@@ -334,6 +336,12 @@ fun DsuEmbeddedDownloadScreen(
                     Text("刷新", color = Color(0xFF327E8A))
                 }
             }
+        }
+
+        Button(onClick = { showBtDialog = true }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Outlined.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.size(8.dp))
+            Text("添加种子 / 磁力任务")
         }
 
         Row(
@@ -450,6 +458,24 @@ fun DsuEmbeddedDownloadScreen(
                 dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消", color = DsuSubtleInk) } }
             )
         }
+    }
+
+    if (showBtDialog) {
+        BtDownloadDialog(
+            onDismiss = { showBtDialog = false },
+            onSubmit = { url, name, selectedFiles ->
+                val sourceTag = if (source == DsuDownloadListSource.YunX) "yunx" else "dsu"
+                val submitted = DsuNativeDownloadRouter.submitTorrent(
+                    context, url, name, selectedFiles, sourceTag
+                ) == true
+                if (submitted) {
+                    sendDsuQuery(context)
+                    refresh()
+                    SnackbarController.show("已加入 BT 下载队列")
+                }
+                submitted
+            }
+        )
     }
 }
 

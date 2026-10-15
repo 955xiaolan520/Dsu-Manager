@@ -257,8 +257,7 @@ class BaiduCloudViewModel(
         depth: Int
     ) {
         if (depth > 12) return
-        val list = runCatching { api.listCloudFiles(dirPath, cookie) ?: emptyList() }
-            .getOrDefault(emptyList())
+        val list = api.listCloudFiles(dirPath, cookie)
         list.filter { !it.isdir }.forEach { result.add(it to "$prefix/${it.fname}") }
         list.filter { it.isdir }.forEach {
             collectFolderFiles(it.fidToken, "$prefix/${it.fname}", cookie, result, depth + 1)
