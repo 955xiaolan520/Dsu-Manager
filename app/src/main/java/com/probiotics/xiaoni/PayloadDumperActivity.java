@@ -80,13 +80,6 @@ public final class PayloadDumperActivity extends BaseActivity {
     private volatile boolean extractAllCancel = false;
     private Button localExtractAllButton;
     private Button onlineExtractAllButton;
-
-    /** v3.40.13：GitHub 加速镜像（在线全选下载整包用，镜像优先 + 直连垫底，同 UpdateCenter） */
-    private static final String[] GH_MIRRORS = {
-            "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", ""};
-    /** 慢速看门狗：持续低于 128KB/s 达 6 秒且后面还有源 → 弃源切换 */
-    private static final long SLOW_SPEED = 128 * 1024;
-    private static final long SLOW_WINDOW_MS = 6000;
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -490,7 +483,7 @@ public final class PayloadDumperActivity extends BaseActivity {
         panel.addView(title, new LinearLayout.LayoutParams(-1, dp(44)));
         
         TextView hint = new TextView(this);
-        hint.setText("输入 OTA ZIP 包的 HTTP/HTTPS URL");
+        hint.setText("粘贴 OTA 在线链接并开始解析；解析后在下方分区列表选择提取。仅读取所选分区，不下载完整 OTA 包；提取时显示下载与写入进度。");
         hint.setTextSize(13);
         hint.setTextColor(0xff394b5e);
         panel.addView(hint);
@@ -510,7 +503,7 @@ public final class PayloadDumperActivity extends BaseActivity {
         panel.addView(onlineUrlInput, urlLp);
         
         onlineExtractButton = new Button(this);
-        onlineExtractButton.setText("开始在线提取");
+        onlineExtractButton.setText("开始解析");
         onlineExtractButton.setTextSize(15);
         onlineExtractButton.setTextColor(Color.WHITE);
         onlineExtractButton.setBackgroundResource(R.drawable.button_blue);
@@ -521,9 +514,9 @@ public final class PayloadDumperActivity extends BaseActivity {
         });
         panel.addView(onlineExtractButton, new LinearLayout.LayoutParams(-1, dp(54)));
 
-        // v3.40.13：在线全选提取（整包仅下载一次，再逐分区提取 —— 单分区流式提取每分区都要重新下载）
+        // 在线全选使用已解析分区列表和原始 URL 直读，不预先下载完整 OTA 包。
         onlineExtractAllButton = new Button(this);
-        onlineExtractAllButton.setText("⚡ 全选提取（下载整包一次提取全部）");
+        onlineExtractAllButton.setText("⚡ 全选提取（逐分区显示进度）");
         onlineExtractAllButton.setTextSize(15);
         onlineExtractAllButton.setTextColor(Color.WHITE);
         onlineExtractAllButton.setBackgroundResource(R.drawable.button_green);
@@ -751,7 +744,9 @@ public final class PayloadDumperActivity extends BaseActivity {
         currentInput = url;
         selectedFileName = getFileNameFromUrl(url);
         
-        logOnline("开始解析 URL: " + url);
+        onlinePartitions.clear();
+        logOnline("🔍 开始解析: " + url);
+        logOnline("… 正在读取远程 payload 元数据...");
         logOnline("文件名: " + selectedFileName);
         
         parsePayloadOnline();
@@ -1083,7 +1078,7 @@ public final class PayloadDumperActivity extends BaseActivity {
     private void parsePayloadOnline() {
         executor.execute(() -> {
             try {
-                logOnline("正在打开 Payload...");
+                logOnline("… 正在打开在线 Payload...");
                 
                 if (extractor != null) {
                     extractor.close();
@@ -1102,14 +1097,23 @@ public final class PayloadDumperActivity extends BaseActivity {
                     return;
                 }
                 
-                logOnline("成功打开，正在列出分区...");
+                logOnline("… 正在读取分区列表...");
                 List<PayloadExtractor.PartitionInfo> partitions = extractor.listPartitions(true);
-                logOnline("找到 " + partitions.size() + " 个分区");
+                if (partitions == null || partitions.isEmpty()) {
+                    logOnline("✗ 在线 Payload 未返回分区列表");
+                    mainHandler.post(() -> {
+                        status.setText("未读取到分区");
+                        toast("未读取到分区列表，请检查链接是否有效");
+                        onlineExtractButton.setEnabled(true);
+                    });
+                    return;
+                }
+                logOnline("✓ 解析完成 · " + partitions.size() + " 个分区，请在下方列表选择要提取的 img");
                 
                 mainHandler.post(() -> {
                     onlineExtractButton.setEnabled(true);
                     displayPartitionsOnline(partitions);
-                    status.setText("已解析 " + partitions.size() + " 个分区");
+                    status.setText("已解析 " + partitions.size() + " 个分区 · 在下方选择提取");
                 });
                 
             } catch (Exception e) {
@@ -1195,6 +1199,12 @@ public final class PayloadDumperActivity extends BaseActivity {
         File dir = new File(outputDir);
         if (!dir.exists()) {
             boolean created = dir.mkdirs();
+            if (!created) {
+                com.topjohnwu.superuser.Shell.cmd(
+                        "mkdir -p " + DnaTools.quote(outputDir) + " && chmod 0775 "
+                                + DnaTools.quote(outputDir) + "; true").exec();
+                created = dir.isDirectory();
+            }
             android.util.Log.d("PayloadDumper", "创建目录: " + outputDir + ", 结果: " + created);
             if (isLocal) {
                 logLocal("创建输出目录: " + (created ? "成功" : "失败"));
@@ -1410,55 +1420,27 @@ public final class PayloadDumperActivity extends BaseActivity {
     }
 
     private void extractAllOnline() {
-        if (extractAllRunning.get()) { toast("全选提取进行中"); return; }
+        if (extractAllRunning.get()) {
+            extractAllCancel = true;
+            toast("已请求取消在线全选提取");
+            return;
+        }
         String url = onlineUrlInput.getText().toString().trim();
         if (url.isEmpty() || !(url.startsWith("http://") || url.startsWith("https://"))) {
             toast("请输入 OTA ZIP 的 URL");
             return;
         }
+        if (onlinePartitions.isEmpty()) {
+            toast("请先解析在线链接并列出分区");
+            return;
+        }
+        if (!url.equals(currentInput)) {
+            toast("在线链接已修改，请先重新解析分区列表");
+            return;
+        }
         selectedFileName = getFileNameFromUrl(url);
-        final String fUrl = url;
-        if (!extractAllRunning.compareAndSet(false, true)) return;
-        extractAllCancel = false;
-        setExtractAllUi(true, false);
-        logOnline("⚡ 全选提取: 整包只下载一次，再逐分区提取");
-        logOnline("URL: " + fUrl);
-        executor.execute(() -> {
-            File zip = null;
-            try {
-                status.setText("正在下载整包...");
-                zip = downloadOnlineZip(fUrl);
-                if (zip == null || extractAllCancel) {
-                    throw new IllegalStateException("整包下载失败");
-                }
-                // 下载完成 → 本地解析（缓存文件 app 自有，JNI 直读）
-                status.setText("正在解析...");
-                logOnline("下载完成，正在解析分区...");
-                if (extractor != null) { try { extractor.close(); } catch (Exception ignored) {} }
-                extractor = new PayloadExtractor();
-                if (!extractor.open(zip.getAbsolutePath())) {
-                    throw new IllegalStateException("无法打开下载的 OTA 包（可能非 OTA ZIP）");
-                }
-                List<PayloadExtractor.PartitionInfo> parts = extractor.listPartitions(true);
-                if (parts.isEmpty()) throw new IllegalStateException("未找到分区");
-                logOnline("找到 " + parts.size() + " 个分区，开始逐分区提取");
-                mainHandler.post(() -> displayPartitionsOnline(parts));
-                Thread.sleep(300);   // 等列表渲染，分区行视图就位
-                runExtractAllCore(zip.getAbsolutePath(), false, parts);
-            } catch (Exception e) {
-                final String msg = e.getMessage() == null ? "unknown" : e.getMessage();
-                logOnline("✗ 全选提取失败: " + msg);
-                mainHandler.post(() -> { status.setText("全选提取失败"); toast("全选提取失败: " + msg); });
-            } finally {
-                if (zip != null) {
-                    //noinspection ResultOfMethodCallIgnored
-                    zip.delete();   // 多 GB 缓存包，用完即清
-                    logOnline("已清理缓存的整包文件");
-                }
-                extractAllRunning.set(false);
-                mainHandler.post(() -> setExtractAllUi(false, false));
-            }
-        });
+        logOnline("⚡ 全选提取：直接按分区读取在线 URL，不下载完整 OTA 包");
+        runExtractAll(url, false, new java.util.ArrayList<>(onlinePartitions));
     }
 
     /** 共用入口（本地/在线全选）：校验 + 包一层运行状态 */
@@ -1466,7 +1448,8 @@ public final class PayloadDumperActivity extends BaseActivity {
         if (!extractAllRunning.compareAndSet(false, true)) return;
         extractAllCancel = false;
         setExtractAllUi(true, isLocal);
-        log(isLocal, "⚡ 全选提取: " + parts.size() + " 个分区（JNI 多线程引擎，CLI 兜底）");
+        String engine = isLocal ? "本地 JNI 8 线程，CLI 兜底" : "在线 URL Range 流式直读，不下载整包";
+        log(isLocal, "⚡ 全选提取: " + parts.size() + " 个分区（" + engine + "）");
         executor.execute(() -> {
             try {
                 // v3.42.18：JNI 优先（ensureJniReadable 放行直读零复制），CLI 批量兜底
@@ -1485,25 +1468,25 @@ public final class PayloadDumperActivity extends BaseActivity {
         if (btn != null) {
             btn.setText(running ? "■ 取消全选提取" : (local
                     ? "⚡ 全选提取（已列出分区全部提取）"
-                    : "⚡ 全选提取（下载整包一次提取全部）"));
+                    : "⚡ 全选提取（逐分区显示下载/写入进度）"));
         }
         if (other != null) other.setEnabled(!running);
     }
 
-    /**
-     * v3.42.18：全选提取 —— JNI 优先（单分区内部块级 8 线程，对齐 DnaBin v3.42.17
-     * 实测 OPPO 67 分区 76s / vivo 61 分区 16s），JNI 整体不可用或全军覆没才回退
-     * CLI 批量（v3.42.15 的逗号拼接批量，保留作兜底）。
-     * 在线全选：整包下载到 cache 后走本地路径，同样适用 JNI。
-     */
+    /** 在线 URL 走 root CLI Range；本地输入使用 JNI 优先，失败时回退 CLI。 */
     private void runExtractAllCore(String input, boolean isLocal, List<PayloadExtractor.PartitionInfo> parts) {
         String outputDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 .getAbsolutePath() + "/DsuManager/" + selectedFileName;
         File dir = new File(outputDir);
         if (!dir.exists() && !dir.mkdirs()) {
-            log(isLocal, "✗ 无法创建输出目录: " + outputDir);
-            mainHandler.post(() -> { status.setText("全选提取失败"); toast("无法创建输出目录"); });
-            return;
+            com.topjohnwu.superuser.Shell.cmd(
+                    "mkdir -p " + DnaTools.quote(outputDir) + " && chmod 0775 "
+                            + DnaTools.quote(outputDir) + "; true").exec();
+            if (!dir.isDirectory()) {
+                log(isLocal, "✗ 无法创建输出目录: " + outputDir);
+                mainHandler.post(() -> { status.setText("全选提取失败"); toast("无法创建输出目录"); });
+                return;
+            }
         }
         log(isLocal, "输出目录: " + outputDir);
         LinearLayout targetList = isLocal ? localPartitionsList : onlinePartitionsList;
@@ -1524,17 +1507,24 @@ public final class PayloadDumperActivity extends BaseActivity {
             final PartitionItemView iv = views[i];
             final File of = outFiles[i];
             mainHandler.post(() -> {
-                if (iv != null) { iv.setOutputPath(of.getAbsolutePath()); iv.setProgress(0, 0, 1); }
+                if (iv != null) {
+                    iv.setOutputPath(of.getAbsolutePath());
+                    iv.beginBatchProgress();
+                }
             });
         }
         com.topjohnwu.superuser.Shell.cmd(rmAll + "true").exec();
-        // ---- JNI 主路径 ----
         final boolean isUrl = input.startsWith("http://") || input.startsWith("https://");
-        String jniInput = null;
-        if (!isUrl) {
-            jniInput = DnaTools.ensureJniReadable(PayloadDumperActivity.this, input,
-                    msg -> { log(isLocal, msg); return kotlin.Unit.INSTANCE; });
+        if (isUrl) {
+            log(isLocal, "⚡ 在线 URL 使用 root CLI Range 引擎并行提取：只读取所选分区，不下载整包");
+            runExtractAllCliBatch(input, isLocal, outputDir, totalParts,
+                    names, expected, views, outFiles, startMs);
+            return;
         }
+        // ---- 本地 JNI 8 线程主路径 ----
+        String jniInput;
+        jniInput = DnaTools.ensureJniReadable(PayloadDumperActivity.this, input,
+                msg -> { log(isLocal, msg); return kotlin.Unit.INSTANCE; });
         if (jniInput != null) {
             int r = runExtractAllJni(input, jniInput, isLocal, outputDir, totalParts,
                     names, expected, views, outFiles, startMs);
@@ -1557,6 +1547,7 @@ public final class PayloadDumperActivity extends BaseActivity {
         log(isLocal, "⚡ JNI 多线程引擎 · 单分区 8 线程并行解压");
         mainHandler.post(() -> status.setText("JNI 提取中 · 0/" + totalParts));
         final PayloadExtractor px = new PayloadExtractor();
+        final boolean remoteInput = rawInput.startsWith("http://") || rawInput.startsWith("https://");
         int ok = 0;
         final java.util.List<Integer> failedIdx = new java.util.ArrayList<>();
         for (int i = 0; i < totalParts; i++) {
@@ -1592,10 +1583,31 @@ public final class PayloadDumperActivity extends BaseActivity {
                 long bytes = outFile.length();
                 long now = System.currentTimeMillis();
                 float spd = (bytes - lastB) / 1048576f / Math.max(0.001f, (now - lastMs) / 1000f);
-                int pct = expected[i] > 0 ? (int) Math.min(100, bytes * 100 / expected[i]) : 0;
-                final int p2 = pct; final float sp = spd;
+                int pct;
+                int phase;
+                float shownSpeed;
+                android.util.Pair<Integer, Integer> nativeProgress = null;
+                try { nativeProgress = px.getExtractProgress(token); } catch (Throwable ignored) { }
+                if (nativeProgress != null) {
+                    phase = nativeProgress.first == null ? 1 : nativeProgress.first;
+                    pct = nativeProgress.second == null ? 0 : nativeProgress.second / 10;
+                    pct = Math.max(0, Math.min(100, pct));
+                    phase = phase == 0 ? 0 : 1;
+                    shownSpeed = phase == 0 ? -1f : spd;
+                } else {
+                    pct = expected[i] > 0 ? (int) Math.min(100, bytes * 100 / expected[i]) : 0;
+                    phase = remoteInput && bytes == 0 ? 0 : 1;
+                    shownSpeed = phase == 0 ? -1f : spd;
+                }
+                final int p2 = pct; final int pPhase = phase; final float sp = shownSpeed;
                 final PartitionItemView iv = views[i];
-                mainHandler.post(() -> { if (iv != null) iv.setProgress(p2, sp, 1); });
+                mainHandler.post(() -> {
+                    if (iv != null) {
+                        if (pPhase == 1 && p2 >= 100) iv.setFinishing();
+                        else if (pPhase == 0) iv.setDownloading(Math.min(99, p2), sp);
+                        else iv.setProgress(Math.min(99, p2), sp, pPhase);
+                    }
+                });
                 if (bytes > lastB) lastB = bytes;
                 lastMs = now;
             }
@@ -1605,12 +1617,12 @@ public final class PayloadDumperActivity extends BaseActivity {
             }
             try { jr.join(2000); } catch (InterruptedException ignored) { }
             long sz = outFile.isFile() ? outFile.length() : 0;
-            if (jniDone.get() && sz > 0) {
+            if (jniDone.get() && sz > 0 && (expected[i] <= 0 || sz >= expected[i])) {
                 ok++;
                 final long size = sz;
                 log(isLocal, "✓ " + name + ".img (" + fmtMB(size) + ") 提取完成");
                 final PartitionItemView iv = views[i];
-                mainHandler.post(() -> { if (iv != null) iv.setProgress(100, 0, 1); });
+                mainHandler.post(() -> { if (iv != null) iv.setComplete(); });
             } else {
                 failedIdx.add(i);
             }
@@ -1654,11 +1666,26 @@ public final class PayloadDumperActivity extends BaseActivity {
             if (joined.length() > 0) joined.append(",");
             joined.append(names[i]);
         }
+        final CliTransferMeter transferMeter = isUrl ? new CliTransferMeter() : null;
+        final java.util.concurrent.atomic.AtomicLong lastTransferUiMs =
+                new java.util.concurrent.atomic.AtomicLong(0L);
+        final java.util.concurrent.atomic.AtomicReference<String> transferUiText =
+                new java.util.concurrent.atomic.AtomicReference<>("");
         Thread runner = new Thread(() -> {
             DnaTools.Result r = DnaTools.payloadExtractCli(PayloadDumperActivity.this,
                     input, outputDir, joined.toString(),
                     line -> {   // indicatif 进度条行（█░▓）不进日志
                         String s = line == null ? "" : line;
+                        if (transferMeter != null) {
+                            CliTransferSample sample = transferMeter.update(s);
+                            if (sample != null) {
+                                String speed = sample.speedMBps > 0.005f
+                                        ? String.format(java.util.Locale.US, "%.2f MB/s", sample.speedMBps)
+                                        : "正在测算...";
+                                transferUiText.set("OTA Range 下载 " + sample.percent + "% · " + speed);
+                                lastTransferUiMs.set(System.currentTimeMillis());
+                            }
+                        }
                         if (s.indexOf('█') >= 0 || s.indexOf('░') >= 0 || s.indexOf('▓') >= 0)
                             return kotlin.Unit.INSTANCE;
                         String tr = s.trim();
@@ -1672,23 +1699,44 @@ public final class PayloadDumperActivity extends BaseActivity {
         runner.setDaemon(true);
         runner.start();
         long lastPollMs = System.currentTimeMillis();
+        final long[] lastItemBytes = new long[totalParts];
+        final long[] lastItemMs = new long[totalParts];
+        java.util.Arrays.fill(lastItemMs, lastPollMs);
         while (runner.isAlive()) {
             try { Thread.sleep(800); } catch (InterruptedException e) { break; }
             long now = System.currentTimeMillis();
             int done = 0;
             for (int i = 0; i < totalParts; i++) {
                 long bytes = outFiles[i].length();
-                if (bytes > 0 && (expected[i] <= 0 || bytes >= expected[i])) done++;
-                final int pct = expected[i] > 0 ? (int) Math.min(100, bytes * 100 / expected[i]) : 0;
+                boolean reachedExpected = expected[i] > 0 && bytes >= expected[i];
+                if (reachedExpected || (expected[i] <= 0 && cliDone.get() && bytes > 0)) done++;
+                int rawPct = expected[i] > 0 ? (int) Math.min(100, bytes * 100 / expected[i]) : 0;
+                final int pct = Math.min(99, rawPct); // 100% 只在 CLI 确认结束后置为完成
                 final PartitionItemView iv = views[i];
-                final float sp = 0f;
-                if (iv != null && pct > 0 && pct < 100)
-                    mainHandler.post(() -> iv.setProgress(pct, sp, 1));
+                long elapsedMs = Math.max(1L, now - lastItemMs[i]);
+                final float sp = Math.max(0L, bytes - lastItemBytes[i]) / 1048576f
+                        / (elapsedMs / 1000f);
+                lastItemBytes[i] = Math.max(lastItemBytes[i], bytes);
+                lastItemMs[i] = now;
+                if (iv != null) {
+                    if (reachedExpected) {
+                        mainHandler.post(iv::setFinishing);
+                    } else if (bytes > 0) {
+                        mainHandler.post(() -> iv.setProgress(pct, sp, 1));
+                    } else {
+                        mainHandler.post(iv::setQueued);
+                    }
+                }
             }
             final int d = done;
             if (now - lastPollMs >= 1000) {
                 lastPollMs = now;
-                mainHandler.post(() -> status.setText("并行提取中 · " + d + "/" + totalParts));
+                boolean downloading = isUrl && now - lastTransferUiMs.get() < 1800L
+                        && !transferUiText.get().isEmpty();
+                String state = downloading ? transferUiText.get() + " · 输出就绪 " + d + "/" + totalParts
+                        : (d == totalParts ? "镜像写入就绪 · 输出校验中"
+                        : "并行提取中 · " + d + "/" + totalParts);
+                mainHandler.post(() -> status.setText(state));
             }
         }
         try { runner.join(2000); } catch (InterruptedException ignored) { }
@@ -1696,13 +1744,16 @@ public final class PayloadDumperActivity extends BaseActivity {
         int ok = 0;
         java.util.List<Integer> failedIdx = new java.util.ArrayList<>();
         for (int i = 0; i < totalParts; i++) {
-            if (outFiles[i].isFile() && outFiles[i].length() > 0) {
+            long actualSize = outFiles[i].isFile() ? outFiles[i].length() : 0L;
+            boolean complete = actualSize > 0
+                    && (expected[i] > 0 ? actualSize >= expected[i] : cliDone.get());
+            if (complete) {
                 ok++;
                 final String nm = names[i];
-                final long sz = outFiles[i].length();
+                final long sz = actualSize;
                 log(isLocal, "✓ " + nm + ".img (" + fmtMB(sz) + ") 提取完成");
                 final PartitionItemView iv = views[i];
-                mainHandler.post(() -> { if (iv != null) iv.setProgress(100, 0, 1); });
+                mainHandler.post(() -> { if (iv != null) iv.setComplete(); });
             } else {
                 failedIdx.add(i);
             }
@@ -1739,13 +1790,150 @@ public final class PayloadDumperActivity extends BaseActivity {
     }
 
     /**
-     * v3.42.18：单分区提取统一入口（单分区按钮 / 全选失败重试 共用）——
-     * JNI 优先（libpayload_extract_jni.so 单分区内部块级 8 线程，对齐 DnaBin v3.42.17
-     * 实测 OPPO 67 分区 76s），失败/URL 输入回退 root CLI（libpayload_extract.so，
-     * URL 模式内部 Range 流式多连接只拉所需数据段）。
-     * stat 轮询落盘字节驱动分区行进度条与速度，本地 5 分钟 / 在线 20 分钟无进展熔断。
-     * 取消：等待循环即时退出 + root rm 半成品（JNI 无中断接口，后台 native 跑完
-     * 写已 unlink 的 fd 自动释放，不占可见空间、不阻塞后续任务）。
+     * 在线单分区优先走 JNI 的块级 8 线程 Range 读取；先写私有缓存避免 app UID 对共享目录 EPERM，
+     * 成功后再由 root 原子复制到用户选择的共享输出目录。JNI 出错时由调用方回退 CLI。
+     */
+    private boolean extractOnlineWithJni(String url, String outputDir, String name, long expected,
+                                         File finalOutput, PartitionItemView itemView, boolean isLocal,
+                                         java.util.function.BooleanSupplier cancelled) {
+        final long token = tokenGenerator.getAndIncrement();
+        final File workDir = new File(getCacheDir(), "payload-online-" + token);
+        if (!workDir.mkdirs() && !workDir.isDirectory()) {
+            log(isLocal, "… 无法创建在线 JNI 私有缓存目录，改用 CLI Range");
+            return false;
+        }
+        final File cacheOutput = new File(workDir, name + ".img");
+        final StringBuilder error = new StringBuilder();
+        final java.util.concurrent.atomic.AtomicBoolean nativeDone =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final PayloadExtractor extractor = new PayloadExtractor();
+        log(isLocal, "⚡ 在线 JNI Range · 单分区 8 线程并行下载/解压（不下载整包）");
+        mainHandler.post(() -> { if (itemView != null) itemView.setDownloading(0, 0f); });
+
+        Thread worker = new Thread(() -> {
+            try {
+                extractor.extractPartition(url, workDir.getAbsolutePath(), name, 8, false, token);
+                nativeDone.set(true);
+            } catch (Throwable e) {
+                String m = e.getMessage();
+                synchronized (error) { error.append(m == null || m.isEmpty() ? e.toString() : m); }
+            }
+        }, "pd-online-jni-" + name);
+        worker.setDaemon(true);
+        worker.start();
+
+        long lastRx = readTotalRxBytes();
+        long lastRxMs = System.currentTimeMillis();
+        long lastRxActivityMs = lastRxMs;
+        float smoothedNetworkSpeed = 0f;
+        int lastDownloadPercent = 0;
+        long lastOut = 0L;
+        long lastOutMs = lastRxMs;
+        while (worker.isAlive()) {
+            try { Thread.sleep(350); } catch (InterruptedException ignored) { }
+            if (cancelled.getAsBoolean()) {
+                com.topjohnwu.superuser.Shell.cmd(
+                        "rm -f " + DnaTools.quote(cacheOutput.getAbsolutePath()) + "; true").exec();
+                deleteFileTree(workDir);
+                log(isLocal, "■ " + name + " 已取消");
+                mainHandler.post(() -> { if (itemView != null) itemView.setError("已取消"); });
+                return false;
+            }
+
+            long now = System.currentTimeMillis();
+            long rx = readTotalRxBytes();
+            float measuredNetworkSpeed = rx >= 0L && lastRx >= 0L && rx >= lastRx
+                    ? (rx - lastRx) / 1048576f / Math.max(0.001f, (now - lastRxMs) / 1000f) : 0f;
+            if (measuredNetworkSpeed > 0.005f) {
+                smoothedNetworkSpeed = smoothedNetworkSpeed <= 0f ? measuredNetworkSpeed
+                        : smoothedNetworkSpeed * 0.65f + measuredNetworkSpeed * 0.35f;
+                lastRxActivityMs = now;
+            } else if (now - lastRxActivityMs > 5000L) {
+                smoothedNetworkSpeed = 0f;
+            }
+            long outputBytes = cacheOutput.length();
+            float writeSpeed = Math.max(0L, outputBytes - lastOut) / 1048576f
+                    / Math.max(0.001f, (now - lastOutMs) / 1000f);
+
+            int nativePct = -1;
+            int phase = outputBytes > 0 ? 1 : 0;
+            try {
+                android.util.Pair<Integer, Integer> p = extractor.getExtractProgress(token);
+                if (p != null) {
+                    phase = p.first == null ? phase : p.first;
+                    nativePct = p.second == null ? -1 : Math.max(0, Math.min(100, p.second / 10));
+                }
+            } catch (Throwable ignored) { }
+
+            final int pPhase = phase == 0 ? 0 : 1;
+            int filePct;
+            if (pPhase == 0) {
+                int fromNative = nativePct >= 0 ? nativePct
+                        : (expected > 0 ? (int) Math.min(99L, outputBytes * 100L / expected) : 0);
+                lastDownloadPercent = Math.max(lastDownloadPercent, Math.min(99, Math.max(0, fromNative)));
+                filePct = lastDownloadPercent;
+            } else {
+                // 写入百分比用实际输出镜像字节数，不采用可能停在 1000‰ 的阶段总进度。
+                filePct = expected > 0 ? (int) Math.min(99L, outputBytes * 100L / expected)
+                        : Math.max(0, nativePct);
+            }
+            final float speed = pPhase == 0 ? smoothedNetworkSpeed : writeSpeed;
+            final int uiPct = Math.min(99, Math.max(0, filePct));
+            mainHandler.post(() -> {
+                if (itemView == null) return;
+                if (pPhase == 0) itemView.setDownloading(uiPct, speed);
+                else itemView.setProgress(uiPct, speed, pPhase);
+            });
+
+            if (rx > lastRx) { lastRx = rx; lastRxMs = now; }
+            if (outputBytes > lastOut) { lastOut = outputBytes; lastOutMs = now; }
+        }
+        try { worker.join(2000); } catch (InterruptedException ignored) { }
+
+        long extractedBytes = cacheOutput.isFile() ? cacheOutput.length() : 0L;
+        if (nativeDone.get() && extractedBytes > 0) {
+            mainHandler.post(() -> { if (itemView != null) itemView.setSavingToTarget(); });
+            String command = "mkdir -p " + DnaTools.quote(outputDir) + " && cp -f "
+                    + DnaTools.quote(cacheOutput.getAbsolutePath()) + " "
+                    + DnaTools.quote(finalOutput.getAbsolutePath()) + " && chmod 0664 "
+                    + DnaTools.quote(finalOutput.getAbsolutePath()) + " && test -s "
+                    + DnaTools.quote(finalOutput.getAbsolutePath());
+            com.topjohnwu.superuser.Shell.Result copy = com.topjohnwu.superuser.Shell.cmd(command).exec();
+            if (copy.isSuccess() && finalOutput.isFile() && finalOutput.length() > 0L) {
+                log(isLocal, "✓ " + name + ".img (" + fmtMB(extractedBytes) + ") 在线 JNI 提取完成");
+                mainHandler.post(() -> { if (itemView != null) itemView.setComplete(); });
+                deleteFileTree(workDir);
+                return true;
+            }
+            log(isLocal, "… JNI 已提取，但共享目录复制失败，改用 root CLI 重试");
+        } else {
+            String detail;
+            synchronized (error) { detail = error.toString().trim(); }
+            log(isLocal, "… 在线 JNI " + name + " 失败" + (detail.isEmpty() ? "" : ": " + detail)
+                    + "，回退 root CLI Range");
+        }
+        deleteFileTree(workDir);
+        return false;
+    }
+
+    private static void deleteFileTree(File file) {
+        if (file == null || !file.exists()) return;
+        File[] children = file.listFiles();
+        if (children != null) for (File child : children) deleteFileTree(child);
+        file.delete();
+    }
+
+    private long readTotalRxBytes() {
+        // su 进程的 UID 计数在不少 ROM 上恒为 0；使用设备总接收字节，避免速度永远归零。
+        try { return android.net.TrafficStats.getTotalRxBytes(); }
+        catch (Throwable ignored) { return -1L; }
+    }
+
+    /**
+     * 单分区提取统一入口：在线 URL 首选 JNI 单分区块级 8 线程 Range，写入 app 私有缓存；
+     * 以系统接收字节差估算下载速率，写阶段用 native 百分比/输出字节显示进度；JNI 失败
+     * 时回退 root CLI Range。全选在线仍使用 CLI 多分区并行，本地单分区继续 JNI 优先。
+     * 取消会清理可见半成品；JNI 无中断 API，后台 native 正在写的缓存使用私有独立目录。
      * @param forceCli true=跳过 JNI 直接 CLI（JNI 已失败过的分区重试）
      * @return true=成功；false=失败或已取消（日志与分区行状态已在内部更新）
      */
@@ -1759,18 +1947,25 @@ public final class PayloadDumperActivity extends BaseActivity {
         com.topjohnwu.superuser.Shell.cmd(
                 "rm -f " + DnaTools.quote(outFile.getAbsolutePath()) + "; true").exec();
         final boolean isUrl = input.startsWith("http://") || input.startsWith("https://");
-        // ---- JNI 主路径（本地输入且非强制 CLI）----
-        if (!isUrl && !forceCli) {
+        if (isUrl && !forceCli) {
+            if (extractOnlineWithJni(input, outputDir, name, expected, outFile, itemView,
+                    isLocal, cancelled)) return true;
+            if (cancelled.getAsBoolean()) return false;
+        }
+        // 本地 JNI 直接写用户输出目录；在线 URL 先尝试私有缓存 JNI，失败才走 root CLI。
+        if (!forceCli && !isUrl) {
             String jniInput = DnaTools.ensureJniReadable(PayloadDumperActivity.this, input,
                     msg -> { log(isLocal, msg); return kotlin.Unit.INSTANCE; });
             if (jniInput != null) {
+                log(isLocal, "⚡ JNI 多线程引擎 · 单分区 8 线程并行解压");
                 final StringBuilder jniErr = new StringBuilder();
                 final java.util.concurrent.atomic.AtomicBoolean jniDone =
                         new java.util.concurrent.atomic.AtomicBoolean(false);
                 final long token = tokenGenerator.getAndIncrement();
+                final PayloadExtractor jniExtractor = new PayloadExtractor();
                 Thread jr = new Thread(() -> {
                     try {
-                        new PayloadExtractor().extractPartition(jniInput, outputDir, name, 8, false, token);
+                        jniExtractor.extractPartition(jniInput, outputDir, name, 8, false, token);
                         jniDone.set(true);
                     } catch (Throwable e) {
                         String m = e.getMessage();
@@ -1790,9 +1985,30 @@ public final class PayloadDumperActivity extends BaseActivity {
                     long bytes = outFile.length();
                     long now = System.currentTimeMillis();
                     float spd = (bytes - lastB) / 1048576f / Math.max(0.001f, (now - lastMs) / 1000f);
-                    int pct = expected > 0 ? (int) Math.min(100, bytes * 100 / expected) : 0;
-                    final int p2 = pct; final float sp = spd;
-                    mainHandler.post(() -> { if (itemView != null) itemView.setProgress(p2, sp, 1); });
+                    int pct;
+                    int phase;
+                    float shownSpeed;
+                    android.util.Pair<Integer, Integer> nativeProgress = null;
+                    try { nativeProgress = jniExtractor.getExtractProgress(token); } catch (Throwable ignored) { }
+                if (nativeProgress != null) {
+                    phase = nativeProgress.first == null ? 1 : nativeProgress.first;
+                    pct = nativeProgress.second == null ? 0 : nativeProgress.second / 10;
+                    pct = Math.max(0, Math.min(100, pct));
+                        phase = phase == 0 ? 0 : 1;
+                        shownSpeed = phase == 0 ? -1f : spd;
+                    } else {
+                        pct = expected > 0 ? (int) Math.min(100, bytes * 100 / expected) : 0;
+                        phase = isUrl && bytes == 0 ? 0 : 1;
+                        shownSpeed = phase == 0 ? -1f : spd;
+                    }
+                    final int p2 = pct; final int pPhase = phase; final float sp = shownSpeed;
+                    mainHandler.post(() -> {
+                        if (itemView != null) {
+                            if (pPhase == 1 && p2 >= 100) itemView.setFinishing();
+                            else if (pPhase == 0) itemView.setDownloading(Math.min(99, p2), sp);
+                            else itemView.setProgress(Math.min(99, p2), sp, pPhase);
+                        }
+                    });
                     if (bytes > lastB) lastB = bytes;
                     lastMs = now;
                 }
@@ -1802,7 +2018,8 @@ public final class PayloadDumperActivity extends BaseActivity {
                     return false;
                 }
                 try { jr.join(2000); } catch (InterruptedException ignored) { }
-                if (jniDone.get() && outFile.isFile() && outFile.length() > 0) {
+                long jniSize = outFile.isFile() ? outFile.length() : 0L;
+                if (jniDone.get() && jniSize > 0 && (expected <= 0 || jniSize >= expected)) {
                     log(isLocal, "✓ " + name + ".img (" + fmtMB(outFile.length()) + ") 提取完成");
                     mainHandler.post(() -> { if (itemView != null) itemView.setComplete(); });
                     return true;
@@ -1813,14 +2030,36 @@ public final class PayloadDumperActivity extends BaseActivity {
                 // 落到下方 CLI 兜底
             }
         }
-        // ---- CLI 兜底 / URL 直读 ----
-        final long stuckLimit = isUrl ? 20 * 60_000L : 300_000L;   // 在线先下载后落盘，放宽熔断
+        // ---- root CLI：在线 URL 首选 Range 流式读取，失败 JNI 分区也由此重试 ----
+        if (isUrl && !forceCli) {
+            log(isLocal, "⚡ 在线 URL 使用 root CLI Range 引擎：只读取所选分区，不下载整包；root 负责写入共享目录");
+        }
+        final long stuckLimit = isUrl ? 20 * 60_000L : 300_000L;
         final StringBuilder errOut = new StringBuilder();
         final java.util.concurrent.atomic.AtomicBoolean nativeDone =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
+        final CliTransferMeter downloadMeter = isUrl ? new CliTransferMeter() : null;
+        final java.util.concurrent.atomic.AtomicLong lastDownloadUiMs =
+                new java.util.concurrent.atomic.AtomicLong(0L);
+        long lastNetworkBytes = readTotalRxBytes();
+        long lastNetworkMs = System.currentTimeMillis();
+        if (isUrl) mainHandler.post(() -> { if (itemView != null) itemView.setDownloading(0, 0f); });
         Thread runner = new Thread(() -> {
             DnaTools.Result r = DnaTools.payloadExtractCli(PayloadDumperActivity.this,
-                    input, outputDir, name, null,
+                    input, outputDir, name,
+                    line -> {
+                        if (downloadMeter != null) {
+                            CliTransferSample sample = downloadMeter.update(line);
+                            if (sample != null) {
+                                lastDownloadUiMs.set(System.currentTimeMillis());
+                                mainHandler.post(() -> {
+                                    if (itemView != null)
+                                        itemView.setProgress(sample.percent, sample.speedMBps, 0);
+                                });
+                            }
+                        }
+                        return kotlin.Unit.INSTANCE;
+                    },
                     cancelled::getAsBoolean,
                     isUrl ? 60 * 60_000L : 20 * 60_000L);
             if (r.getSuccess()) {
@@ -1845,10 +2084,27 @@ public final class PayloadDumperActivity extends BaseActivity {
             long bytes = outFile.length();
             long now = System.currentTimeMillis();
             float speedMBs = (bytes - lastBytes) / 1048576f / Math.max(0.001f, (now - lastPollMs) / 1000f);
-            int pct = expected > 0 ? (int) Math.min(100, bytes * 100 / expected) : 0;
+            long rx = readTotalRxBytes();
+            float networkSpeed = rx >= 0L && lastNetworkBytes >= 0L && rx >= lastNetworkBytes
+                    ? (rx - lastNetworkBytes) / 1048576f / Math.max(0.001f, (now - lastNetworkMs) / 1000f) : 0f;
+            int rawPct = expected > 0 ? (int) Math.min(100, bytes * 100 / expected) : 0;
+            int pct = Math.min(99, rawPct); // CLI 退出后才宣告完成
             final int p2 = pct;
             final float sp = speedMBs;
-            mainHandler.post(() -> { if (itemView != null) itemView.setProgress(p2, sp, 1); });
+            final boolean finishing = expected > 0 && bytes >= expected;
+            boolean recentDownloadUpdate = isUrl && now - lastDownloadUiMs.get() < 1800L;
+            if (!recentDownloadUpdate) {
+                mainHandler.post(() -> {
+                    if (itemView != null) {
+                        if (finishing) itemView.setFinishing();
+                        else if (isUrl && bytes == 0) itemView.setDownloading(0, networkSpeed);
+                        else if (bytes == 0) itemView.setProgress(0, -1f, 1);
+                        else itemView.setProgress(p2, sp, 1);
+                    }
+                });
+            }
+            lastNetworkBytes = rx;
+            lastNetworkMs = now;
             if (bytes > lastBytes) { lastBytes = bytes; stuckMs = now; }
             else if (now - stuckMs > stuckLimit) {
                 log(isLocal, "⏱ " + name + " 提取超时（" + (stuckLimit / 60000) + " 分钟无进展）");
@@ -1871,6 +2127,8 @@ public final class PayloadDumperActivity extends BaseActivity {
         String err;
         synchronized (errOut) { err = errOut.toString().trim(); }
         String brief = err.isEmpty() ? "文件未生成" : err;
+        if (nativeDone.get() && size > 0 && expected > 0 && size < expected)
+            brief = "输出文件未写完整: " + fmtMB(size) + " / " + fmtMB(expected);
         log(isLocal, "✗ " + name + " 提取失败: " + brief);
         if (brief.contains("delta") || brief.toLowerCase(java.util.Locale.ROOT).contains("incremental")
                 || brief.contains("differential") || brief.contains("source")) {
@@ -1878,6 +2136,68 @@ public final class PayloadDumperActivity extends BaseActivity {
         }
         mainHandler.post(() -> { if (itemView != null) itemView.setError("提取失败"); });
         return false;
+    }
+
+    private static final class CliTransferSample {
+        final int percent;
+        final float speedMBps;
+        CliTransferSample(int percent, float speedMBps) {
+            this.percent = percent;
+            this.speedMBps = speedMBps;
+        }
+    }
+
+    /** 从 Rust CLI 的 Downloading 进度行读取实际 HTTP Range 接收字节数。 */
+    private static final class CliTransferMeter {
+        private static final java.util.regex.Pattern SIZE = java.util.regex.Pattern.compile(
+                "([0-9]+(?:[.,][0-9]+)?)\\s*(bytes?|KiB|MiB|GiB|KB|MB|GB|B)\\b",
+                java.util.regex.Pattern.CASE_INSENSITIVE);
+        private long lastBytes = -1L;
+        private long lastAtMs;
+        private long lastActivityMs;
+        private float smoothedSpeed;
+        private int maxPercent;
+
+        synchronized CliTransferSample update(String rawLine) {
+            if (rawLine == null || !rawLine.toLowerCase(java.util.Locale.ROOT).contains("download"))
+                return null;
+            String line = rawLine.replaceAll("\\u001B\\[[0-9;]*[A-Za-z]", "");
+            java.util.regex.Matcher matcher = SIZE.matcher(line);
+            long received = -1L;
+            long total = -1L;
+            int found = 0;
+            while (matcher.find()) {
+                double value;
+                try { value = Double.parseDouble(matcher.group(1).replace(',', '.')); }
+                catch (NumberFormatException ignored) { continue; }
+                String unit = matcher.group(2).toLowerCase(java.util.Locale.ROOT);
+                long multiplier = (unit.equals("kib") ? 1024L
+                        : unit.equals("mib") ? 1024L * 1024L
+                        : unit.equals("gib") ? 1024L * 1024L * 1024L
+                        : unit.equals("kb") ? 1000L
+                        : unit.equals("mb") ? 1000L * 1000L
+                        : unit.equals("gb") ? 1000L * 1000L * 1000L : 1L);
+                long parsed = (long) (value * multiplier);
+                if (found++ == 0) received = parsed;
+                else { total = parsed; break; }
+            }
+            if (received < 0L) return null;
+            long now = System.currentTimeMillis();
+            float speed = 0f;
+            if (lastBytes >= 0L && received >= lastBytes && lastAtMs > 0L && now > lastAtMs)
+                speed = (received - lastBytes) / 1048576f / ((now - lastAtMs) / 1000f);
+            if (speed > 0.005f) {
+                smoothedSpeed = smoothedSpeed <= 0f ? speed : smoothedSpeed * 0.65f + speed * 0.35f;
+                lastActivityMs = now;
+            } else if (now - lastActivityMs > 2500L) {
+                smoothedSpeed = 0f;
+            }
+            lastBytes = received;
+            lastAtMs = now;
+            int percent = total > 0L ? (int) Math.min(99L, received * 100L / total) : 0;
+            maxPercent = Math.max(maxPercent, percent);
+            return new CliTransferSample(maxPercent, Math.max(0f, smoothedSpeed));
+        }
     }
 
     private String fmtMB(long bytes) {
@@ -1888,94 +2208,6 @@ public final class PayloadDumperActivity extends BaseActivity {
 
     private void log(boolean isLocal, String msg) {
         if (isLocal) logLocal(msg); else logOnline(msg);
-    }
-
-    /**
-     * 在线全选的整包下载：GitHub 系链接镜像优先 + 直连垫底 + 慢速看门狗（同 UpdateCenter v3.40.11）。
-     * 修复在线单分区提取的固有缺陷 —— 每个分区都要重新流式下载，N 个分区 = N 次下载。
-     */
-    private File downloadOnlineZip(String url) {
-        boolean gh = isGithubHost(url);
-        File out = new File(getCacheDir(), "payload_online_full.zip");
-        //noinspection ResultOfMethodCallIgnored
-        out.delete();
-        for (int si = 0; si < (gh ? GH_MIRRORS.length : 1); si++) {
-            if (extractAllCancel) return null;
-            String src = (gh ? GH_MIRRORS[si] : "") + url;
-            boolean lastSource = gh && si == GH_MIRRORS.length - 1;
-            java.net.HttpURLConnection conn = null;
-            try {
-                logOnline((gh ? "下载源 " + (si + 1) + "/" + GH_MIRRORS.length + ": " : "下载源: ")
-                        + (src.equals(url) ? "直连" : GH_MIRRORS[si]));
-                conn = (java.net.HttpURLConnection) new java.net.URL(src).openConnection();
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(30000);
-                conn.setInstanceFollowRedirects(true);
-                conn.setRequestProperty("User-Agent", "Dsu-Manager-Android/" + BuildConfig.VERSION_NAME);
-                int code = conn.getResponseCode();
-                if (code < 200 || code >= 300) throw new java.io.IOException("HTTP " + code);
-                long total = conn.getContentLengthLong();
-                boolean slow = false;
-                try (java.io.InputStream in = conn.getInputStream();
-                     java.io.FileOutputStream fo = new java.io.FileOutputStream(out)) {
-                    byte[] buf = new byte[16384];
-                    int read;
-                    long done = 0, winBytes = 0, winStart = System.currentTimeMillis();
-                    long lastLog = 0, slowSince = System.currentTimeMillis();
-                    while ((read = in.read(buf)) != -1) {
-                        if (extractAllCancel) throw new java.io.IOException("cancelled");
-                        fo.write(buf, 0, read);
-                        done += read;
-                        winBytes += read;
-                        long now = System.currentTimeMillis();
-                        if (now - lastLog >= 1000) {
-                            long dt = Math.max(1, now - winStart);
-                            long speed = winBytes * 1000 / dt;   // 窗口内真实速度
-                            winBytes = 0;
-                            winStart = now;
-                            lastLog = now;
-                            // 慢速看门狗：达标重置；持续过慢且后面还有源 → 弃源切换
-                            if (speed >= SLOW_SPEED) slowSince = now;
-                            else if (!lastSource && now - slowSince >= SLOW_WINDOW_MS) { slow = true; break; }
-                            int pct = total > 0 ? (int) (done * 100 / total) : -1;
-                            logOnline("↓ " + (pct >= 0 ? pct + "% · " : "") + fmtMB(done)
-                                    + (total > 0 ? " / " + fmtMB(total) : "")
-                                    + " · " + fmtMB(speed) + "/s");
-                        }
-                    }
-                }
-                if (slow) {
-                    //noinspection ResultOfMethodCallIgnored
-                    out.delete();
-                    logOnline("源过慢，自动切换下一个下载源...");
-                    continue;
-                }
-                // ZIP 头校验（镜像可能返回 HTML 错误页）
-                try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(out, "r")) {
-                    byte[] head = new byte[2];
-                    raf.readFully(head);
-                    if (head[0] != 'P' || head[1] != 'K') throw new java.io.IOException("下载内容不是 ZIP（镜像返回无效内容）");
-                }
-                return out;
-            } catch (Exception e) {
-                //noinspection ResultOfMethodCallIgnored
-                out.delete();
-                logOnline("下载失败: " + e.getMessage());
-            } finally {
-                if (conn != null) conn.disconnect();
-            }
-        }
-        return null;
-    }
-
-    private boolean isGithubHost(String url) {
-        String[] hosts = {
-                "https://github.com/", "https://raw.githubusercontent.com/",
-                "https://objects.githubusercontent.com/", "https://release-assets.githubusercontent.com/",
-                "https://gist.githubusercontent.com/", "https://codeload.github.com/",
-                "https://media.githubusercontent.com/", "https://cloud.githubusercontent.com/"};
-        for (String h : hosts) if (url != null && url.startsWith(h)) return true;
-        return false;
     }
 
     private void closeOpenedFd() {
@@ -2040,17 +2272,9 @@ public final class PayloadDumperActivity extends BaseActivity {
         if (extractor != null) {
             extractor.close();
         }
-        // v3.41.14：返回上一页即自动清理拷贝的缓存（JNI 解析兜底副本 + 在线整包下载残留），
-        // 释放了空间则提示一下（在线 zip 是页面内逐分区提取的输入源，页面销毁后会话已结束）
-        // v3.41.21：移入后台线程 —— root 属主副本需 su rm 兜底删除，大目录可能耗时数秒
+        // 清理 JNI 解析兜底副本；在线提取不缓存完整 OTA 包。
         new Thread(() -> {
             long freed = DnaTools.INSTANCE.releaseJniCache(this);
-            File onlineZip = new File(getCacheDir(), "payload_online_full.zip");
-            if (onlineZip.isFile()) {
-                freed += onlineZip.length();
-                //noinspection ResultOfMethodCallIgnored
-                onlineZip.delete();
-            }
             final long total = freed;
             if (total > 0) {
                 runOnUiThread(() -> Toast.makeText(getApplicationContext(),

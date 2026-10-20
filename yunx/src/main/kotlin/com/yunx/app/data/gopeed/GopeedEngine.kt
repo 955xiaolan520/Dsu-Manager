@@ -33,6 +33,7 @@ import com.yunx.app.util.StorageDirs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.File
@@ -71,6 +72,33 @@ object GopeedEngine {
 
     /** logcat 过滤用：adb logcat -s GopeedEngine（导入/加载/启动/调用 全链路打点） */
     private const val TAG = "GopeedEngine"
+
+    /**
+     * Gopeed 的 BT 默认配置不含 Tracker；磁力只有 DHT 时在部分移动网络上很难及时取得元数据。
+     * 这些是公开 announce 地址；种子自身携带的 Tracker 与 DHT / PEX 仍会同时保留。
+     */
+    private val DEFAULT_BT_TRACKERS = listOf(
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+        "udp://open.demonii.com:1337/announce",
+        "udp://tracker.skynetcloud.site:6969/announce",
+        "udp://tracker.qu.ax:6969/announce",
+        "udp://tracker.ducks.party:1984/announce",
+        "udp://tracker.nyaa.vc:6969/announce",
+        "udp://explodie.org:6969/announce",
+        "udp://tracker.bittor.pw:1337/announce",
+        "udp://tracker.corpscorp.online:80/announce",
+        "udp://tracker-udp.gbitt.info:80/announce",
+        "udp://tracker.gmi.gd:6969/announce",
+        "http://tracker.dler.org:6969/announce",
+        "http://tracker.dler.com:6969/announce",
+        "http://tracker2.dler.org:80/announce",
+        "http://tracker.renfei.net:8080/announce",
+        "https://tracker.pmman.tech:443/announce",
+        "https://ht.therarbg.to:443/announce",
+        "udp://retracker01-msk-virt.corbina.net:80/announce"
+    )
 
     /** AAR 内可能存在的 ABI 目录名（按 Build.SUPPORTED_ABIS 顺序挑第一个命中的） */
     private val KNOWN_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
@@ -133,9 +161,11 @@ object GopeedEngine {
     fun kernelTempDir(context: Context): File =
         File(context.getExternalFilesDir(null) ?: context.filesDir, "$DIR_NAME/kernel")
 
-    /** Magnet metadata lookup needs a writable workspace, not the final shared Download directory. */
-    fun btWorkspaceDir(context: Context): File =
-        File(context.filesDir, "$DIR_NAME/bt-workspace")
+    /** Gopeed database and task metadata stay in app-private storage; they are never download targets. */
+    fun engineStorageDir(context: Context): File = File(context.filesDir, "$DIR_NAME/store")
+
+    /** Temporary pieces/metadata are private engine data, separate from final task output paths. */
+    fun engineTempDir(context: Context): File = File(context.filesDir, "$DIR_NAME/tmp")
 
     /**
      * 把内存里的状态与真实文件对齐一次。
@@ -338,8 +368,9 @@ object GopeedEngine {
      * 启动引擎（幂等：已在运行直接返回端口）。
      *
      * @param downloadDir 下载保存目录。必须是真实文件系统路径——Gopeed 是原生进程内核心，
-     *        写不了 SAF 的 content:// 目录，所以这里固定用应用外部私有目录（Android/data 下，免权限）。
+     *        写不了 SAF 的 content:// 目录；调用方应传入经实际写入探针确认的目标目录。
      */
+    @Synchronized
     fun start(context: Context, downloadDir: File): Int {
         if (_state.value == State.RUNNING) return port
         if (!downloadDir.isDirectory && !downloadDir.mkdirs()) {
@@ -377,7 +408,26 @@ object GopeedEngine {
         }
     }
 
+    /**
+     * 确保进程内 Go runtime 与 REST API 都可用。若状态 Flow 仍是 RUNNING 但 API 已失活，
+     * 自动回收残留状态并重新启动；BT 解析和任务提交前调用，用户不需要手动重启内核。
+     */
+    @Synchronized
+    fun ensureRunning(context: Context, downloadDir: File = resolveDownloadDir(context)): Int {
+        if (_state.value == State.RUNNING) {
+            runCatching { invoke("GET", "/api/v1/info", timeoutSeconds = 10L) }
+                .onSuccess { return port }
+                .onFailure { error ->
+                    Log.w(TAG, "引擎状态显示运行中但 API 健康检查失败，将自动恢复：${error.message}")
+                    stop()
+                }
+        }
+        syncInstalledState(context)
+        return start(context, downloadDir)
+    }
+
     /** 停止引擎（Go 侧内部上限 3 秒，超时未完成的任务会以错误回调收尾） */
+    @Synchronized
     fun stop() {
         if (_state.value != State.RUNNING) return
         Log.d(TAG, "停止引擎")
@@ -444,13 +494,13 @@ object GopeedEngine {
     }
 
     /**
-     * 把「引擎运行期由 App 决定的配置」下发进引擎（每次引擎启动成功后调一次）：并发上限 + BT 不做种。
+     * 把「引擎运行期由 App 决定的配置」下发进引擎（每次引擎启动成功后调一次）：并发上限和 BT 不做种。
      *
      * ★ 为什么必须在启动后走 REST 写回去：启动配置里的 `downloadConfig` **只在空库首次生效**——
      *   `Downloader.Setup()` 一旦读到 bolt 里存过的配置，就整个替换掉启动配置。导入内核后每次冷启动
      *   读到的都是库里那份旧值，启动配置里写什么都不算数。
      *
-     * ★ 只改这两个地方、其余字段原样带回：GET 到的整份配置直接 PUT 回去，
+     * ★ 只改 App 管理的字段、其余字段原样带回：GET 到的整份配置直接 PUT 回去，
      *   `trackers`/`listenPort`/`downloadDir` 等仍是库里已有的值，不会被我们冲掉。
      *
      * 并发上限（`maxRunning`）——**引擎自己就有多任务并发**，不用我们另外排一个队列：
@@ -470,6 +520,10 @@ object GopeedEngine {
         cfg.put("maxRunning", maxRunning)
         val protocols = cfg.optJSONObject("protocolConfig") ?: JSONObject()
         val bt = protocols.optJSONObject("bt") ?: JSONObject()
+        mergeDefaultBtTrackers(bt)
+        // Gopeed 在首次创建共享 BT 客户端时读取这两个开关；纠正旧配置中关闭 DHT/PEX 的状态。
+        bt.put("disableDht", false)
+        bt.put("disablePex", false)
         bt.put("seedKeep", false)
         bt.put("seedRatio", 0)
         bt.put("seedTime", 1)
@@ -526,6 +580,22 @@ object GopeedEngine {
     /** 「最大同时下载任务数」：内置下载器与引擎共用设置里的同一个值（引擎侧字段是 DownloaderStoreConfig.maxRunning） */
     private fun maxRunningOf(context: Context): Int =
         SettingsRepository(context).maxConcurrentDownloads.coerceAtLeast(1)
+
+    /** 请求级 Tracker 让 `/resolve` 与随后的 BT 任务立刻使用同一组发现源。 */
+    private fun btRequestExtra(): JSONObject = JSONObject().apply {
+        put("trackers", JSONArray(DEFAULT_BT_TRACKERS))
+    }
+
+    /** 合并而不覆盖用户或种子已有的 Tracker，且限制旧配置异常膨胀。 */
+    private fun mergeDefaultBtTrackers(bt: JSONObject) {
+        val merged = LinkedHashSet<String>()
+        val existing = bt.optJSONArray("trackers")
+        for (index in 0 until (existing?.length() ?: 0)) {
+            existing?.optString(index)?.trim()?.takeIf { it.isNotEmpty() }?.let(merged::add)
+        }
+        DEFAULT_BT_TRACKERS.forEach(merged::add)
+        bt.put("trackers", JSONArray(merged.take(32)))
+    }
 
     /** 列表/详情里的任务对象转成 UI 用的纯数据（字段名对照 Gopeed 的 Task/TaskRuntimeStatus） */
     data class TaskView(
@@ -616,9 +686,12 @@ object GopeedEngine {
         labels: Map<String, String> = emptyMap(),
         selectedFiles: List<Int> = emptyList()
     ): String {
+        val isMagnet = url.startsWith("magnet:", ignoreCase = true)
         val req = JSONObject().apply {
             put("url", url)
-            if (headers.isNotEmpty()) {
+            if (isMagnet) {
+                put("extra", btRequestExtra())
+            } else if (headers.isNotEmpty()) {
                 put("extra", JSONObject().apply { put("header", JSONObject(headers)) })
             }
             if (labels.isNotEmpty()) put("labels", JSONObject(labels))
@@ -647,9 +720,9 @@ object GopeedEngine {
     fun resolveTorrent(url: String): JSONObject {
         require(url.startsWith("magnet:", ignoreCase = true)) { "Gopeed 元数据解析仅接受 magnet 链接" }
         val body = JSONObject()
-            .put("req", JSONObject().put("url", url))
+            .put("req", JSONObject().put("url", url).put("extra", btRequestExtra()))
             .put("opts", JSONObject())
-        return invoke("POST", "/api/v1/resolve", null, body.toString(), timeoutSeconds = 180L).optJSONObject("data")
+        return invoke("POST", "/api/v1/resolve", null, body.toString(), timeoutSeconds = 30L).optJSONObject("data")
             ?: throw IllegalStateException("引擎没有返回种子元数据")
     }
 
@@ -734,9 +807,8 @@ object GopeedEngine {
 
     /** 组装 Gopeed 启动配置（字段名对照 pkg/rest/model/server.go 的 StartConfig） */
     private fun buildConfig(context: Context, downloadDir: File): JSONObject {
-        val root = File(context.filesDir, DIR_NAME)
-        val store = File(root, "store").apply { mkdirs() }
-        val temp = File(root, "tmp").apply { mkdirs() }
+        val store = engineStorageDir(context).apply { mkdirs() }
+        val temp = engineTempDir(context).apply { mkdirs() }
         downloadDir.mkdirs()
         return JSONObject().apply {
             put("storage", "bolt")
@@ -752,9 +824,18 @@ object GopeedEngine {
                 // 所以真正的下发改在 applyRuntimeConfig() 里走 REST 写回；这里写上是为了
                 // 「首次装引擎就拿到正确上限」，而不是引擎默认的 5
                 put("maxRunning", maxRunningOf(context))
-                // 只表示「启动时恢复未完成任务」，新建任务照常立即开始
+                // 暂停状态由下载管理器控制，避免内核启动时擅自恢复用户主动暂停的任务。
                 put("autoStartTasks", false)
-                put("protocolConfig", JSONObject())
+                put("protocolConfig", JSONObject().apply {
+                    put("bt", JSONObject().apply {
+                        mergeDefaultBtTrackers(this)
+                        put("disableDht", false)
+                        put("disablePex", false)
+                        put("seedKeep", false)
+                        put("seedRatio", 0)
+                        put("seedTime", 1)
+                    })
+                })
             })
         }
     }

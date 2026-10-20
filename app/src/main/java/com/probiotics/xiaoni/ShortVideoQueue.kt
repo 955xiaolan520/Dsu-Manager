@@ -11,13 +11,15 @@ import java.io.File
 
 /** Submits short-video downloads to Dsu's own persistent queue and task partition. */
 object ShortVideoQueue {
+    @JvmOverloads
     @JvmStatic
     fun enqueue(
         context: Context,
         url: String,
         fileName: String,
         platform: String,
-        headers: Map<String, String>
+        headers: Map<String, String>,
+        lyrics: String = ""
     ): Boolean = runCatching {
         val app = context.applicationContext
         val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -47,7 +49,8 @@ object ShortVideoQueue {
 
         var output = File(directory, safeName)
         var suffix = 1
-        while (output.exists() || inFlight(output.absolutePath)) {
+        while (output.exists() || inFlight(output.absolutePath)
+            || (lyrics.isNotBlank() && File(directory, output.nameWithoutExtension + ".lrc").exists())) {
             output = File(directory, "$stem ($suffix)$ext")
             suffix++
         }
@@ -65,6 +68,11 @@ object ShortVideoQueue {
             .putExtra("download_chunk_mb", 16L)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) app.startForegroundService(intent)
         else app.startService(intent)
+        if (lyrics.isNotBlank()) {
+            runCatching {
+                File(directory, output.nameWithoutExtension + ".lrc").writeText(lyrics.trim() + "\n", Charsets.UTF_8)
+            }
+        }
         true
     }.getOrDefault(false)
 }

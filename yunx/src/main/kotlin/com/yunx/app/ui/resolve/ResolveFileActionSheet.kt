@@ -35,7 +35,6 @@ import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ModalBottomSheet
@@ -86,9 +85,6 @@ internal fun ResolveFileActionSheet(
     onDownloadFolder: () -> Unit,
     /** 百度单文件：走匿名公益解析服务，UI 必须明确披露会发送分享链接/提取码 */
     onPublicDownload: (() -> Unit)? = null,
-    /** 百度公益解析每日口令：应用私有本地缓存 */
-    manualPublicPassword: String = "",
-    onManualPublicPasswordChange: (String) -> Unit = {},
     /** 点「转存」时准备转存状态（`ResolveViewModel.requestSave`），随后切到转存步骤 */
     onSave: () -> Unit,
     onDismiss: () -> Unit,
@@ -96,8 +92,6 @@ internal fun ResolveFileActionSheet(
     saveStep: @Composable (onBack: () -> Unit, onDone: () -> Unit) -> Unit
 ) {
     var step by remember { mutableStateOf(ResolveActionStep.MENU) }
-    var publicPasswordMissing by remember { mutableStateOf(false) }
-
     val sheetState = rememberOperationSheetState(saving)
     val scope = rememberCoroutineScope()
 
@@ -185,42 +179,17 @@ internal fun ResolveFileActionSheet(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    OutlinedTextField(
-                        value = manualPublicPassword,
-                        onValueChange = { value ->
-                            val normalized = value.take(512)
-                            onManualPublicPasswordChange(normalized)
-                            publicPasswordMissing = normalized.isBlank()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("今日百度公益解析口令") },
-                        placeholder = { Text("粘贴服务端当前有效的每日口令") },
-                        singleLine = true
-                    )
                     Text(
-                        "口令会保存在本机；每天需手动更新。请填写公益解析服务端口令（不是百度分享提取码）。解析时分享链接、提取码和口令会发送至 mf.dg22.top，不发送百度账号 Cookie。",
+                        "应用会自动从公开备用源获取口令并缓存在本机，无需手动填写。官方说明该解析口令约每 30 分钟轮换；若备用源未同步，服务端会拒绝，免登录解析暂不可用。解析时分享链接、提取码和口令会发送至 mf.dg22.top，不发送百度账号 Cookie。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (publicPasswordMissing) {
-                        Text(
-                            "请先填写今日口令，再开始公益解析。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
                     ActionItem(
                         icon = Icons.Outlined.Download,
                         title = "公益解析",
                         desc = "无需百度登录；仅支持单文件且小于 10 GiB。",
                         tint = MaterialTheme.colorScheme.tertiary,
-                        onClick = {
-                            if (manualPublicPassword.isBlank()) {
-                                publicPasswordMissing = true
-                            } else {
-                                act { onPublicDownload?.invoke() }
-                            }
-                        }
+                        onClick = { act { onPublicDownload?.invoke() } }
                     )
                     ActionItem(
                         icon = Icons.Outlined.Download,

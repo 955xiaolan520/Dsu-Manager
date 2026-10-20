@@ -729,10 +729,11 @@ class DownloadManager(
 
     /** 是否把任务交给 Gopeed 引擎：设置里选了引擎 + 引擎已导入；GitHub 走镜像回退（引擎不支持），始终用内置下载器 */
     private fun shouldUseEngine(platform: String): Boolean =
-        !Aria2DownloadBackendRegistry.isInstalled &&
-            platform != DownloadPlatform.GITHUB &&
-            settings.downloadEngine == SettingsRepository.ENGINE_GOPEED &&
-            GopeedEngine.isInstalled(context)
+        (platform == DownloadPlatform.MAGNET && GopeedEngine.isInstalled(context)) ||
+            (!Aria2DownloadBackendRegistry.isInstalled &&
+                platform != DownloadPlatform.GITHUB &&
+                settings.downloadEngine == SettingsRepository.ENGINE_GOPEED &&
+                GopeedEngine.isInstalled(context))
 
     /**
      * 磁力链接是否可下：返回 null = 可以（交给引擎），否则是给用户看的拦截原因。
@@ -742,14 +743,8 @@ class DownloadManager(
      */
     private fun magnetBlockReason(isMagnet: Boolean): String? {
         if (!isMagnet) return null
-        if (Aria2DownloadBackendRegistry.isInstalled) {
-            return "当前集成统一使用 aria2c，仅支持 HTTP(S) 直链，暂不支持磁力/BT 链接"
-        }
         if (!GopeedEngine.isInstalled(context)) {
             return "磁力下载需要先在「设置 → 下载 → 下载引擎」里导入 Gopeed 内核"
-        }
-        if (settings.downloadEngine != SettingsRepository.ENGINE_GOPEED) {
-            return "磁力下载需要先在「设置 → 下载」里把下载引擎切换为 Gopeed"
         }
         return null
     }
@@ -770,9 +765,7 @@ class DownloadManager(
         val engineTaskId = try {
             withContext(Dispatchers.IO) {
                 val dir = GopeedEngine.resolveDownloadDir(context)
-                if (GopeedEngine.state.value != GopeedEngine.State.RUNNING) {
-                    GopeedEngine.start(context, dir)
-                }
+                GopeedEngine.ensureRunning(context, dir)
                 GopeedEngine.createTask(
                     url = url,
                     saveDir = dir,
@@ -820,13 +813,11 @@ class DownloadManager(
             while (isActive) {
                 val pending = runCatching { dao.listSyncableEngineTasks() }.getOrDefault(emptyList())
                 if (pending.isEmpty()) return@launch
-                if (GopeedEngine.state.value != GopeedEngine.State.RUNNING) {
-                    runCatching {
-                        withContext(Dispatchers.IO) {
-                            GopeedEngine.start(context, GopeedEngine.resolveDownloadDir(context))
-                        }
-                    }.onFailure { Log.e(TAG, "引擎同步时启动引擎失败：${it.message}", it) }
-                }
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        GopeedEngine.ensureRunning(context, GopeedEngine.resolveDownloadDir(context))
+                    }
+                }.onFailure { Log.e(TAG, "引擎同步时启动引擎失败：${it.message}", it) }
                 for (task in pending) {
                     taskEngineIds[task.id] = task.engineTaskId
                     val status = runCatching {

@@ -421,8 +421,8 @@ public class MainActivity extends BaseActivity {
          LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
           String[] labels = english
-                  ? new String[]{"Check GSI status", "Install GSI", "Reboot to DSU", "Remove installed GSI", "Manage installed images"}
-                  : new String[]{"检测 GSI 状态", "安装 GSI", "重启到 DSU", "撤销已安装 GSI", "管理已安装镜像"};
+                  ? new String[]{"Check GSI status", "Install GSI", "Reboot to DSU", "Remove installed DSU", "Manage installed images"}
+                  : new String[]{"检测 GSI 状态", "安装 GSI", "重启到 DSU", "撤销已安装 DSU", "管理已安装镜像"};
           String[] icons = {"🔍", "📥", "🔄", "🗑️", "🗂️"};
           String[] descs = english
                   ? new String[]{"Read DSU status", "Pick image & install", "Reboot into DSU", "Remove installed DSU", "Replace or export installed images"}
@@ -4720,6 +4720,38 @@ public class MainActivity extends BaseActivity {
           LinearLayout content = new LinearLayout(this);
           content.setOrientation(LinearLayout.VERTICAL);
           content.setPadding(dp(4), dp(20), dp(4), dp(96));
+
+          // OTG 刷机助手置顶提示：说明测试范围与全量包文件格式。
+          LinearLayout otgPinnedCard = new LinearLayout(this);
+          otgPinnedCard.setOrientation(LinearLayout.VERTICAL);
+          otgPinnedCard.setPadding(dp(14), dp(11), dp(14), dp(11));
+          GradientDrawable otgPinnedBg = new GradientDrawable();
+          otgPinnedBg.setOrientation(GradientDrawable.Orientation.TL_BR);
+          otgPinnedBg.setColors(new int[]{0xFFFFD98A, 0xFFF2B04E});
+          otgPinnedBg.setCornerRadius(dp(18));
+          otgPinnedBg.setStroke(Math.max(1, dp(1)), 0x80FFFFFF);
+          otgPinnedCard.setBackground(otgPinnedBg);
+          otgPinnedCard.setElevation(0f);
+          TextView otgPinnedTitle = text("📌 " + t("置顶提示", "Pinned"), 14, 0xff6b3d00);
+          otgPinnedTitle.setTypeface(null, 1);
+          otgPinnedTitle.setPadding(0, 0, 0, dp(5));
+          otgPinnedCard.addView(otgPinnedTitle, new LinearLayout.LayoutParams(-1, -2));
+          String[] otgPinnedLines = {
+                  t("目前还没测试能不能刷入 img 给另一个设备，只看过每个功能可以正常点击有回应。",
+                          "Flashing images to another device is untested; only verified that every button responds."),
+                  t("全量包刷写、分区刷入还没测试，谨慎操作，理论上没有问题。",
+                          "Full-package flash and partition flash are untested. Proceed carefully; should work in theory."),
+                  t("全量包刷写需要：OTA 全量包 ZIP（压缩包内含 payload.bin）或裸 payload.bin，点击功能后按说明选择文件。",
+                          "Full-package flash needs an OTA ZIP containing payload.bin, or a raw payload.bin file.")};
+          for (String otgPl : otgPinnedLines) {
+              TextView otgLine = text(otgPl, 11, 0xff7a4a10);
+              otgLine.setLineSpacing(dp(2), 1f);
+              otgLine.setPadding(0, 0, 0, dp(3));
+              otgPinnedCard.addView(otgLine, new LinearLayout.LayoutParams(-1, -2));
+          }
+          LinearLayout.LayoutParams otgPinnedLp = new LinearLayout.LayoutParams(-1, -2);
+          otgPinnedLp.bottomMargin = dp(10);
+          content.addView(otgPinnedCard, otgPinnedLp);
           
           // 设备状态卡片（标题带刷新按钮）
           content.addView(buildFlashDeviceCard());
@@ -5827,17 +5859,78 @@ public class MainActivity extends BaseActivity {
           });
       }
 
+      private void showPartitionRebootConfirm(String label, String command) {
+          final Dialog dialog = new Dialog(this);
+          LinearLayout root = new LinearLayout(this);
+          root.setOrientation(LinearLayout.VERTICAL);
+          root.setPadding(dp(22), dp(20), dp(22), dp(16));
+          GradientDrawable panel = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                  new int[]{0xfff4fbff, 0xffe9f2ff, 0xfff9efff});
+          panel.setCornerRadius(dp(28));
+          panel.setStroke(dp(1), 0x88ffffff);
+          root.setBackground(panel);
+          TextView badge = new TextView(this);
+          badge.setText("⚡  " + t("高级重启", "POWER ACTION"));
+          badge.setTextColor(0xff536fc0);
+          badge.setTextSize(12);
+          badge.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+          root.addView(badge, new LinearLayout.LayoutParams(-1, -2));
+          TextView title = new TextView(this);
+          title.setText(t("确认" + label + "？", "Confirm " + label + "?"));
+          title.setTextColor(0xff18253d);
+          title.setTextSize(22);
+          title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+          title.setPadding(0, dp(9), 0, dp(5));
+          root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+          TextView message = new TextView(this);
+          message.setText(t(rebootDescription(label), rebootDescriptionEnglish(label)) + "\n\n" + t("命令：", "Command: ") + command);
+          message.setTextColor(0xff5d6e84);
+          message.setTextSize(14);
+          message.setLineSpacing(0f, 1.15f);
+          root.addView(message, new LinearLayout.LayoutParams(-1, -2));
+          LinearLayout actions = new LinearLayout(this);
+          actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+          actions.setPadding(0, dp(18), 0, 0);
+          TextView cancel = new TextView(this);
+          cancel.setText(t("先不操作", "Cancel"));
+          cancel.setTextColor(0xff64758a);
+          cancel.setGravity(Gravity.CENTER);
+          cancel.setPadding(dp(15), dp(11), dp(15), dp(11));
+          cancel.setOnClickListener(v -> dialog.dismiss());
+          TextView confirm = new TextView(this);
+          confirm.setText(t("确认执行", "Confirm"));
+          confirm.setTextColor(Color.WHITE);
+          confirm.setGravity(Gravity.CENTER);
+          confirm.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+          confirm.setPadding(dp(18), dp(11), dp(18), dp(11));
+          GradientDrawable confirmBg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                  new int[]{0xff5d8fdb, 0xff9a70c8});
+          confirmBg.setCornerRadius(dp(18));
+          confirm.setBackground(confirmBg);
+          confirm.setOnClickListener(v -> { dialog.dismiss(); executePartitionReboot(command, label); });
+          actions.addView(cancel, new LinearLayout.LayoutParams(-2, -2));
+          LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-2, -2);
+          confirmLp.leftMargin = dp(8);
+          actions.addView(confirm, confirmLp);
+          root.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+          dialog.setContentView(root);
+          dialog.show();
+          if (dialog.getWindow() != null) {
+              Window window = dialog.getWindow();
+              window.setBackgroundDrawableResource(android.R.color.transparent);
+              WindowManager.LayoutParams attrs = window.getAttributes();
+              attrs.dimAmount = 0.34f;
+              window.setAttributes(attrs);
+              window.setLayout((int)(getResources().getDisplayMetrics().widthPixels * 0.88f), -2);
+          }
+      }
+
       private void addPartitionRebootButton(LinearLayout row, String label, String command, boolean needsConfirm, boolean iconAbove) {
           Button button = buildCompactPartitionActionButton(label, iconAbove);
           button.setOnClickListener(v -> {
               Haptics.perform(v);
               if (needsConfirm) {
-                  new android.app.AlertDialog.Builder(this)
-                      .setTitle(t("确认操作", "Confirm action"))
-                      .setMessage(t(rebootDescription(label), rebootDescriptionEnglish(label)))
-                      .setPositiveButton(t("确认", "Confirm"), (dialog, which) -> executePartitionReboot(command, label))
-                      .setNegativeButton(t("取消", "Cancel"), null)
-                      .show();
+                  showPartitionRebootConfirm(label, command);
               } else {
                   executePartitionReboot(command, label);
               }
@@ -6765,10 +6858,14 @@ public class MainActivity extends BaseActivity {
                    installOptionsPanel.setVisibility(installOptionsPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
                    return;
               case 2:
-                  confirm(t("重启到 DSU", "Reboot to DSU"), t("设备将重启到已安装的 Dynamic System。", "The device will reboot into the installed Dynamic System."), this::bootDsu);
+                  confirm(t("重启到 DSU", "Reboot to DSU"),
+                          t("设备将立即重启并进入已安装的动态系统。请先保存当前工作。", "The device will reboot into the installed Dynamic System. Save your work first."),
+                          this::bootDsu);
                   return;
               case 3:
-                  confirm(t("撤销 GSI", "Remove GSI"), t("将清理当前已安装的动态系统。", "The installed Dynamic System will be removed."), this::wipeDsu);
+                  confirm(t("撤销 DSU", "Remove DSU"),
+                          t("此操作会移除当前已安装的 DSU 动态系统及其镜像文件，且不能直接撤回。", "This removes the installed DSU and its image files. This action cannot be undone."),
+                          this::wipeDsu);
                   return;
                case 4:
                    if (imageManagementPanel.getVisibility() == View.VISIBLE) imageManagementPanel.setVisibility(View.GONE); else showImageManagement();
@@ -8717,7 +8814,118 @@ public class MainActivity extends BaseActivity {
          @Override public void setColorFilter(android.graphics.ColorFilter filter){ paint.setColorFilter(filter); }
          @Override public int getOpacity(){ return android.graphics.PixelFormat.TRANSLUCENT; }
      }
-     private void confirm(String t,String m,final Runnable r){ new AlertDialog.Builder(this).setTitle(t).setMessage(m).setPositiveButton("继续",(d,w)->r.run()).setNegativeButton("取消",null).show(); }
+     private void confirm(String title, String message, final Runnable action) {
+         final boolean destructive = title.contains("撤销") || title.toLowerCase(Locale.US).contains("remove");
+         final int accent = destructive ? 0xFFE35D71 : 0xFF426FE0;
+         Dialog dialog = new Dialog(this);
+         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+         dialog.setCancelable(true);
+
+         LinearLayout panel = new LinearLayout(this);
+         panel.setOrientation(LinearLayout.VERTICAL);
+         panel.setPadding(dp(22), dp(20), dp(22), dp(18));
+         panel.setElevation(dp(8));
+         GradientDrawable panelBg = new GradientDrawable();
+         panelBg.setColor(0xFFF7F9FD);
+         panelBg.setCornerRadius(dp(26));
+         panelBg.setStroke(dp(1), 0xFFE3EAF4);
+         panel.setBackground(panelBg);
+
+         TextView badge = new TextView(this);
+         badge.setText(destructive ? t("DSU · 移除操作", "DSU · REMOVE") : t("DSU · 启动操作", "DSU · BOOT"));
+         badge.setTextSize(10);
+         badge.setTypeface(null, Typeface.BOLD);
+         badge.setTextColor(accent);
+         badge.setGravity(Gravity.CENTER);
+         badge.setPadding(dp(12), dp(6), dp(12), dp(6));
+         GradientDrawable badgeBg = new GradientDrawable();
+         badgeBg.setColor(destructive ? 0x1FE35D71 : 0x1F426FE0);
+         badgeBg.setCornerRadius(dp(30));
+         badge.setBackground(badgeBg);
+         LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(-2, -2);
+         badgeLp.bottomMargin = dp(12);
+         panel.addView(badge, badgeLp);
+
+         TextView heading = new TextView(this);
+         heading.setText(title);
+         heading.setTextSize(21);
+         heading.setTypeface(null, Typeface.BOLD);
+         heading.setTextColor(0xFF172B4D);
+         panel.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+
+         TextView detail = new TextView(this);
+         detail.setText(message);
+         detail.setTextSize(14);
+         detail.setTextColor(0xFF53647C);
+         detail.setLineSpacing(dp(3), 1f);
+         detail.setPadding(dp(14), dp(12), dp(14), dp(12));
+         GradientDrawable detailBg = new GradientDrawable();
+         detailBg.setColor(destructive ? 0xFFFFF0F2 : 0xFFEEF4FF);
+         detailBg.setCornerRadius(dp(17));
+         detail.setBackground(detailBg);
+         LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+         detailLp.topMargin = dp(13);
+         panel.addView(detail, detailLp);
+
+         LinearLayout buttons = new LinearLayout(this);
+         buttons.setOrientation(LinearLayout.HORIZONTAL);
+         LinearLayout.LayoutParams buttonsLp = new LinearLayout.LayoutParams(-1, dp(48));
+         buttonsLp.topMargin = dp(18);
+
+         Button cancel = new Button(this, null, 0);
+         cancel.setText(t("先不操作", "Not now"));
+         cancel.setTextSize(14);
+         cancel.setAllCaps(false);
+         cancel.setTextColor(0xFF53647C);
+         cancel.setGravity(Gravity.CENTER);
+         cancel.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+         cancel.setMinWidth(0);
+         cancel.setMinimumWidth(0);
+         cancel.setPadding(0, 0, 0, 0);
+         GradientDrawable cancelBg = new GradientDrawable();
+         cancelBg.setColor(0xFFFFFFFF);
+         cancelBg.setCornerRadius(dp(16));
+         cancelBg.setStroke(dp(1), 0xFFDCE5F0);
+         cancel.setBackground(cancelBg);
+         cancel.setStateListAnimator(null);
+         cancel.setOnClickListener(v -> dialog.dismiss());
+         LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, -1, 1f);
+         cancelLp.rightMargin = dp(10);
+         buttons.addView(cancel, cancelLp);
+
+         Button proceed = new Button(this, null, 0);
+         proceed.setText(destructive ? t("确认撤销", "Remove DSU") : t("立即重启", "Reboot now"));
+         proceed.setTextSize(14);
+         proceed.setTypeface(null, Typeface.BOLD);
+         proceed.setAllCaps(false);
+         proceed.setTextColor(Color.WHITE);
+         proceed.setGravity(Gravity.CENTER);
+         proceed.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+         proceed.setMinWidth(0);
+         proceed.setMinimumWidth(0);
+         proceed.setPadding(0, 0, 0, 0);
+         GradientDrawable proceedBg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                 destructive ? new int[]{0xFFF07A87, 0xFFD94861} : new int[]{0xFF6A8EF0, 0xFF3F68D8});
+         proceedBg.setCornerRadius(dp(16));
+         proceed.setBackground(proceedBg);
+         proceed.setStateListAnimator(null);
+         proceed.setOnClickListener(v -> {
+             dialog.dismiss();
+             action.run();
+         });
+         buttons.addView(proceed, new LinearLayout.LayoutParams(0, -1, 1f));
+         panel.addView(buttons, buttonsLp);
+
+         dialog.setContentView(panel);
+         dialog.show();
+         Window window = dialog.getWindow();
+         if (window != null) {
+             window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+             window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.88f),
+                     WindowManager.LayoutParams.WRAP_CONTENT);
+             window.setGravity(Gravity.CENTER);
+         }
+     }
      private void toast(String s){ Toast.makeText(this,s,Toast.LENGTH_LONG).show(); }
      
      /** v3.10.61：圆形安全评分视图（中心显示分数，外圈彩色进度环） */

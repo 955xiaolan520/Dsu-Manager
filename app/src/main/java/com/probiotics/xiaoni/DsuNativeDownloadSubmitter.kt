@@ -162,7 +162,8 @@ object DsuNativeDownloadSubmitter : DsuNativeDownloadRouter.Submitter {
     ): Boolean {
         val app = context.applicationContext
         val uri = runCatching { Uri.parse(url) }.getOrNull()
-        if (uri?.scheme != "magnet" || selectedFiles.isEmpty() || selectedFiles.size > 10000 || selectedFiles.any { it < 0 }) {
+        // selectedFiles 为空 = 元数据尚未及时返回时的“下载全部”回退；Gopeed 会在拿到元数据后默认选择全部文件。
+        if (uri?.scheme != "magnet" || selectedFiles.size > 10000 || selectedFiles.any { it < 0 }) {
             notify(app, "种子任务参数无效，请重新解析")
             return false
         }

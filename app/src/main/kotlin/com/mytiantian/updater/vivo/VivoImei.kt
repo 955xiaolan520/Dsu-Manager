@@ -7,16 +7,15 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.Random
 
 /**
  * 请求参数里 imei 字段的取值来源。
  *
- * 优先级：用户手动填写 > 本机读取 > 随机生成。
+ * 优先级：用户手动填写 > 本机读取 > 官方固定回退值；不伪造随机 IMEI。
  *
  * 注意：自 Android 10 起，三方应用无法再获取 IMEI 这类不可重置标识符，
  * 即使授予 READ_PHONE_STATE，[readDevice] 在绝大多数设备上仍会返回空串，
- * 最终回退到随机值。这里的读取逻辑属于「能取到就取」的尽力而为（best effort）。
+ * 读取失败时返回空串，由请求层按官方规则处理，不生成随机设备标识。
  */
 object VivoImei {
 
@@ -41,14 +40,6 @@ object VivoImei {
 
     /** 归一化：只保留数字，截断到 15 位。 */
     fun sanitize(value: String): String = value.filter { it.isDigit() }.take(LENGTH)
-
-    /** 随机生成 15 位 IMEI（与原实现口径一致：纯随机数字，不做 Luhn 校验）。 */
-    fun random(): String {
-        val rand = Random()
-        val sb = StringBuilder(LENGTH)
-        repeat(LENGTH) { sb.append(rand.nextInt(10)) }
-        return sb.toString()
-    }
 
     /**
      * 尽力读取本机 IMEI，读不到返回空串。

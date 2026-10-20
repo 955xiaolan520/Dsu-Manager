@@ -27,7 +27,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.net.URLEncoder
+import java.util.UUID
 
 /**
  * 百度网盘分享解析数据（xpan/share list 响应）。
@@ -60,9 +62,14 @@ class BaiduApi(
 
     private val formMediaType = "application/x-www-form-urlencoded".toMediaType()
 
-    /** bdstoken 缓存（登录态内长期有效） */
+    /** bdstoken 缓存必须绑定当前登录 Cookie，切换账号时不可复用旧值。 */
     @Volatile
     private var cachedBdstoken: String? = null
+    @Volatile
+    private var cachedBdstokenCookie: String? = null
+
+    /** 对齐 wenxi BaiduAppClient：应用安装级设备标识，不使用硬件标识。 */
+    private val downloadDeviceId: String = UUID.randomUUID().toString().replace("-", "").uppercase() + "|0"
 
     // ---------- 账号 ----------
 
@@ -72,12 +79,15 @@ class BaiduApi(
         result.optString("username").takeIf { it.isNotBlank() }
     }
 
-    /** 获取 bdstoken（gettemplatevariable，带缓存） */
-    suspend fun getBdstoken(cookie: String): String? = withContext(Dispatchers.IO) {
-        cachedBdstoken?.takeIf { it.isNotBlank() }?.let { return@withContext it }
+    /** 获取 bdstoken（gettemplatevariable；缓存严格绑定当前登录 Cookie）。 */
+    suspend fun getBdstoken(cookie: String, forceRefresh: Boolean = false): String? = withContext(Dispatchers.IO) {
+        if (!forceRefresh && cachedBdstokenCookie == cookie) {
+            cachedBdstoken?.takeIf { it.isNotBlank() }?.let { return@withContext it }
+        }
         val result = templateVariable(cookie, """["bdstoken"]""") ?: return@withContext null
         val token = result.optString("bdstoken").takeIf { it.isNotBlank() } ?: return@withContext null
         cachedBdstoken = token
+        cachedBdstokenCookie = cookie
         token
     }
 
@@ -221,8 +231,10 @@ suspend fun listShare(surl: String, sekey: String, dir: String, cookie: String, 
 
     /** 列出个人网盘目录（检查临时转存目录是否存在），返回子项 path 集合 */
     suspend fun listDir(dir: String, cookie: String): List<String> = withContext(Dispatchers.IO) {
-        val url = "https://yun.baidu.com/api/list?clienttype=0&app_id=${BaiduConstants.APP_ID}" +
-            "&web=1&order=time&desc=1&dir=" + URLEncoder.encode(dir, "UTF-8") + "&num=100&page=1"
+        val bdstoken = getBdstoken(cookie) ?: return@withContext emptyList()
+        val url = "https://pan.baidu.com/api/list?clienttype=0&app_id=${BaiduConstants.APP_ID}" +
+            "&web=1&channel=chunlei&bdstoken=$bdstoken&order=time&desc=1&showempty=0&dir=" +
+            URLEncoder.encode(dir, "UTF-8") + "&num=100&page=1"
         val request = Request.Builder()
             .url(url)
             .header("Cookie", cookie)
@@ -286,7 +298,7 @@ suspend fun listShare(surl: String, sekey: String, dir: String, cookie: String, 
     // ---------- 下载直链 ----------
 
     /**
-     * 获取高速下载直链（官方 locatedownload 接口，对齐 MoePal 抓包）：
+     * 获取高速下载直链（官方 locatedownload 接口）：
      * POST d.pcs.baidu.com/rest/2.0/pcs/file?method=locatedownload&path=<转存后完整路径>。
      * 响应 urls[] 按 rank 返回多个候选 CDN 直链（自带 sign/expires，无需计算）：
      *  - rank1 常为 d2-ant.baidu.com（encrypt=1 加密通道，内容需 AES-CTR 解密，且部分网络 TLS 握手失败）
@@ -295,32 +307,36 @@ suspend fun listShare(surl: String, sekey: String, dir: String, cookie: String, 
      * @return 选中的 appall 明文直链；全部候选不可用时抛异常
      */
     suspend fun locateDownload(path: String, cookie: String): String = withContext(Dispatchers.IO) {
-        val time = System.currentTimeMillis() / 1000
-        // 抓包常量：psign 写死；rand/devuid/cuid/deviceid 有 BDUSS 登录态时可直接复用
+        // 对齐 wenxi 的 BaiduAppClient：Android 客户端身份、MD5(BDUSS) CSRF token，
+        // queryfree 必须为 2；旧实现传 0 会被百度拒绝（errno=31023）。
+        val bduss = cookie.split(';').asSequence().map { it.trim() }
+            .firstOrNull { it.startsWith("BDUSS=") }?.substringAfter('=')
+            .orEmpty()
+        if (bduss.isBlank()) throw BaiduApiException("百度登录凭据缺少 BDUSS，请重新登录")
+        val appToken = MessageDigest.getInstance("MD5")
+            .digest(bduss.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
         val url = "https://d.pcs.baidu.com/rest/2.0/pcs/file" +
             "?method=locatedownload" +
             "&app_id=${BaiduConstants.APP_ID}" +
-            "&clienttype=17&ver=4.0" +
-            "&ant=1&check_blue=1&es=1&esl=1&apn_id=1_-1" +
-            "&freeisp=0&queryfree=0&use=1&dtype=1&eck=1&ehps=1" +
-            "&err_ver=1.0&network_type=WIFI&channel=0" +
+            "&clienttype=1&version=13.15.4&channel=" +
+            "&bdstoken=$appToken" +
+            "&devuid=${urlEncode(downloadDeviceId)}&cuid=${urlEncode(downloadDeviceId)}" +
+            "&apn_id=0_0&freeisp=0&queryfree=2" +
             "&path=${urlEncode(path)}" +
-            "&time=$time" +
-            "&rand=5ed606e9da222cde0474cdf70eda884b" +
-            "&devuid=0F1E9FC2E084472DA5A61C4CF4C759AF" +
-            "&cuid=0F1E9FC2E084472DA5A61C4CF4C759AF" +
-            "&deviceid=348642637967375013" +
-            "&psign=860a071f77c860e8cea06e4e54c518f3" +
-            "&version=2.2.111.34&version_app=12.24.6&vip=0"
+            "&version_app=13.15.4"
         val request = Request.Builder()
             .url(url)
             .header("Cookie", cookie)
-            .header("User-Agent", BaiduConstants.UA_NETDISK)
+            .header("User-Agent", "netdisk;13.15.4;AsterLink;android-android;13;JSbridge4.4.0;jointBridge;1.1.0;")
             .header("Content-Type", "application/x-www-form-urlencoded")
-            .post("0".toRequestBody(formMediaType))
+            .header("Referer", "https://pan.baidu.com/")
+            .get()
             .build()
         val json = executeJson(request)
-        checkErrno(json, "获取高速下载链接失败")
+        // locatedownload 在成功时可能直接返回 urls 而不带 errno；只有有真实候选地址时
+        // 才将缺少 errno 视为成功，错误 JSON/HTML 仍按错误处理。
+        if (json.has("errno")) checkErrno(json, "获取高速下载链接失败")
         // 直链候选选择：优先 encrypt=0（明文，无需解密）的 https 直链（appall01/02）；
         // rank1 的 d2-ant 为 encrypt=1 加密通道（需 AES-CTR 解密且部分网络 TLS 握手失败），直接排除；
         // 全部为加密通道时退回第一个 https 候选（仍有尝试价值），最后兜底第一个候选。
@@ -334,7 +350,13 @@ suspend fun listShare(surl: String, sekey: String, dir: String, cookie: String, 
             .firstOrNull()?.optString("url")
             ?: candidates.firstOrNull { it.optString("url").startsWith("https") }?.optString("url")
             ?: candidates.firstOrNull()?.optString("url")
-            ?: throw BaiduApiException("未返回下载链接")
+            ?: throw BaiduApiException(
+                json.optString("err_msg").ifBlank {
+                    json.optString("errmsg").ifBlank {
+                        json.optString("error_msg").ifBlank { "获取高速下载链接失败：百度未返回可用下载地址" }
+                    }
+                }
+            )
         directUrl
     }
 
@@ -389,20 +411,18 @@ suspend fun listShare(surl: String, sekey: String, dir: String, cookie: String, 
      * 返回 ShareFile（fid=fs_id，fidToken=绝对路径 path）
      */
     suspend fun listCloudFiles(dir: String, cookie: String): List<ShareFile> = withContext(Dispatchers.IO) {
+        var bdstoken = getBdstoken(cookie)
+            ?: throw BaiduApiException("百度登录凭据无效或已过期，请重新登录后重试")
         val all = mutableListOf<ShareFile>()
         var page = 1
         while (true) {
-            val url = "https://yun.baidu.com/api/list?clienttype=0&app_id=${BaiduConstants.APP_ID}" +
-                "&web=1&order=time&desc=1&dir=" + URLEncoder.encode(dir, "UTF-8") + "&num=100&page=$page"
-            val request = Request.Builder()
-                .url(url)
-                .header("Cookie", cookie)
-                .header("User-Agent", BaiduConstants.UA_NETDISK)
-                .header("X-Requested-With", "XMLHttpRequest")
-                .header("Referer", "https://yun.baidu.com/disk/main")
-                .get()
-                .build()
-            val json = executeJson(request)
+            var json = fetchCloudListPage(dir, cookie, bdstoken, page)
+            if (json.optInt("errno") == -6) {
+                // 百度网页登录态续期后 bdstoken 可能变化；重新获取一次并重试本页。
+                bdstoken = getBdstoken(cookie, forceRefresh = true)
+                    ?: throw BaiduApiException("百度登录状态已失效（errno=-6），请重新登录")
+                json = fetchCloudListPage(dir, cookie, bdstoken, page)
+            }
             checkErrno(json, "加载百度网盘目录失败")
             val array = json.optJSONArray("list")
                 ?: throw BaiduApiException("百度网盘目录响应缺少文件列表，不能按空目录处理")
@@ -430,6 +450,21 @@ suspend fun listShare(surl: String, sekey: String, dir: String, cookie: String, 
             page++
         }
         all
+    }
+
+    private fun fetchCloudListPage(dir: String, cookie: String, bdstoken: String, page: Int): JSONObject {
+        val url = "https://pan.baidu.com/api/list?clienttype=0&app_id=${BaiduConstants.APP_ID}" +
+            "&web=1&channel=chunlei&bdstoken=$bdstoken&order=time&desc=1&showempty=0" +
+            "&dir=" + URLEncoder.encode(dir, "UTF-8") + "&num=100&page=$page"
+        val request = Request.Builder()
+            .url(url)
+            .header("Cookie", cookie)
+            .header("User-Agent", BaiduConstants.UA_NETDISK)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Referer", "https://pan.baidu.com/disk/main")
+            .get()
+            .build()
+        return executeJson(request)
     }
 
     /** 重命名（filemanager opera=rename，按完整路径） */

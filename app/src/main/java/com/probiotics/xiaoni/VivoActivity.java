@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.AdapterView;
@@ -628,7 +629,7 @@ public final class VivoActivity extends BaseActivity {
         View spacer1 = new View(this);
         row.addView(spacer1, new LinearLayout.LayoutParams(dp(8), dp(50)));
 
-        // 本机：读取设备 IMEI（子线程，读不到回退系统属性，仍读不到提示并随机）
+        // 本机：读取设备 IMEI；读不到时保留空值，不伪造设备标识。
         Button deviceBtn = imeiActionButton("本机");
         deviceBtn.setOnClickListener(v -> {
             Haptics.perform(v);
@@ -639,25 +640,14 @@ public final class VivoActivity extends BaseActivity {
                         imeiInput.setText(imei);
                         status.setText("已填入本机 IMEI");
                     } else {
-                        // Android 10+ 三方应用读不到 IMEI：自动随机并提示
-                        imeiInput.setText(com.mytiantian.updater.vivo.VivoImei.INSTANCE.random());
-                        status.setText("本机 IMEI 不可读（系统限制），已自动随机生成");
+                        imeiInput.setText("");
+                        status.setText("系统限制读取本机 IMEI；未伪造标识，可手动填写或继续查询");
                     }
                 });
             });
         });
         row.addView(deviceBtn, new LinearLayout.LayoutParams(dp(64), dp(50)));
 
-        View spacer2 = new View(this);
-        row.addView(spacer2, new LinearLayout.LayoutParams(dp(8), dp(50)));
-
-        // 随机：一键生成 15 位随机 IMEI
-        Button randomBtn = imeiActionButton("随机");
-        randomBtn.setOnClickListener(v -> {
-            Haptics.perform(v);
-            imeiInput.setText(com.mytiantian.updater.vivo.VivoImei.INSTANCE.random());
-        });
-        row.addView(randomBtn, new LinearLayout.LayoutParams(dp(64), dp(50)));
         return row;
     }
 
@@ -1126,6 +1116,8 @@ public final class VivoActivity extends BaseActivity {
                             Spinner androidSpinner, Spinner packageSpinner, Spinner fullOrIncrementalSpinner,
                             EditText serialEdit, EditText imeiEdit, Spinner domainSpinner) {
         status.setText("正在查询 " + modelName + " 的官方更新...");
+        // API public_model 使用软件型号代码（如 V2547DA）；营销名仅用于界面展示。
+        final String publicModelCode = v;
         results.removeAllViews();
         executor.execute(() -> {
             try {
@@ -1151,8 +1143,9 @@ public final class VivoActivity extends BaseActivity {
                     runOnUiThread(() -> status.setText("加密模块初始化失败，请检查网络或加密库"));
                     return;
                 }
-                com.mytiantian.updater.vivo.VivoOtaResult result = client.query(
-                        pd, v, version, android, isPhone, isFull, serial, imei, channel, domain);
+                final com.mytiantian.updater.vivo.VivoOtaResult result = client.query(
+                        pd, v, version, android, isPhone, isFull, serial, imei, channel, domain,
+                        false /* 完整包查询不得自动降级到增量包 */, publicModelCode);
                 final boolean manualMode = (currentTab == 2);
                 final String domainName = domain.name();
                 runOnUiThread(() -> {
@@ -1167,7 +1160,9 @@ public final class VivoActivity extends BaseActivity {
                     }
                 });
             } catch (Exception error) {
-                runOnUiThread(() -> status.setText("查询失败: " + error.getMessage()));
+                runOnUiThread(() -> {
+                    status.setText("查询失败: " + error.getMessage());
+                });
             }
         });
     }
@@ -1203,13 +1198,13 @@ public final class VivoActivity extends BaseActivity {
                              boolean isFull, String domainName) {
         results.removeAllViews();
         
-        // Kotlin 端已经处理了下载链接的构建（包括 fallback 和 sign 参数）
+        // Kotlin 端通过系统升级 APK 同款 redirPost 流程获取官方下载链接。
         final String downloadUrl = result.getDownloadUrl();
         
         boolean available = !downloadUrl.isEmpty();
         status.setText(available ? "查询成功，发现可用更新" : "查询完成，当前没有可用更新");
         
-        android.util.Log.d("VivoActivity", "最终下载链接: [" + downloadUrl + "], available: " + available);
+        android.util.Log.d("VivoActivity", "官方更新结果是否包含下载链接: " + available);
 
         LiquidGlassPanel card = glass();
         card.setOrientation(LinearLayout.VERTICAL);
@@ -1253,6 +1248,13 @@ public final class VivoActivity extends BaseActivity {
             fallbackWarn.setLineSpacing(dp(3), 1f);
             fallbackWarn.setPadding(dp(12), dp(10), dp(12), dp(10));
             card.addView(fallbackWarn, margins(-1, -2, 10, 0, 0));
+        } else if (isFull && !available) {
+            TextView fullOnlyWarn = label(
+                    "Dsu 已按 isFull=1 直接请求完整包，但服务端没有返回可下载的完整包；本次不会自动切换为增量包。请核对机型、当前版本和服务器响应。",
+                    12, 0xffb3541e);
+            fullOnlyWarn.setLineSpacing(dp(3), 1f);
+            fullOnlyWarn.setPadding(dp(12), dp(10), dp(12), dp(10));
+            card.addView(fullOnlyWarn, margins(-1, -2, 10, 0, 0));
         }
         
         // 两两并排显示：查询模式和服务端目标版本

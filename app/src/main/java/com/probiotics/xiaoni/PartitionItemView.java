@@ -23,6 +23,8 @@ public class PartitionItemView extends LinearLayout {
     private ProgressBar progressBar;
     private TextView progressText;
     private TextView speedText;
+    private TextView activityText;
+    private android.graphics.drawable.GradientDrawable progressFillDrawable;
     private LinearLayout progressPanel;
     private LinearLayout hashPanel;
     private LinearLayout pathPanel;
@@ -149,8 +151,21 @@ public class PartitionItemView extends LinearLayout {
         // 进度条 - 更大更圆角
         progressBar = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
-        progressBar.setProgressDrawable(getResources().getDrawable(R.drawable.progress_gradient));
-        progressPanel.addView(progressBar, new LayoutParams(-1, dp(16)));
+        android.graphics.drawable.GradientDrawable track = new android.graphics.drawable.GradientDrawable();
+        track.setColor(0x665A718A);
+        track.setCornerRadius(dp(20));
+        track.setStroke(dp(1), 0x66FFFFFF);
+        progressFillDrawable = new android.graphics.drawable.GradientDrawable();
+        progressFillDrawable.setColor(0xFFB9E3F0);
+        progressFillDrawable.setCornerRadius(dp(20));
+        android.graphics.drawable.ClipDrawable progressClip = new android.graphics.drawable.ClipDrawable(
+                progressFillDrawable, android.view.Gravity.LEFT,
+                android.graphics.drawable.ClipDrawable.HORIZONTAL);
+        android.graphics.drawable.LayerDrawable progressDrawable = new android.graphics.drawable.LayerDrawable(
+                new android.graphics.drawable.Drawable[]{track, progressClip});
+        progressDrawable.setId(0, android.R.id.background);
+        progressDrawable.setId(1, android.R.id.progress);
+        progressBar.setProgressDrawable(progressDrawable);
         
         // 进度信息行
         LinearLayout progressInfoRow = new LinearLayout(context);
@@ -169,9 +184,19 @@ public class PartitionItemView extends LinearLayout {
         speedText.setText("速度: 计算中...");
         speedText.setTextSize(11);
         speedText.setTextColor(0xff1e5a9e); // 深蓝色
+        speedText.setGravity(android.view.Gravity.RIGHT | android.view.Gravity.CENTER_VERTICAL);
+        speedText.setSingleLine(true);
         progressInfoRow.addView(speedText);
         
         progressPanel.addView(progressInfoRow, new LayoutParams(-1, -2));
+        progressPanel.addView(progressBar, new LayoutParams(-1, dp(16)));
+
+        activityText = new TextView(context);
+        activityText.setText("准备中");
+        activityText.setTextSize(11);
+        activityText.setTextColor(0xff5a6a7f);
+        activityText.setPadding(0, dp(4), 0, 0);
+        progressPanel.addView(activityText, new LayoutParams(-1, -2));
         
         addView(progressPanel, progressPanelLp);
         
@@ -210,10 +235,10 @@ public class PartitionItemView extends LinearLayout {
         
         // 始终显示哈希面板
         if (hashValue != null && !hashValue.isEmpty()) {
-            hashText.setText("SHA256: " + hashValue);
+            hashText.setText("OTA 清单 SHA256: " + hashValue);
             hashPanel.setVisibility(VISIBLE);
         } else {
-            hashText.setText("SHA256: 无");
+            hashText.setText("OTA 清单 SHA256: 无");
             hashPanel.setVisibility(VISIBLE);
         }
     }
@@ -224,16 +249,76 @@ public class PartitionItemView extends LinearLayout {
      * 在百分比旁显示阶段，让用户清楚当前在做什么，避免误以为卡住。
      */
     public void setProgress(int percent, float speedMBps, int phase) {
+        percent = Math.max(0, Math.min(99, percent));
+        progressBar.setIndeterminate(false);
+        updateProgressColor(percent);
         progressBar.setProgress(percent);
         progressText.setText((phase == 1 ? "写入 " : "下载 ") + percent + "%");
+        String rate = speedMBps < 0f ? "-- MB/s"
+                : String.format(java.util.Locale.US, "%.2f MB/s", speedMBps);
+        speedText.setText((phase == 1 ? "写入速度: " : "下载速度: ") + rate);
+        activityText.setText(phase == 1 ? "正在写入镜像" : "正在远程读取 OTA 数据");
+    }
 
-        if (speedMBps > 0.01f) {
-            speedText.setText(String.format("%.2f MB/s", speedMBps));
-        } else {
-            speedText.setText(phase == 1 ? "写入中..." : "计算中...");
-        }
+    private void updateProgressColor(int percent) {
+        int start = 0xFFB9E3F0; // 0% 浅色
+        int end = 0xFF2347B8;   // 100% 深色
+        float f = Math.max(0, Math.min(100, percent)) / 100f;
+        int r = Math.round(android.graphics.Color.red(start)
+                + (android.graphics.Color.red(end) - android.graphics.Color.red(start)) * f);
+        int g = Math.round(android.graphics.Color.green(start)
+                + (android.graphics.Color.green(end) - android.graphics.Color.green(start)) * f);
+        int b = Math.round(android.graphics.Color.blue(start)
+                + (android.graphics.Color.blue(end) - android.graphics.Color.blue(start)) * f);
+        progressFillDrawable.setColor(android.graphics.Color.rgb(r, g, b));
+    }
+
+    /** 在线下载阶段使用确定百分比和固定速率位置，不启动滑动动画。 */
+    public void setDownloading(int percent, float speedMBps) {
+        setProgress(percent, speedMBps, 0);
+    }
+
+    public void setQueued() {
+        progressBar.setIndeterminate(false);
+        updateProgressColor(0);
+        progressBar.setProgress(0);
+        progressText.setText("排队中");
+        speedText.setText("下载速度: -- MB/s");
+        activityText.setText("等待并行任务调度");
+    }
+
+    public void setFinishing() {
+        progressBar.setIndeterminate(false);
+        updateProgressColor(99);
+        progressBar.setProgress(99);
+        progressText.setText("写入 99%");
+        speedText.setText("写入速度: -- MB/s");
+        activityText.setText("正在校验输出文件");
+    }
+
+    public void setSavingToTarget() {
+        progressBar.setIndeterminate(false);
+        updateProgressColor(99);
+        progressBar.setProgress(99);
+        progressText.setText("写入 99%");
+        speedText.setText("写入速度: -- MB/s");
+        activityText.setText("正在保存到下载目录");
     }
     
+    /** 全选任务由页面级取消按钮统一控制，展开本行进度并避免重复启动单分区任务。 */
+    public void beginBatchProgress() {
+        progressPanel.setVisibility(VISIBLE);
+        extractButton.setText("处理中");
+        extractButton.setEnabled(false);
+        progressBar.setIndeterminate(false);
+        updateProgressColor(0);
+        progressBar.setProgress(0);
+        progressText.setText("排队中");
+        speedText.setText("下载速度: -- MB/s");
+        activityText.setText("等待并行任务调度");
+        isExtracting = true;
+    }
+
     private void toggleExtract() {
         if (isExtracting) {
             extractButton.setText("提取");
@@ -247,9 +332,12 @@ public class PartitionItemView extends LinearLayout {
             extractButton.setText("✕");
             extractButton.setBackgroundResource(R.drawable.button_red);
             progressPanel.setVisibility(VISIBLE);
+            progressBar.setIndeterminate(false);
+            updateProgressColor(0);
             progressBar.setProgress(0);
-            progressText.setText("0%");
-            speedText.setText("速度: 准备中...");
+            progressText.setText("下载 0%");
+            speedText.setText("下载速度: -- MB/s");
+            activityText.setText("正在建立远程读取");
             isExtracting = true;
             if (extractListener != null) {
                 extractListener.onStartExtract(partitionId, partitionName);
@@ -258,18 +346,23 @@ public class PartitionItemView extends LinearLayout {
     }
     
     public void setComplete() {
+        progressBar.setIndeterminate(false);
+        updateProgressColor(100);
         extractButton.setText("✓");
         extractButton.setBackgroundResource(R.drawable.button_green);
         extractButton.setEnabled(false);
         progressBar.setProgress(100);
         progressText.setText("100%");
-        speedText.setText("提取完成");
+        speedText.setText("任务完成");
+        activityText.setText("提取完成");
         isExtracting = false;
     }
     
     public void setError(String error) {
+        progressBar.setIndeterminate(false);
         extractButton.setText("提取");
         extractButton.setBackgroundResource(R.drawable.button_teal);
+        extractButton.setEnabled(true);
         progressPanel.setVisibility(GONE);
         isExtracting = false;
         Toast.makeText(getContext(), error, Toast.LENGTH_SHORT).show();

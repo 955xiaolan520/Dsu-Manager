@@ -35,7 +35,7 @@ object BaiduConstants {
 
     /** 百度客户端 UA（yun/api/list、filemanager、locatedownload 使用） */
     const val UA_NETDISK =
-        "netdisk;12.24.6;piano;android-android;16;JSbridge4.4.0;jointBridge;1.1.0"
+        "netdisk;13.15.4;AsterLink;android-android;13;JSbridge4.4.0;jointBridge;1.1.0;"
 
     /** 百度网盘统一 app_id */
     const val APP_ID = "250528"

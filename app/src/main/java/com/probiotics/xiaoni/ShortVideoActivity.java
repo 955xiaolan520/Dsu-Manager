@@ -54,13 +54,13 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
-/** Short-video resolver backed by the user-approved public API. */
+/** Locally bundled upstream parser with the previous public API retained as fallback. */
 public class ShortVideoActivity extends BaseActivity {
-    private static final String API_BASE = "https://api.bugpk.com/api/short_videos";
+    private static final String LEGACY_API_BASE = "https://api.bugpk.com/api/short_videos";
     private static final String USER_AGENT = "DsuManager/" + BuildConfig.VERSION_NAME + " (Android)";
     private static final int MAX_FILENAME_UTF8_BYTES = 96;
     private static final Pattern KNOWN_SHARE_LINK = Pattern.compile(
-            "(?i)((?:https?://)?(?:[a-z0-9-]+\\.)*(?:v\\.douyin\\.com|iesdouyin\\.com|douyin\\.com|v\\.kuaishou\\.com|kuaishou\\.com|gifshow\\.com|b23\\.tv|bilibili\\.com|tiktok\\.com|youtu\\.be|youtube\\.com|xhslink\\.com|xiaohongshu\\.com|weibo\\.com|weibo\\.cn|ixigua\\.com|xigua\\.com|acfun\\.cn|zhihu\\.com|haokan\\.com|weishi\\.qq\\.com|meipai\\.com|pearvideo\\.com)(?:/[^\\s<>\\\"'，。！？,;]*)?)");
+            "(?i)((?:https?://)?(?:[a-z0-9-]+\\.)*(?:163cn\\.tv|music\\.163\\.com|v\\.douyin\\.com|iesdouyin\\.com|douyin\\.com|v\\.kuaishou\\.com|kuaishou\\.com|gifshow\\.com|b23\\.tv|bilibili\\.com|tiktok\\.com|youtu\\.be|youtube\\.com|xhslink\\.com|xiaohongshu\\.com|weibo\\.com|weibo\\.cn|ixigua\\.com|xigua\\.com|acfun\\.cn|zhihu\\.com|haokan\\.com|weishi\\.qq\\.com|meipai\\.com|pearvideo\\.com)(?:/[^\\s<>\\\"'，。！？,;]*)?)");
     private static final Pattern ANY_HTTP_LINK = Pattern.compile("(?i)https?://[^\\s<>\\\"'，。！？]+" );
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -661,6 +661,17 @@ public class ShortVideoActivity extends BaseActivity {
     private void openInternalPreview() {
         VideoInfo video = currentVideo;
         if (video == null) return;
+        if ("audio".equalsIgnoreCase(video.mediaType)) {
+            Intent audioIntent = new Intent(this, AudioPlayerActivity.class)
+                    .putExtra(AudioPlayerActivity.EXTRA_AUDIO_URI, video.mediaUrl)
+                    .putExtra(AudioPlayerActivity.EXTRA_TITLE, video.title)
+                    .putExtra(AudioPlayerActivity.EXTRA_ARTIST, video.author)
+                    .putExtra(AudioPlayerActivity.EXTRA_LYRICS_TEXT, video.lyrics)
+                    .putExtra(AudioPlayerActivity.EXTRA_REFERER, video.shareUrl);
+            startActivity(audioIntent);
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+            return;
+        }
         Intent intent;
         if (video.isImagePost && !video.imageUrls.isEmpty()) {
             intent = new Intent(this, ShortVideoImagesActivity.class)
@@ -693,28 +704,44 @@ public class ShortVideoActivity extends BaseActivity {
         parseButton.setEnabled(false);
         parseButton.setAlpha(0.65f);
         progressBar.setVisibility(View.VISIBLE);
-        setStatus(t("正在请求第三方解析服务…", "Contacting the third-party parser…"), false);
+        String inputPlatform = detectPlatform(shareUrl);
+        setStatus("qishui".equals(inputPlatform)
+                ? t("正在读取汽水音乐歌曲信息…", "Reading Qishui Music track information…")
+                : "netease".equals(inputPlatform)
+                ? t("正在读取网易云歌曲信息并尝试获取可用音频…", "Reading NetEase song information and checking audio availability…")
+                : t("正在尝试上游本地解析；失败时自动回退原接口…", "Trying the bundled upstream parser; the previous API is used if needed…"), false);
 
         worker.execute(() -> {
             try {
-                HttpUrl.Builder urlBuilder = HttpUrl.get(API_BASE).newBuilder()
-                        .addQueryParameter("url", shareUrl);
                 String platform = detectPlatform(shareUrl);
-                if (!platform.isEmpty()) urlBuilder.addQueryParameter("platform", platform);
-                Request request = new Request.Builder()
-                        .url(urlBuilder.build())
-                        .header("Accept", "application/json")
-                        .header("User-Agent", USER_AGENT)
-                        .get()
-                        .build();
-
-                int httpStatus;
-                String payload;
-                try (Response response = http.newCall(request).execute()) {
-                    httpStatus = response.code();
-                    ResponseBody body = response.body();
-                    payload = body == null ? "" : body.string();
+                if ("qishui".equals(platform)) {
+                    VideoInfo song = parseQishuiTrack(shareUrl);
+                    runOnUiThread(() -> finishParseSuccess(song,
+                            song.previewOnly ? song.apiMessage
+                                    : t("汽水音乐歌曲解析成功；动态直链过期后可重新解析。", "Qishui track resolved; re-resolve if the temporary link expires.")));
+                    return;
                 }
+                if ("netease".equals(platform)) {
+                    NeteaseSongResolver.Result resolved = NeteaseSongResolver.resolve(http, shareUrl);
+                    VideoInfo song = new VideoInfo();
+                    song.mediaUrl = resolved.audioUrl;
+                    song.shareUrl = shareUrl;
+                    song.mediaType = "audio";
+                    song.platform = "网易云音乐";
+                    song.title = resolved.title;
+                    song.author = resolved.artist;
+                    song.coverUrl = resolved.coverUrl;
+                    song.duration = formatDuration(resolved.durationSeconds);
+                    song.sizeLabel = resolved.sizeLabel;
+                    song.quality = resolved.quality;
+                    song.lyrics = resolved.lyrics;
+                    runOnUiThread(() -> finishParseSuccess(song,
+                            t("网易云音乐直链已获取；链接过期后可重新解析。", "NetEase audio link resolved; re-resolve if the temporary link expires.")));
+                    return;
+                }
+                ParserResponse parserResponse = requestWithFallback(shareUrl, platform);
+                int httpStatus = parserResponse.httpStatus;
+                String payload = parserResponse.payload;
 
                 JSONObject responseJson;
                 try {
@@ -732,15 +759,46 @@ public class ShortVideoActivity extends BaseActivity {
                 if (mediaUrl.isEmpty() && data != null) mediaUrl = findMediaUrl(responseJson);
                 List<String> imageUrls = findImageUrls(mediaData);
                 if (imageUrls.isEmpty() && data != null) imageUrls = findImageUrls(responseJson);
+                if (mediaUrl.isEmpty() && imageUrls.isEmpty()
+                        && ("douyin".equals(platform) || "kuaishou".equals(platform))) {
+                    String expandedUrl = expandShareShortLink(shareUrl);
+                    if (!expandedUrl.isEmpty() && !expandedUrl.equals(shareUrl)) {
+                        parserResponse = requestWithFallback(expandedUrl, platform);
+                        httpStatus = parserResponse.httpStatus;
+                        try {
+                            responseJson = new JSONObject(parserResponse.payload);
+                        } catch (Exception badJson) {
+                            String error = t("解析接口返回了非 JSON 数据（HTTP ", "Parser returned non-JSON data (HTTP ") + httpStatus + ")";
+                            runOnUiThread(() -> finishParseFailure(error));
+                            return;
+                        }
+                        data = responseJson.optJSONObject("data");
+                        mediaData = data == null ? responseJson : data;
+                        mediaUrl = findMediaUrl(mediaData);
+                        if (mediaUrl.isEmpty() && data != null) mediaUrl = findMediaUrl(responseJson);
+                        imageUrls = findImageUrls(mediaData);
+                        if (imageUrls.isEmpty() && data != null) imageUrls = findImageUrls(responseJson);
+                    }
+                }
                 String message = readText(responseJson, "msg", "message", "error");
                 int apiCode = responseJson.optInt("code", httpStatus);
                 if (httpStatus < 200 || httpStatus >= 300) {
-                    String error = message.isEmpty() ? "HTTP " + httpStatus : "HTTP " + httpStatus + " · " + message;
+                    String errorMessage = isResolverNotFound(platform, httpStatus, apiCode, message)
+                            ? resolverNotFoundMessage()
+                            : (message.isEmpty() ? "HTTP " + httpStatus : "HTTP " + httpStatus + " · " + message);
+                    if (parserResponse.usedLegacyFallback) {
+                        errorMessage = t("上游本地解析未成功，已回退原接口；", "The upstream parser failed; previous API fallback: ") + errorMessage;
+                    }
+                    String error = errorMessage;
                     runOnUiThread(() -> finishParseFailure(error));
                     return;
                 }
                 if (mediaUrl.isEmpty() && imageUrls.isEmpty()) {
-                    String error = explainApiError(apiCode, message, data, detectPlatform(shareUrl));
+                    String errorMessage = explainApiError(apiCode, message, data, detectPlatform(shareUrl));
+                    if (parserResponse.usedLegacyFallback) {
+                        errorMessage = t("上游本地解析未成功，原接口也未返回媒体；", "The upstream parser failed and the previous API returned no media: ") + errorMessage;
+                    }
+                    String error = errorMessage;
                     runOnUiThread(() -> finishParseFailure(error));
                     return;
                 }
@@ -755,7 +813,9 @@ public class ShortVideoActivity extends BaseActivity {
                 if (video.isImagePost && video.mediaUrl.isEmpty() && !video.imageUrls.isEmpty()) {
                     video.coverUrl = video.imageUrls.get(0);
                 }
-                String successMessage = message;
+                String successMessage = parserResponse.usedLegacyFallback
+                        ? t("上游本地解析未成功，已回退原接口并解析成功。", "Upstream parser failed; the previous API fallback succeeded.")
+                        : message;
                 runOnUiThread(() -> finishParseSuccess(video, successMessage));
             } catch (Exception e) {
                 String error = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
@@ -764,6 +824,219 @@ public class ShortVideoActivity extends BaseActivity {
                 runOnUiThread(() -> finishParseFailure(finalError));
             }
         });
+    }
+
+    /** Expand platform share short links before calling third-party resolvers; parsers often reject redirect URLs. */
+    private String expandShareShortLink(String shareUrl) {
+        try {
+            String host = Uri.parse(shareUrl).getHost();
+            if (host == null) return "";
+            host = host.toLowerCase(Locale.ROOT);
+            boolean shortLink = host.equals("v.douyin.com") || host.equals("v.kuaishou.com")
+                    || host.equals("qishui.douyin.com");
+            if (!shortLink) return "";
+            Request request = new Request.Builder().url(shareUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                    .header("Accept", "text/html,application/xhtml+xml,*/*")
+                    .header("Range", "bytes=0-0")
+                    .get().build();
+            OkHttpClient redirectClient = http.newBuilder()
+                    .followRedirects(true).followSslRedirects(true)
+                    .callTimeout(12, TimeUnit.SECONDS).build();
+            try (Response response = redirectClient.newCall(request).execute()) {
+                String finalUrl = response.request().url().toString();
+                return finalUrl.equals(shareUrl) ? "" : finalUrl;
+            }
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private VideoInfo parseQishuiTrack(String shareUrl) throws IOException {
+        String pageUrl = expandShareShortLink(shareUrl);
+        if (pageUrl.isEmpty()) pageUrl = shareUrl;
+        Request request = new Request.Builder().url(pageUrl)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                .header("Accept", "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.5")
+                .header("Referer", "https://music.douyin.com/")
+                .get().build();
+        try (Response response = http.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IOException("读取汽水音乐分享页失败（HTTP " + response.code() + "）");
+            }
+            ResponseBody body = response.body();
+            if (body == null) throw new IOException("汽水音乐分享页没有返回内容");
+            String html = body.string();
+            if (html.length() > 2_000_000) throw new IOException("汽水音乐分享页内容异常，已停止解析");
+            String jsonText = extractAssignedJsonObject(html, "_ROUTER_DATA");
+            if (jsonText.isEmpty()) throw new IOException("汽水音乐分享页未包含歌曲信息，请稍后重试");
+
+            JSONObject page = new JSONObject(jsonText);
+            JSONObject loaderData = page.optJSONObject("loaderData");
+            JSONObject track = loaderData == null ? null : loaderData.optJSONObject("track_page");
+            JSONObject audio = track == null ? null : track.optJSONObject("audioWithLyricsOption");
+            if (audio == null) throw new IOException("汽水音乐分享页未返回歌曲音频信息");
+            int statusCode = audio.optInt("status_code", 0);
+            if (statusCode != 0) throw new IOException("汽水音乐暂时无法播放该歌曲（状态码 " + statusCode + "）");
+
+            String audioUrl = readText(audio, "url");
+            if (audioUrl.startsWith("//")) audioUrl = "https:" + audioUrl;
+            if (!isHttpUrl(audioUrl)) throw new IOException("汽水音乐分享页没有可用的音频直链");
+
+            VideoInfo song = new VideoInfo();
+            song.mediaUrl = audioUrl;
+            song.shareUrl = response.request().url().toString();
+            song.mediaType = "audio";
+            song.platform = "汽水音乐";
+            song.title = firstNonBlank(readText(audio, "trackName", "title", "name"), t("汽水歌曲", "Qishui track"));
+            song.author = readText(audio, "artistName", "artist_name");
+            song.coverUrl = readText(audio, "coverURL", "cover_url", "coverUrl");
+            if (song.coverUrl.startsWith("//")) song.coverUrl = "https:" + song.coverUrl;
+            double durationSeconds = audio.optDouble("duration", 0.0);
+            double previewDuration = audio.optDouble("offsetDuration", 0.0);
+            double previewStart = audio.optDouble("previewStart", audio.optDouble("offsetStart", 0.0));
+            double previewEnd = audio.optDouble("previewEnd", 0.0);
+            song.lyrics = readQishuiLyrics(audio.optJSONObject("lyrics"), Math.round(previewStart * 1000.0));
+            if (previewDuration <= 0.0 && previewEnd > previewStart) previewDuration = previewEnd - previewStart;
+            if (durationSeconds > 6000) durationSeconds /= 1000.0;
+            if (previewDuration > 6000) previewDuration /= 1000.0;
+            song.previewOnly = previewDuration > 0.0 && durationSeconds > previewDuration + 1.0;
+            if (song.previewOnly) {
+                String previewLabel = formatDuration(previewDuration);
+                String fullLabel = formatDuration(durationSeconds);
+                song.duration = t("试听片段 " + previewLabel + " / 全曲 " + fullLabel,
+                        "Preview " + previewLabel + " / Full track " + fullLabel);
+                String payLevel = readText(audio, "group_playable_level", "group_download_level");
+                String startLabel = formatDuration(previewStart);
+                song.apiMessage = "pay".equalsIgnoreCase(payLevel)
+                        ? t("分享页只提供试听片段" + (startLabel.isEmpty() ? "" : "（从 " + startLabel + " 开始）")
+                                + "；完整曲目标记为需付费/授权，请通过汽水音乐官方渠道播放。",
+                                "The share page exposes only a preview" + (startLabel.isEmpty() ? "" : " starting at " + startLabel)
+                                + "; full playback requires the official Qishui entitlement.")
+                        : t("分享页当前只提供试听片段" + (startLabel.isEmpty() ? "" : "（从 " + startLabel + " 开始）") + "。",
+                                "The share page currently exposes only a preview" + (startLabel.isEmpty() ? "" : " starting at " + startLabel) + ".");
+            } else {
+                song.duration = formatDuration(durationSeconds);
+            }
+            return song;
+        } catch (org.json.JSONException e) {
+            throw new IOException("汽水音乐歌曲信息格式无法识别", e);
+        }
+    }
+
+    private String readQishuiLyrics(JSONObject lyricsObject, long offsetMillis) {
+        JSONArray sentences = lyricsObject == null ? null : lyricsObject.optJSONArray("sentences");
+        if (sentences == null || sentences.length() == 0) return "";
+        StringBuilder lrc = new StringBuilder();
+        for (int i = 0; i < sentences.length(); i++) {
+            JSONObject sentence = sentences.optJSONObject(i);
+            if (sentence == null) continue;
+            String text = readText(sentence, "text").replace('\n', ' ').trim();
+            if (text.isEmpty()) continue;
+            long time = Math.max(0L, sentence.optLong("startMs", 0L) - Math.max(0L, offsetMillis));
+            long minutes = time / 60_000L;
+            long seconds = (time % 60_000L) / 1_000L;
+            long hundredths = (time % 1_000L) / 10L;
+            lrc.append(String.format(Locale.US, "[%02d:%02d.%02d]%s%n", minutes, seconds, hundredths, text));
+        }
+        return lrc.toString().trim();
+    }
+
+    private String extractAssignedJsonObject(String text, String marker) {
+        if (text == null || marker == null) return "";
+        int markerIndex = text.indexOf(marker);
+        if (markerIndex < 0) return "";
+        int start = text.indexOf('=', markerIndex + marker.length());
+        if (start < 0) return "";
+        start++;
+        while (start < text.length() && Character.isWhitespace(text.charAt(start))) start++;
+        if (start >= text.length() || text.charAt(start) != '{') return "";
+
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') inString = true;
+            else if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return text.substring(start, i + 1);
+        }
+        return "";
+    }
+
+    private static final class ParserResponse {
+        final int httpStatus;
+        final String payload;
+        final boolean usedLegacyFallback;
+        ParserResponse(int httpStatus, String payload) {
+            this(httpStatus, payload, false);
+        }
+        ParserResponse(int httpStatus, String payload, boolean usedLegacyFallback) {
+            this.httpStatus = httpStatus;
+            this.payload = payload;
+            this.usedLegacyFallback = usedLegacyFallback;
+        }
+    }
+
+    private ParserResponse requestWithFallback(String parserUrl, String platform) throws IOException {
+        try {
+            return requestUpstreamParser(parserUrl, platform);
+        } catch (Exception | LinkageError upstreamFailure) {
+            ParserResponse legacy = requestParser(parserUrl, platform);
+            return new ParserResponse(legacy.httpStatus, legacy.payload, true);
+        }
+    }
+
+    private ParserResponse requestUpstreamParser(String parserUrl, String platform) throws Exception {
+        String output = com.probiotics.xiaoni.parsevideo.bridge.Bridge.parseShareURL(parserUrl);
+        JSONObject data = new JSONObject(output);
+        String parserError = readText(data, "error");
+        if (!parserError.isEmpty()) throw new IOException(parserError);
+
+        String videoUrl = readText(data, "video_url", "videoUrl");
+        String musicUrl = readText(data, "music_url", "musicUrl");
+        JSONArray images = data.optJSONArray("images");
+        boolean hasImages = images != null && images.length() > 0;
+        if (videoUrl.isEmpty() && (musicUrl.isEmpty() || hasImages)) {
+            if (!hasImages) throw new IOException("上游解析器未返回视频、音频或图集地址");
+            data.put("type", "image");
+        } else if (videoUrl.isEmpty()) {
+            data.put("video_url", musicUrl);
+            data.put("type", "audio");
+        } else {
+            data.put("type", "video");
+        }
+
+        JSONObject response = new JSONObject();
+        response.put("code", 0);
+        response.put("msg", "upstream-local");
+        response.put("message", t("上游本地解析成功", "Upstream parser succeeded"));
+        response.put("platform", platform.isEmpty() ? detectPlatform(parserUrl) : platform);
+        response.put("data", data);
+        return new ParserResponse(200, response.toString());
+    }
+
+    private ParserResponse requestParser(String parserUrl, String platform) throws java.io.IOException {
+        HttpUrl.Builder urlBuilder = HttpUrl.get(LEGACY_API_BASE).newBuilder().addQueryParameter("url", parserUrl);
+        if ("douyin".equals(platform) || "kuaishou".equals(platform)
+                || "bilibili".equals(platform) || "youtube".equals(platform)
+                || "jimeng".equals(platform) || "tongyi".equals(platform) || "doubao".equals(platform)) {
+            urlBuilder.addQueryParameter("platform", platform);
+        }
+        Request request = new Request.Builder().url(urlBuilder.build())
+                .header("Accept", "application/json")
+                .header("User-Agent", USER_AGENT).get().build();
+        try (Response response = http.newCall(request).execute()) {
+            ResponseBody body = response.body();
+            return new ParserResponse(response.code(), body == null ? "" : body.string());
+        }
     }
 
     private VideoInfo decodeVideo(JSONObject root, JSONObject data, String mediaUrl, String shareUrl) {
@@ -775,7 +1048,7 @@ public class ShortVideoActivity extends BaseActivity {
         video.coverUrl = readText(source, "cover", "cover_url", "coverUrl");
         video.title = firstNonBlank(readText(source, "title", "desc", "caption", "name"), t("短视频", "Short video"));
         video.author = readAuthor(source);
-        video.platform = readText(root, "platform");
+        video.platform = displayPlatformName(readText(root, "platform"));
         video.quality = readText(source, "quality");
         video.width = source.optInt("width", 0);
         video.height = source.optInt("height", 0);
@@ -785,6 +1058,45 @@ public class ShortVideoActivity extends BaseActivity {
         video.backupQualities = readBackupQualities(source.optJSONArray("video_backup"));
         video.apiMessage = readText(root, "msg", "message");
         return video;
+    }
+
+    private String displayPlatformName(String platform) {
+        if (platform == null) return "";
+        switch (platform.toLowerCase(Locale.ROOT)) {
+            case "douyin": return "抖音";
+            case "kuaishou": return "快手";
+            case "bilibili": return "哔哩哔哩";
+            case "qishui": return "汽水音乐";
+            case "youtube": return "YouTube";
+            case "tiktok": return "TikTok";
+            case "xhs": return "小红书";
+            case "weibo": return "微博";
+            case "xigua": return "西瓜视频";
+            case "zuiyou": return "最右";
+            case "pipigaoxiao": return "皮皮搞笑";
+            case "pipixia": return "皮皮虾";
+            case "huoshan": return "火山";
+            case "acfun": return "A站";
+            case "zhihu": return "知乎";
+            case "haokan": return "好看视频";
+            case "quanmin": return "全民小视频";
+            case "huya": return "虎牙";
+            case "weishi": return "微视";
+            case "meipai": return "美拍";
+            case "lishipin": return "梨视频";
+            case "doupai": return "逗拍";
+            case "quanminkge": return "全民K歌";
+            case "sixroom": return "六间房";
+            case "xinpianchang": return "新片场";
+            case "twitter": return "X";
+            case "qqvideo": return "腾讯视频";
+            case "sohu": return "搜狐视频";
+            case "cctv": return "央视";
+            case "jimeng": return "即梦";
+            case "tongyi": return "通义千问";
+            case "doubao": return "豆包";
+            default: return platform;
+        }
     }
 
     private boolean isApiKnownUnavailablePlatform(String url) {
@@ -820,15 +1132,29 @@ public class ShortVideoActivity extends BaseActivity {
         previewButton.setVisibility(video.isImagePost || !video.mediaUrl.isEmpty() ? View.VISIBLE : View.GONE);
         if (video.isImagePost) {
             previewButton.setText(t("▧  查看图片图集（" + video.imageUrls.size() + " 张）",
-                    "▧  View image gallery (" + video.imageUrls.size() + ")"));
+                    "▧  View image gallery (" + video.imageUrls.size() + " images)"));
             updateImageSelectionUi();
+        } else if ("audio".equalsIgnoreCase(video.mediaType)) {
+            downloadButton.setText(video.previewOnly
+                    ? t("↓  下载试听片段", "↓  Download preview clip")
+                    : t("↓  加入 Dsu 音频下载队列", "↓  Add audio to Dsu download queue"));
+            previewButton.setText(video.previewOnly
+                    ? t("♫  试听片段", "♫  Listen to preview")
+                    : t("♫  应用内试听歌曲", "♫  Listen in app"));
         } else {
             downloadButton.setText(t("↓  加入 Dsu 下载队列", "↓  Add to Dsu download queue"));
             previewButton.setText(t("▶  应用内预览", "▶  Preview in app"));
         }
         String status = video.isImagePost
                 ? t("图文解析成功 · " + video.imageUrls.size() + " 张图片", "Image post resolved · " + video.imageUrls.size() + " images")
+                : "audio".equalsIgnoreCase(video.mediaType)
+                ? (video.previewOnly ? t("仅获取到试听片段", "Preview clip only")
+                        : t("歌曲解析成功 · 可试听或下载", "Song resolved · ready to listen or download"))
                 : t("解析成功", "Resolved");
+        if ("audio".equalsIgnoreCase(video.mediaType)) {
+            status += video.lyrics.isEmpty() ? t(" · 暂无可用歌词", " · No lyrics available")
+                    : t(" · 歌词已就绪", " · Lyrics ready");
+        }
         if (!message.isEmpty() && !message.equalsIgnoreCase("success")) status += " · " + message;
         setStatus(status, false);
     }
@@ -844,6 +1170,14 @@ public class ShortVideoActivity extends BaseActivity {
         }
         if (!video.sizeLabel.isEmpty()) values.add(video.sizeLabel);
         if (!video.duration.isEmpty()) values.add(video.duration);
+        if ("audio".equalsIgnoreCase(video.mediaType)) {
+            values.add("qishui".equalsIgnoreCase(video.platform) || "汽水音乐".equals(video.platform)
+                    ? t("汽水音乐音频", "Qishui Music audio")
+                    : "netease".equalsIgnoreCase(video.platform) || "网易云音乐".equals(video.platform)
+                    ? t("网易云音乐音频", "NetEase Music audio") : t("音频", "Audio"));
+            values.add(video.lyrics.isEmpty() ? t("暂无歌词数据", "Lyrics unavailable")
+                    : t("歌词已获取 · 同目录保存 .lrc", "Lyrics ready · .lrc saved beside audio"));
+        }
         if (video.isImagePost && !video.imageUrls.isEmpty()) {
             values.add(t("图片作品 · " + video.imageUrls.size() + " 张", "Image post · " + video.imageUrls.size() + " images"));
         }
@@ -898,13 +1232,17 @@ public class ShortVideoActivity extends BaseActivity {
 
     private String explainApiError(int code, String message, JSONObject data, String platform) {
         String detail = message == null ? "" : message.trim();
+        if (isResolverNotFound(platform, code, code, detail)) {
+            detail = resolverNotFoundMessage();
+            return detail;
+        }
         if ("youtube".equals(platform) && code == 501) {
-            detail = t("YouTube 链接已识别，但当前解析接口返回“需签名流或受限”，没有给出可用视频地址。不是链接格式错误；当前版本尚未接入本地备用解析器。",
-                    "The YouTube link was recognized, but the configured parser returned no media URL because streams are signed or restricted. This is not a URL-format error; this version has no local fallback extractor.");
+            detail = t("YouTube 链接已识别，但上游本地解析与原接口均未提供可用视频地址；原接口提示需签名流或受限。不是链接格式错误。",
+                    "The YouTube link was recognized, but neither the bundled upstream parser nor the previous API returned a playable URL; the previous API reports signed or restricted streams.");
         }
         else if ("bilibili".equals(platform) && (code == 0 || code == -1)) {
-            detail = t("B 站链接已识别，但当前解析接口返回 code=" + code + "，未给出视频地址。不是 APP 链接格式错误；当前版本尚未接入本地备用解析器。",
-                    "The Bilibili link was recognized, but the configured parser returned code=" + code + " without a media URL. This is not a URL-format error; this version has no local fallback extractor.");
+            detail = t("B 站链接已识别，但上游本地解析与原接口均未返回视频地址（原接口 code=" + code + "）。不是 APP 链接格式错误。",
+                    "The Bilibili link was recognized, but neither the bundled upstream parser nor the previous API returned a video URL (previous API code=" + code + "). This is not an APP URL-format error.");
         }
         else if (code == 501) detail = t("该平台未返回可用的视频直链（接口 code=501）。", "No direct media URL was returned (API code 501).");
         else if (code == 400 && detail.isEmpty()) detail = t("链接格式无效或接口无法识别平台。", "Invalid link or unsupported platform.");
@@ -925,6 +1263,20 @@ public class ShortVideoActivity extends BaseActivity {
             if (!labels.isEmpty()) detail += "\n" + t("接口支持：", "Supported: ") + TextUtils.join("、", labels);
         }
         return t("接口返回 " + code + " · " + detail, "API returned " + code + " · " + detail);
+    }
+
+    private boolean isResolverNotFound(String platform, int httpCode, int apiCode, String message) {
+        if (!("douyin".equals(platform) || "kuaishou".equals(platform))) return false;
+        String normalized = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return httpCode == 404 || apiCode == 404
+                || normalized.contains("作品已被删除") || normalized.contains("作品已删除")
+                || normalized.contains("已被删除") || normalized.contains("deleted")
+                || normalized.contains("not found");
+    }
+
+    private String resolverNotFoundMessage() {
+        return t("解析服务返回 404，未能获取作品内容。若原链接在抖音/快手中仍可打开，这是解析服务未能访问或识别作品，不代表作品已删除。",
+                "The resolver returned 404 and could not retrieve the post. If the original link still opens in Douyin/Kuaishou, the resolver could not access or recognize it; this does not confirm deletion.");
     }
 
     private boolean isHttpUrl(String value) {
@@ -969,23 +1321,44 @@ public class ShortVideoActivity extends BaseActivity {
 
     private String detectPlatform(String value) {
         try {
-            String host = Uri.parse(value).getHost();
+            Uri uri = Uri.parse(value);
+            String host = uri.getHost();
             if (host == null) return "";
             host = host.toLowerCase(Locale.ROOT);
+            String path = uri.getPath();
+            if (host.equals("163cn.tv") || host.equals("music.163.com") || host.endsWith(".music.163.com")) return "netease";
+            if (host.equals("qishui.douyin.com")
+                    || ((host.equals("music.douyin.com") || host.equals("www.douyin.com"))
+                    && path != null && path.toLowerCase(Locale.ROOT).contains("/qishui/"))) return "qishui";
             if (host.contains("douyin") || host.contains("iesdouyin")) return "douyin";
             if (host.contains("kuaishou") || host.contains("gifshow")) return "kuaishou";
             if (host.equals("b23.tv") || host.contains("bilibili")) return "bilibili";
+            if (host.equals("weibo.cn")) return "lvzhou";
             if (host.contains("tiktok")) return "tiktok";
             if (host.equals("youtu.be") || host.contains("youtube")) return "youtube";
-            if (host.contains("xiaohongshu") || host.equals("xhslink.com")) return "xhs";
+            if (host.contains("xiaohongshu") || host.contains("xhslink")) return "xhs";
             if (host.contains("weibo")) return "weibo";
             if (host.contains("ixigua") || host.contains("xigua")) return "xigua";
+            if (host.contains("xiaochuankeji")) return "zuiyou";
+            if (host.contains("pipigx")) return "pipigaoxiao";
+            if (host.contains("pipix")) return "pipixia";
+            if (host.contains("huoshan")) return "huoshan";
             if (host.contains("acfun")) return "acfun";
             if (host.contains("zhihu")) return "zhihu";
             if (host.contains("haokan")) return "haokan";
+            if (host.contains("xspshare.baidu.com")) return "quanmin";
+            if (host.contains("huya")) return "huya";
             if (host.contains("weishi")) return "weishi";
             if (host.contains("meipai")) return "meipai";
             if (host.contains("pearvideo")) return "lishipin";
+            if (host.equals("doupai.cc")) return "doupai";
+            if (host.equals("kg.qq.com")) return "quanminkge";
+            if (host.equals("6.cn") || host.endsWith(".6.cn")) return "sixroom";
+            if (host.contains("xinpianchang")) return "xinpianchang";
+            if (host.equals("x.com") || host.equals("twitter.com") || host.equals("t.co")) return "twitter";
+            if (host.equals("v.qq.com")) return "qqvideo";
+            if (host.equals("tv.sohu.com") || host.equals("my.tv.sohu.com")) return "sohu";
+            if (host.equals("tv.cctv.cn") || host.equals("tv.cctv.com")) return "cctv";
             return "";
         } catch (Throwable ignored) {
             return "";
@@ -1009,6 +1382,7 @@ public class ShortVideoActivity extends BaseActivity {
                 boolean imageField = normalized.equals("images") || normalized.equals("image")
                         || normalized.equals("imageurl") || normalized.equals("imageurls") || normalized.equals("imagelist")
                         || normalized.equals("imagelisturl") || normalized.equals("imageurllist")
+                        || normalized.equals("urllist") || normalized.equals("originurl") || normalized.equals("originurllist")
                         || normalized.equals("pics") || normalized.equals("picurls")
                         || normalized.equals("picurl") || normalized.equals("imgurl")
                         || normalized.equals("photos") || normalized.equals("photo")
@@ -1038,7 +1412,7 @@ public class ShortVideoActivity extends BaseActivity {
             for (int i = 0; i < array.length() && urls.size() < 30; i++) collectImageValues(array.opt(i), urls, depth + 1);
         } else if (value instanceof JSONObject) {
             JSONObject object = (JSONObject) value;
-            String[] urlKeys = {"url", "src", "image_url", "imageUrl", "pic_url", "picUrl", "photo_url", "photoUrl", "origin_url", "originUrl", "large"};
+            String[] urlKeys = {"url", "src", "image_url", "imageUrl", "pic_url", "picUrl", "photo_url", "photoUrl", "origin_url", "originUrl", "large", "url_list", "urlList", "display_url", "displayUrl", "download_url", "downloadUrl"};
             for (String key : urlKeys) {
                 String url = readText(object, key);
                 if (url.startsWith("//")) url = "https:" + url;
@@ -1155,8 +1529,11 @@ public class ShortVideoActivity extends BaseActivity {
 
     private void loadImageThumbnail(String url, ImageView target, String referer) {
         try {
-            Request.Builder builder = new Request.Builder().url(url).header("User-Agent", USER_AGENT);
-            if (isHttpUrl(referer)) builder.header("Referer", referer);
+            Request.Builder builder = new Request.Builder().url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                    .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
+            String imageReferer = previewImageReferer(referer);
+            if (!imageReferer.isEmpty()) builder.header("Referer", imageReferer);
             try (Response response = http.newCall(builder.get().build()).execute()) {
                 ResponseBody body = response.body();
                 if (!response.isSuccessful() || body == null) return;
@@ -1175,6 +1552,17 @@ public class ShortVideoActivity extends BaseActivity {
                 });
             }
         } catch (Exception ignored) { }
+    }
+
+    private String previewImageReferer(String source) {
+        try {
+            String host = Uri.parse(source).getHost();
+            if (host == null) return "";
+            host = host.toLowerCase(Locale.ROOT);
+            if (host.contains("douyin") || host.contains("iesdouyin")) return "https://www.douyin.com/";
+            if (host.contains("kuaishou") || host.contains("gifshow")) return "https://www.kuaishou.com/";
+            return source;
+        } catch (Exception ignored) { return ""; }
     }
 
     private void openImageGallery(int index) {
@@ -1277,7 +1665,7 @@ public class ShortVideoActivity extends BaseActivity {
             setStatus(t("该链接是 HLS/m3u8 流，Dsu 下载管理通道暂不支持。", "This is an HLS/m3u8 stream; the Dsu download queue does not support it yet."), true);
             return;
         }
-        String extension = mediaExtension(Uri.parse(video.mediaUrl));
+        String extension = mediaExtension(Uri.parse(video.mediaUrl), video.mediaType);
         String baseName = truncateUtf8(sanitizeFileName(video.title), MAX_FILENAME_UTF8_BYTES);
         if (baseName.isEmpty()) baseName = "DsuVideo";
         String unique = "_" + (System.currentTimeMillis() % 100000000L);
@@ -1285,7 +1673,7 @@ public class ShortVideoActivity extends BaseActivity {
         java.util.HashMap<String, String> headers = new java.util.HashMap<>();
         headers.put("User-Agent", USER_AGENT);
         if (isHttpUrl(video.shareUrl)) headers.put("Referer", video.shareUrl);
-        boolean accepted = ShortVideoQueue.enqueue(this, video.mediaUrl, fileName, video.platform, headers);
+        boolean accepted = ShortVideoQueue.enqueue(this, video.mediaUrl, fileName, video.platform, headers, video.lyrics);
         if (accepted) {
             manageDownloadsButton.setVisibility(View.VISIBLE);
             setStatus(t("已加入 Dsu 下载管理：/storage/emulated/0/Download/DsuManager/短视频解析/", "Added to Dsu Download Manager: Download/DsuManager/Short Videos/") + fileName
@@ -1350,16 +1738,18 @@ public class ShortVideoActivity extends BaseActivity {
         return ".jpg";
     }
 
-    private String mediaExtension(Uri uri) {
+    private String mediaExtension(Uri uri, String mediaType) {
         String path = uri.getLastPathSegment();
         if (path != null) {
             int dot = path.lastIndexOf('.');
             if (dot >= 0 && dot < path.length() - 1) {
                 String suffix = path.substring(dot).toLowerCase(Locale.ROOT);
+                if ("audio".equalsIgnoreCase(mediaType)
+                        && suffix.matches("\\.(mp3|m4a|aac|wav|flac|ogg|opus|wma)")) return suffix;
                 if (suffix.matches("\\.(mp4|m4v|mov|webm|mkv)")) return suffix;
             }
         }
-        return ".mp4";
+        return "audio".equalsIgnoreCase(mediaType) ? ".mp3" : ".mp4";
     }
 
     private String sanitizeFileName(String value) {
@@ -1418,6 +1808,8 @@ public class ShortVideoActivity extends BaseActivity {
         String backupQualities = "";
         String apiMessage = "";
         String mediaType = "";
+        String lyrics = "";
+        boolean previewOnly;
         boolean isImagePost;
         final List<String> imageUrls = new ArrayList<>();
         int width;

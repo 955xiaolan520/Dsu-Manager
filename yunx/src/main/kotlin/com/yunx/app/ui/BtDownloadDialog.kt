@@ -47,6 +47,7 @@ import com.yunx.app.data.gopeed.BtTorrentFile
 import com.yunx.app.data.gopeed.BtTorrentResource
 import com.yunx.app.data.gopeed.TorrentResolver
 import com.yunx.app.data.download.DsuNativeDownloadRouter
+import com.yunx.app.data.download.MagnetLink
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -64,12 +65,15 @@ fun BtDownloadDialog(
     var selected by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var directFallbackMagnet by remember { mutableStateOf<String?>(null) }
+    var timedOutMagnet by remember { mutableStateOf<String?>(null) }
 
     val resolve: (String) -> Unit = { value ->
         val raw = value.trim()
         if (raw.isNotBlank() && !busy) {
             busy = true
             error = null
+            directFallbackMagnet = null
             scope.launch {
                 try {
                     val result = TorrentResolver.resolve(context, raw)
@@ -78,7 +82,9 @@ fun BtDownloadDialog(
                 } catch (e: Throwable) {
                     val message = e.message.orEmpty()
                     error = if (message.contains("引擎调用超时") && message.contains("/api/v1/resolve")) {
-                        "磁力元数据仍未返回（等待上限 180 秒）。请检查网络/VPN，或换用带活跃 Tracker 的磁力链接；也可用 Dsu 文件管理器直接选择 .torrent 文件。"
+                        directFallbackMagnet = TorrentResolver.extractMagnet(raw)
+                        timedOutMagnet = directFallbackMagnet
+                        "磁力元数据 30 秒内未返回。Gopeed 的本次解析仍在后台等待数据源；为避免重复占用引擎，不会再次解析同一链接。可直接加入下载队列，或重启内核后再试。"
                     } else message.take(220).ifBlank { "种子解析失败" }
                 } finally {
                     busy = false
@@ -99,7 +105,10 @@ fun BtDownloadDialog(
                 if (resource == null) {
                     OutlinedTextField(
                         value = input,
-                        onValueChange = { input = it },
+                        onValueChange = {
+                            input = it
+                            directFallbackMagnet = null
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("magnet 链接或 .torrent 地址") },
                         placeholder = { Text("magnet:?xt=urn:btih:…") },
@@ -108,9 +117,13 @@ fun BtDownloadDialog(
                         shape = RoundedCornerShape(16.dp)
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Button(onClick = { resolve(input) }, enabled = !busy && input.isNotBlank()) {
+                        Button(
+                            onClick = { resolve(input) },
+                            enabled = !busy && input.isNotBlank() &&
+                                (TorrentResolver.extractMagnet(input) ?: input.trim()) != timedOutMagnet
+                        ) {
                             if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            else Text("解析种子")
+                            else Text(if ((TorrentResolver.extractMagnet(input) ?: input.trim()) == timedOutMagnet) "重启引擎后再解析" else "解析种子")
                         }
                         TextButton(onClick = {
                             val opened = DsuNativeDownloadRouter.pickTorrentFile(context) { path ->
@@ -141,9 +154,25 @@ fun BtDownloadDialog(
                     }
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                directFallbackMagnet?.let { magnet ->
+                    TextButton(
+                        onClick = {
+                            val accepted = onSubmit(magnet, MagnetLink.displayName(magnet), emptyList())
+                            if (accepted) onDismiss()
+                            else error = "提交 BT 下载任务失败，请检查 Gopeed 内核和下载目录设置"
+                        },
+                        enabled = !busy
+                    ) {
+                        Text("不选文件，直接下载全部")
+                    }
+                }
                 TextButton(
                     onClick = {
-                        if (!DsuNativeDownloadRouter.openGopeedEngineManager(context)) {
+                        if (DsuNativeDownloadRouter.openGopeedEngineManager(context)) {
+                            timedOutMagnet = null
+                            directFallbackMagnet = null
+                            error = null
+                        } else {
                             error = "无法打开 Gopeed BT/磁力引擎管理页"
                         }
                     },
@@ -152,13 +181,13 @@ fun BtDownloadDialog(
                     Text("下载 / 管理 Gopeed BT 内核")
                 }
                 Text(
-                    "磁力解析使用应用私有工作目录，不依赖共享 Download 权限；最终 BT 文件由 Dsu 下载服务写入对应目标目录。",
+                    "BT/磁力由 Gopeed 的 BT 协议连接 peers 并按分片传输，不走 aria2c 的 HTTP 多线程通道；普通网盘/HTTP 下载仍按原下载引擎处理。解析前会自动检查并启动已导入的 Gopeed 内核，最终文件写入任务指定目录。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (busy) {
                     Text(
-                        "正在通过 Gopeed 获取磁力元数据，DHT / Tracker 查找可能需要一两分钟。",
+                        "正在检测并自动启动 Gopeed BT 内核。磁力元数据最多等待 30 秒；若无可用 Tracker/peer，将提供直接加入下载队列的选项。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )

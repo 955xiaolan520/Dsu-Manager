@@ -21,6 +21,7 @@ package com.yunx.app.data.repository
 import com.yunx.app.data.network.BaiduApi
 import com.yunx.app.data.network.BaiduConstants
 import com.yunx.app.data.network.BaiduPublicParser
+import com.yunx.app.data.network.BaiduPublicPasswordProvider
 import com.yunx.app.data.network.ShareLinkParser
 import com.yunx.app.data.network.model.DownloadLink
 import com.yunx.app.data.network.model.ShareFile
@@ -44,8 +45,12 @@ class BaiduResolveRepository(
     private val shareInfos = mutableMapOf<String, Pair<String, String>>()
     /** 分享口令只保留在内存中，供用户显式选择的免登录解析调用使用。 */
     private val sharePasswords = mutableMapOf<String, String>()
+    private val publicPasswords = settings?.let { BaiduPublicPasswordProvider(it) }
     private val publicParser = BaiduPublicParser(
-        passwordProvider = { settings?.baiduPublicParsePassword.orEmpty() }
+        passwordProvider = { forceRefresh ->
+            publicPasswords?.get(forceRefresh)
+                ?: throw IllegalStateException("百度公益解析自动口令服务未初始化")
+        }
     )
 
     override suspend fun createSession(link: String, pwd: String?, cookie: String): Result<ShareSession> =

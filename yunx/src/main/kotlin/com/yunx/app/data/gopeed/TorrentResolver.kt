@@ -48,8 +48,7 @@ object TorrentResolver {
         val extracted = extractBtInput(input)
         if (extracted.startsWith("magnet:", ignoreCase = true)) {
             require(GopeedEngine.isInstalled(context)) { "请先在「设置 → 下载引擎」导入 Gopeed 内核，才能解析磁力链接" }
-            GopeedEngine.syncInstalledState(context)
-            GopeedEngine.start(context, GopeedEngine.btWorkspaceDir(context))
+            GopeedEngine.ensureRunning(context, GopeedEngine.resolveDownloadDir(context))
             val resolved = GopeedEngine.resolveTorrent(extracted)
             val resource = resolved.optJSONObject("res")
                 ?: resolved.optJSONObject("resource")
@@ -87,6 +86,10 @@ object TorrentResolver {
             parseTorrent(bytes)
         }
     }
+
+    /** 从整段分享文案中提取可直接交给 Gopeed 后台任务的 magnet URI。 */
+    fun extractMagnet(input: String): String? =
+        extractBtInput(input).takeIf { it.startsWith("magnet:", ignoreCase = true) }
 
     private fun extractBtInput(raw: String): String {
         val text = raw.trim()
@@ -155,7 +158,8 @@ object TorrentResolver {
             files += BtTorrentFile(0, name, size.coerceAtLeast(0L))
         }
         require(files.isNotEmpty()) { "种子文件列表为空或格式不受支持" }
-        val hash = MessageDigest.getInstance("SHA-1").digest(bytes.copyOfRange(infoBytes.first, infoBytes.last))
+        // infoRange 是闭区间；copyOfRange 的结束下标则是排他的。少取最后一个字节会生成错误 info-hash。
+        val hash = MessageDigest.getInstance("SHA-1").digest(bytes.copyOfRange(infoBytes.first, infoBytes.last + 1))
             .joinToString("") { "%02x".format(Locale.ROOT, it) }
         val trackers = linkedSetOf<String>()
         root.bytes("announce")?.let { decodeUtf8(it).trim() }?.takeIf(::isSafeTracker)?.let(trackers::add)

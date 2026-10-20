@@ -78,14 +78,24 @@ class SettingsRepository(context: Context) {
             prefs.edit().putString("engine_download_dir", value.trim()).apply()
         }
 
-    /** 百度公益解析每日口令：用户手动更新，保存在应用私有 SharedPreferences，不随网络请求自动刷新。 */
-    var baiduPublicParsePassword: String
-        get() = prefs.getString("baidu_public_parse_password", "")?.take(512).orEmpty()
-        set(value) {
-            val normalized = value.trim().take(512)
-            if (normalized.isEmpty()) prefs.edit().remove("baidu_public_parse_password").apply()
-            else prefs.edit().putString("baidu_public_parse_password", normalized).apply()
-        }
+    /** 读取当前 30 分钟时间窗自动获取的百度公益口令；仅保存在应用私有 SharedPreferences。 */
+    fun cachedBaiduPublicPassword(windowKey: String): String? {
+        if (prefs.getString("baidu_public_password_window", null) != windowKey) return null
+        return prefs.getString("baidu_public_password_auto", null)?.takeIf(String::isNotBlank)
+    }
+
+    /** 保存自动获取的口令，不在界面上要求用户输入。 */
+    fun cacheBaiduPublicPassword(windowKey: String, value: String) {
+        prefs.edit()
+            .putString("baidu_public_password_window", windowKey)
+            .putString("baidu_public_password_auto", value)
+            .apply()
+    }
+
+    /** 清理旧版本曾要求手动录入的口令，避免继续误用或保留过期值。 */
+    fun clearLegacyBaiduPublicParsePassword() {
+        prefs.edit().remove("baidu_public_parse_password").apply()
+    }
 
     /**
      * 最大同时下载任务数（默认 3，超出的任务排队等待）。

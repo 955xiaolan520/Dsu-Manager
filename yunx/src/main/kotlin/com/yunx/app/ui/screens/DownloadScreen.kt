@@ -104,6 +104,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.yunx.app.data.db.DownloadTaskEntity
@@ -692,12 +693,16 @@ private fun DownloadSubTaskRow(
                     color = MaterialTheme.colorScheme.surfaceContainerHighest
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Outlined.InsertDriveFile,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (isAudioFileName(displayName)) {
+                            Text("♫", color = MaterialTheme.colorScheme.primary, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Outlined.InsertDriveFile,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
@@ -891,12 +896,16 @@ private fun DownloadTaskCard(
                     color = MaterialTheme.colorScheme.surfaceContainerHighest
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Outlined.InsertDriveFile,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (isAudioFileName(task.fileName)) {
+                            Text("♫", color = MaterialTheme.colorScheme.primary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Outlined.InsertDriveFile,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.width(12.dp))
@@ -1169,22 +1178,45 @@ internal fun formatRemain(millis: Long): String {
     }
 }
 
+private fun isAudioFileName(value: String): Boolean {
+    val name = if (value.startsWith("content://")) Uri.parse(value).lastPathSegment.orEmpty() else value.substringAfterLast('/')
+    return name.substringAfterLast('.', "").substringBefore('?').lowercase() in
+        setOf("mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "wma")
+}
+
 private fun openSavedFile(context: android.content.Context, savePath: String) {
     if (savePath.isBlank()) return
-    val uri = if (savePath.startsWith("content://")) {
-        Uri.parse(savePath)
-    } else {
-        // Android 7.0+ 禁止暴露 file:// URI，必须经 FileProvider 转 content://
-        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(savePath))
-    }
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, "*/*")
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
     runCatching {
-        context.startActivity(Intent.createChooser(intent, "打开文件"))
+        val uri = if (savePath.startsWith("content://")) {
+            Uri.parse(savePath)
+        } else {
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(savePath))
+        }
+        if (isAudioFileName(savePath)) {
+            val displayName = if (savePath.startsWith("content://")) Uri.parse(savePath).lastPathSegment.orEmpty()
+                else File(savePath).name
+            val intent = Intent().setClassName(context, "com.probiotics.xiaoni.AudioPlayerActivity")
+                .putExtra("audio_uri", uri.toString())
+                .putExtra("title", displayName.substringBeforeLast('.', displayName))
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (!savePath.startsWith("content://")) {
+                val audioFile = File(savePath)
+                val lyricsFile = File(audioFile.parentFile, audioFile.nameWithoutExtension + ".lrc")
+                if (lyricsFile.isFile) {
+                    val lyricsUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", lyricsFile)
+                    intent.putExtra("lyrics_uri", lyricsUri.toString())
+                }
+            }
+            context.startActivity(intent)
+        } else {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "打开文件"))
+        }
     }.onFailure {
-        SnackbarController.show("无法打开该文件")
+        SnackbarController.show(if (isAudioFileName(savePath)) "无法播放音频文件" else "无法打开该文件")
     }
 }
 

@@ -2317,7 +2317,7 @@ public final class MiuiOtaActivity extends BaseActivity {
                             otaFile.getAbsolutePath(),
                             saveDir.getAbsolutePath(),
                             partitionName,
-                            4,      // 4个线程
+                            8,      // JNI 8线程并行提取
                             false,  // 不验证
                             extractToken
                         );

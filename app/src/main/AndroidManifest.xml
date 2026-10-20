@@ -41,6 +41,7 @@
         <activity android:name=".RomActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".ShortVideoActivity" android:screenOrientation="portrait" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ShortVideoPreviewActivity" android:screenOrientation="fullSensor" android:configChanges="orientation|screenSize|smallestScreenSize" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".AudioPlayerActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".ShortVideoImagesActivity" android:screenOrientation="fullSensor" android:configChanges="orientation|screenSize|smallestScreenSize" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".DownloadManagerActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".DsuGopeedEngineActivity" android:screenOrientation="portrait" android:exported="false" android:theme="@style/Theme.ComposeEmptyActivity" />

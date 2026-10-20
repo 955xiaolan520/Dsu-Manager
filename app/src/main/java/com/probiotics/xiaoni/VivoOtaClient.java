@@ -55,7 +55,9 @@ final class VivoOtaClient {
             serial,
             imei == null ? "" : imei,
             kotlinChannel,
-            kotlinDomain
+            kotlinDomain,
+            true,
+            modelSwVer
         );
 
         // 将 Kotlin 结果转换为 Java VivoResult

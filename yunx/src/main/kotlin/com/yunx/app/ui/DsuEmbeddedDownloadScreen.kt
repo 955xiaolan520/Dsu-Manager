@@ -124,7 +124,8 @@ private data class DsuEmbeddedTask(
     val historyStatus: String = "",
     val historyTime: Long = 0L,
     val folderRoot: String = "",
-    val source: String = "yunx"
+    val source: String = "yunx",
+    val gopeedBt: Boolean = false
 ) {
     val isPaused: Boolean get() = state == "paused"
     val isPending: Boolean get() = state == "pending"
@@ -207,7 +208,8 @@ private fun readDsuEmbeddedTasks(context: Context, source: DsuDownloadListSource
             speed = row.optLong("speed", -1),
             eta = row.optLong("eta", -1),
             folderRoot = row.optString("folder_root", ""),
-            source = sourceTag
+            source = sourceTag,
+            gopeedBt = row.optBoolean("gopeed_bt", false)
         )
     }
     for (i in history.length() - 1 downTo 0) {
@@ -771,11 +773,20 @@ private fun DsuDownloadTaskCard(
             }
             if (!task.historical) {
                 val progress = if (task.total > 0 && task.done >= 0) (task.done.toFloat() / task.total).coerceIn(0f, 1f) else 0f
-                LinearProgressIndicator(
-                    progress = { if (task.total > 0) progress else 0f },
-                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)),
-                    color = Color(0xFF3D9AA1), trackColor = Color(0x293D9AA1)
-                )
+                val waitingForBtPeers = task.gopeedBt && task.done <= 0L &&
+                    task.message.contains("等待 BT 数据源")
+                if (waitingForBtPeers) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)),
+                        color = Color(0xFF3D9AA1), trackColor = Color(0x293D9AA1)
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        progress = { if (task.total > 0) progress else 0f },
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)),
+                        color = Color(0xFF3D9AA1), trackColor = Color(0x293D9AA1)
+                    )
+                }
             }
             Text(
                 text = when {
@@ -783,7 +794,7 @@ private fun DsuDownloadTaskCard(
                     task.isFailed -> task.message.ifBlank { "下载任务已结束" }
                     task.isPaused -> "已下载 ${formatDsuBytes(task.done)} / ${formatDsuBytes(task.total)}"
                     task.isPending -> task.message.ifBlank { "等待下载队列" }
-                    task.total > 0 -> "${(task.done.coerceAtLeast(0) * 100 / task.total).coerceIn(0, 100)}% · ${formatDsuBytes(task.done)} / ${formatDsuBytes(task.total)}${if (task.speed > 0) " · ${formatDsuBytes(task.speed)}/s" else ""}"
+                    task.total > 0 -> "${(task.done.coerceAtLeast(0) * 100 / task.total).coerceIn(0, 100)}% · ${formatDsuBytes(task.done)} / ${formatDsuBytes(task.total)}${if (task.speed > 0) " · ${formatDsuBytes(task.speed)}/s" else ""}${if (task.gopeedBt && task.message.isNotBlank()) " · ${task.message}" else ""}"
                     task.done >= 0 -> "已下载 ${formatDsuBytes(task.done)} · 正在获取文件大小"
                     else -> task.message.ifBlank { "正在连接下载节点" }
                 },

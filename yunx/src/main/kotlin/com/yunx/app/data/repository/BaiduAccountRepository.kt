@@ -55,6 +55,8 @@ class BaiduAccountRepository(
      */
     suspend fun saveBaiduAccount(cookie: String): Boolean {
         if (!BaiduConstants.isValidCookie(cookie)) return false
+        // 仅检测到 BDUSS= 不代表会话有效；验证当前 Cookie 能否换取 bdstoken，避免保存假登录态。
+        if (api.getBdstoken(cookie, forceRefresh = true).isNullOrBlank()) return false
         val nickname = api.fetchNickname(cookie) ?: "百度用户"
         dao.upsert(
             BaiduAccountEntity(

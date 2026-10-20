@@ -138,7 +138,7 @@ import java.io.File
  *    被写过，进程重启后是 NOT_INSTALLED，选内置下载器时启动流程不会碰引擎）。
  *
  * 切换结果写进 `SettingsRepository.downloadEngine`，`DownloadManager.enqueue` 按它分流（见 Agent.md §3.30）；
- * 选 Gopeed 且已导入内核时，应用启动会自动加载引擎（见 YunXApp.autoStartGopeedIfSelected）；
+ * Gopeed 内核已导入时，应用启动会自动加载（BT 始终依赖 Gopeed）；
  * **删掉内核会自动切回内置下载器**，避免"设置说在用 Gopeed、实际跑的是内置下载器"这种不一致。
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -180,8 +180,8 @@ fun DownloadEngineScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val downloadDir = remember(allFilesReady, legacyStorageReady, embeddedMode) {
-        if (embeddedMode) GopeedEngine.btWorkspaceDir(context) else GopeedEngine.resolveDownloadDir(context)
+    val downloadDir = remember(allFilesReady, legacyStorageReady) {
+        GopeedEngine.resolveDownloadDir(context)
     }
 
     val engineOn = engineChoice == SettingsRepository.ENGINE_GOPEED
@@ -504,12 +504,17 @@ fun DownloadEngineScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
-                                            "BT 解析工作区：${downloadDir.absolutePath}\n此为应用私有目录，仅供 Gopeed 保存引擎状态和磁力元数据；不需要共享存储权限，也不是最终下载位置。",
+                                            "Gopeed 内部数据目录：${GopeedEngine.engineStorageDir(context).absolutePath}\n临时工作目录：${GopeedEngine.engineTempDir(context).absolutePath}\n这两个应用私有目录只保存引擎数据库、任务状态和临时数据，不是 BT 文件保存目录。",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
-                                            "最终 BT 文件只写入任务指定的共享下载目录：\nDsu 下载管理器：${dsuBtDirectory.absolutePath}\n网盘解析页：${yunxBtDirectory.absolutePath}\n创建任务时会再次检查目标目录可写性；内核 lib 目录与解析工作区均不会作为下载目标。",
+                                            "引擎默认下载目录：${downloadDir.absolutePath}\n它只是未指定任务目录时的默认值；BT 任务创建时会显式指定下面的最终保存目录。",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            "最终 BT 文件只写入任务指定的共享下载目录：\nDsu 下载管理器：${dsuBtDirectory.absolutePath}\n网盘解析页：${yunxBtDirectory.absolutePath}\n创建任务时会再次检查目标目录可写性；内核库目录与 Gopeed 内部数据目录均不会作为下载目标。",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )

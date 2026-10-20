@@ -81,6 +81,7 @@ public final class OPlusOtaActivity extends BaseActivity {
     private Spinner deltaRegion;
     private EditText downOta;
     private EditText downPrj;
+    private EditText downSn;
     private EditText downDuid;
     private CheckBox downCmcc;
     private EditText edlVersion;
@@ -152,6 +153,9 @@ public final class OPlusOtaActivity extends BaseActivity {
         titleRow.addView(back, backLp);
         title.addView(titleRow, new LinearLayout.LayoutParams(-1, dp(64)));
         content.addView(title, margins(-1, 82, 10));
+
+        // 独立入口：直接解析 ColorOS 16 downloadCheck 动态链接，不依赖 OTA 查询结果。
+        content.addView(buildDynamicLinkPanel(), margins(-1, -2, 10));
 
         FrameLayout tabs = new FrameLayout(this);
         tabs.setPadding(dp(2), dp(2), dp(2), dp(2));
@@ -225,6 +229,200 @@ public final class OPlusOtaActivity extends BaseActivity {
         selectTab(0);
         tabs.post(() -> moveTabIndicator(0, false));
     }
+
+    private LinearLayout buildDynamicLinkPanel() {
+        LinearLayout panel = glass();
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(12), dp(16), dp(14));
+        panel.addView(label("ColorOS 16 动态链接解析", 17, 0xff20375b), margins(-1, -2, 4));
+        panel.addView(label("粘贴包含 downloadCheck? 的动态链接，单独解析为真实下载地址。真实地址有时效，请尽快使用。", 12, 0xff596579), margins(-1, -2, 8));
+
+        EditText input = new EditText(this);
+        input.setSingleLine(false);
+        input.setMinLines(2);
+        input.setMaxLines(4);
+        input.setTextSize(12);
+        input.setHint("https://.../downloadCheck?... ");
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        panel.addView(input, margins(-1, -2, 6));
+
+        TextView output = label("解析结果将显示在这里", 12, 0xff596579);
+        output.setTextIsSelectable(true);
+        output.setPadding(dp(4), dp(6), dp(4), dp(6));
+        panel.addView(output, margins(-1, -2, 6));
+        Button resolve = button("解析真实链接");
+        resolve.setTextSize(12);
+        resolve.setOnClickListener(v -> {
+            String dynamicUrl = input.getText().toString().trim();
+            if (!isDownloadCheckLink(dynamicUrl) || !dynamicUrl.startsWith("http://") && !dynamicUrl.startsWith("https://")) {
+                output.setText("链接格式不正确：请粘贴完整的 https://.../downloadCheck?... 链接");
+                showDynamicLinkResultDialog(false, "链接格式不正确：请粘贴完整的 https://.../downloadCheck?... 链接", "");
+                return;
+            }
+            resolve.setEnabled(false);
+            output.setText("正在请求官方动态链接并解析 HTTP 302...");
+            executor.execute(() -> {
+                try {
+                    String result = OPlusProtocol.resolveRedirect(dynamicUrl);
+                    String finalUrl = cleanLink(result);
+                    if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
+                        throw new IllegalStateException("服务端没有返回有效的最终下载地址");
+                    }
+                    final String display = result;
+                    runOnUiThread(() -> {
+                        output.setText("解析成功，结果已在弹窗中显示；真实链接请尽快使用。");
+                        resolve.setEnabled(true);
+                        showDynamicLinkResultDialog(true, display, finalUrl);
+                    });
+                } catch (Exception error) {
+                    runOnUiThread(() -> {
+                        String message = "解析失败：" + readable(error);
+                        output.setText(message);
+                        resolve.setEnabled(true);
+                        showDynamicLinkResultDialog(false, message, "");
+                    });
+                }
+            });
+        });
+        panel.addView(resolve, new LinearLayout.LayoutParams(-1, dp(46)));
+        return panel;
+    }
+
+    private void showDynamicLinkResultDialog(boolean success, String detail, String downloadUrl) {
+        if (isFinishing() || isDestroyed()) return;
+        android.app.Dialog dialog = new android.app.Dialog(this);
+        dialog.setCancelable(true);
+
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setPadding(dp(20), dp(18), dp(20), dp(14));
+        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                new int[]{0xfff4fbff, 0xffe9f3ff, 0xfff5edff});
+        background.setCornerRadius(dp(27));
+        background.setStroke(Math.max(1, dp(1)), 0xd9ffffff);
+        shell.setBackground(background);
+        shell.setElevation(dp(14));
+
+        TextView badge = label(success ? "✓ 解析成功" : "! 解析未完成", 11,
+                success ? 0xff087f79 : 0xffa84956);
+        badge.setGravity(Gravity.CENTER);
+        badge.setPadding(dp(12), dp(5), dp(12), dp(5));
+        android.graphics.drawable.GradientDrawable badgeBg = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                success ? new int[]{0x3339c6b4, 0x335d82ed} : new int[]{0x33efaa8d, 0x33cf6b86});
+        badgeBg.setCornerRadius(dp(18));
+        badge.setBackground(badgeBg);
+        LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(-2, -2);
+        badgeLp.bottomMargin = dp(9);
+        shell.addView(badge, badgeLp);
+
+        TextView title = label(success ? "真实下载地址已就绪" : "这次没有解析成功", 18, 0xff1c304b);
+        title.setTypeface(null, 1);
+        shell.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        TextView subtitle = label(success
+                ? "已解析官方 downloadCheck 动态链接，可复制或直接加入 Dsu 下载管理器。"
+                : "检查结果已保留在下方；请核对链接后重试。", 12, 0xff5d6d83);
+        subtitle.setPadding(0, dp(4), 0, dp(12));
+        shell.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
+
+        if (success && downloadUrl != null && !downloadUrl.isEmpty()) {
+            String actualName = filenameFromUrl(downloadUrl);
+            if (actualName.isEmpty()) actualName = "文件名由下载服务器提供";
+            TextView fileLabel = label("真实文件名", 10, 0xff64748b);
+            shell.addView(fileLabel, new LinearLayout.LayoutParams(-1, -2));
+            TextView fileName = label(actualName, 13, 0xff197d78);
+            fileName.setTypeface(null, 1);
+            fileName.setSingleLine(true);
+            fileName.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+            fileName.setPadding(dp(11), dp(8), dp(11), dp(8));
+            android.graphics.drawable.GradientDrawable nameBg = new android.graphics.drawable.GradientDrawable();
+            nameBg.setColor(0xeaffffff);
+            nameBg.setCornerRadius(dp(14));
+            fileName.setBackground(nameBg);
+            LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(-1, -2);
+            nameLp.topMargin = dp(4);
+            nameLp.bottomMargin = dp(9);
+            shell.addView(fileName, nameLp);
+
+            String expiry = "真实链接由服务器签名，建议尽快下载。";
+            int expiryAt = detail == null ? -1 : detail.indexOf("有效期至:");
+            if (expiryAt >= 0) {
+                expiry = detail.substring(expiryAt).split("\\n", 2)[0].trim();
+            }
+            TextView expiryView = label("⏱ " + expiry, 11, 0xff76528e);
+            expiryView.setPadding(dp(2), 0, dp(2), dp(8));
+            shell.addView(expiryView, new LinearLayout.LayoutParams(-1, -2));
+
+            ScrollView linkScroll = new ScrollView(this);
+            linkScroll.setFillViewport(false);
+            linkScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+            TextView linkText = label(downloadUrl, 11, 0xff42546d);
+            linkText.setTextIsSelectable(true);
+            linkText.setGravity(Gravity.CENTER_VERTICAL);
+            linkText.setPadding(dp(12), dp(10), dp(12), dp(10));
+            android.graphics.drawable.GradientDrawable linkBg = new android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                    new int[]{0xeaffffff, 0xd9f4f8ff});
+            linkBg.setCornerRadius(dp(16));
+            linkBg.setStroke(Math.max(1, dp(1)), 0x70ffffff);
+            linkText.setBackground(linkBg);
+            linkScroll.addView(linkText, new ScrollView.LayoutParams(-1, -2));
+            shell.addView(linkScroll, new LinearLayout.LayoutParams(-1, dp(118)));
+
+            LinearLayout actions = new LinearLayout(this);
+            actions.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(-1, dp(46));
+            actionsLp.topMargin = dp(12);
+            Button copyButton = button("复制真实链接");
+            copyButton.setTextSize(12);
+            copyButton.setOnClickListener(v -> {
+                copyText("真实下载链接", downloadUrl);
+                dialog.dismiss();
+            });
+            actions.addView(copyButton, new LinearLayout.LayoutParams(0, -1, 1));
+            Button downloadButton = button("下载到管理器");
+            downloadButton.setTextSize(12);
+            downloadButton.setTextColor(0xff167f79);
+            LinearLayout.LayoutParams downloadLp = new LinearLayout.LayoutParams(0, -1, 1);
+            downloadLp.setMarginStart(dp(8));
+            downloadButton.setOnClickListener(v -> {
+                startDownload(downloadUrl, "", "");
+                dialog.dismiss();
+            });
+            actions.addView(downloadButton, downloadLp);
+            shell.addView(actions, actionsLp);
+        } else {
+            TextView errorText = label(detail == null ? "未知错误" : detail, 12, 0xff8b3e4b);
+            errorText.setTextIsSelectable(true);
+            errorText.setPadding(dp(12), dp(12), dp(12), dp(12));
+            android.graphics.drawable.GradientDrawable errorBg = new android.graphics.drawable.GradientDrawable();
+            errorBg.setColor(0xeaffffff);
+            errorBg.setCornerRadius(dp(16));
+            errorText.setBackground(errorBg);
+            shell.addView(errorText, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        Button close = button(success ? "完成" : "关闭");
+        close.setTextSize(12);
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(-1, dp(42));
+        closeLp.topMargin = dp(8);
+        close.setOnClickListener(v -> dialog.dismiss());
+        shell.addView(close, closeLp);
+
+        dialog.setContentView(shell);
+        dialog.show();
+        android.view.Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            android.view.WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.dimAmount = .42f;
+            window.setAttributes(attributes);
+            int available = getResources().getDisplayMetrics().widthPixels - dp(36);
+            window.setLayout(Math.min(dp(440), available), android.view.WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+    }
     
     @Override public void onBackPressed() {
         finish();
@@ -244,7 +442,7 @@ public final class OPlusOtaActivity extends BaseActivity {
         fullAnti = checkBox("防查询模式（taste 请求模式）");
         fullAnti.setChecked(true);
         panel.addView(fullAnti, margins(-1, 38, 0));
-        fullGray = checkBox("灰度 / 内测更新（携带 recruitId）");
+        fullGray = checkBox("内测招募更新（携带 recruitId）");
         panel.addView(fullGray, margins(-1, 38, 0));
         fullPreview = checkBox("预览版更新（使用 v6，需填写 GUID）");
         panel.addView(fullPreview, margins(-1, 38, 0));
@@ -290,12 +488,14 @@ public final class OPlusOtaActivity extends BaseActivity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(16), dp(14), dp(16), dp(14));
         panel.addView(label("降级包查询", 17, 0xff20375b), margins(-1, 28, 4));
-        panel.addView(label("查询官方降级包（仅中国大陆）。DUID 在拨号盘输入 *#6776# 获取，为 64 位十六进制字符串。", 12, 0xff596579), margins(-1, -2, 6));
+        panel.addView(label("按目标设备 DUID、OTA 代号和版本查询，不绑定本机；SN 可不填。DUID 留空时使用上游 v2 通用查询。", 12, 0xff596579), margins(-1, -2, 6));
         downOta = field("OTA 版本（必填）", "如 PJZ110 或 PJZ110_11.A，机型输入会自动补全");
         panel.addView(downOta, margins(-1, 50, 8));
         downPrj = field("PrjNum 项目号（必填）", "5 位数字，如 24821");
         panel.addView(downPrj, margins(-1, 50, 8));
-        downDuid = field("DUID（必填）", "64 位十六进制，拨号 *#6776# 查看");
+        downSn = field("SN 序列号（可选）", "旧版查询不要求 SN；需要时可填写目标设备 SN");
+        panel.addView(downSn, margins(-1, 50, 8));
+        downDuid = field("目标设备 DUID（可选）", "填写目标设备 64 位 DUID；留空使用通用查询");
         panel.addView(downDuid, margins(-1, 50, 8));
         downCmcc = new CheckBox(this);
         downCmcc.setText("使用中国移动通道 (nvCarrier 10011000)");
@@ -434,14 +634,17 @@ public final class OPlusOtaActivity extends BaseActivity {
     private void queryDowngrade() {
         String ota = normalizeDowngradeOta(downOta.getText().toString());
         String prj = downPrj.getText().toString().trim();
+        String sn = downSn.getText().toString().trim();
         String duid = downDuid.getText().toString().trim();
         if (!ota.matches("[A-Za-z0-9]+_11\\.[A-Za-z0-9.]+")) { status.setText("OTA 版本格式应为 PJZ110_11.A"); return; }
         if (!prj.matches("[0-9]{5}")) { status.setText("PrjNum 必须为 5 位数字"); return; }
-        if (!duid.matches("[0-9A-Fa-f]{64}")) { status.setText("DUID 必须为 64 位十六进制字符，拨号 *#6776# 获取"); return; }
-        status.setText("正在查询官方降级包...");
+        if (!sn.isEmpty() && duid.isEmpty()) { status.setText("SN 不能单独使用；目标设备查询请填写 DUID（SN 可选），或清空 SN 使用通用查询"); return; }
+        if (!duid.isEmpty() && !duid.matches("[0-9A-Fa-f]{64}")) { status.setText("DUID 必须为 64 位十六进制字符"); return; }
+        boolean deviceQuery = !duid.isEmpty();
+        status.setText(deviceQuery ? "正在使用 v3 查询指定设备降级包..." : "正在使用 v2 通用模式查询降级包...");
         executor.execute(() -> {
             try {
-                JSONObject result = DowngradeProtocol.query(ota, prj, duid, downCmcc.isChecked());
+                JSONObject result = DowngradeProtocol.query(ota, prj, sn, duid, downCmcc.isChecked());
                 runOnUiThread(() -> renderDowngrade(result));
             } catch (Exception error) {
                 runOnUiThread(() -> status.setText("查询失败: " + readable(error)));
@@ -780,11 +983,13 @@ public final class OPlusOtaActivity extends BaseActivity {
     }
 
     private void renderDowngrade(JSONObject result) {
-        status.setText("查询成功，找到官方降级包");
+        boolean genericQuery = "v2".equalsIgnoreCase(result.optString("queryMode", "v3"));
+        status.setText(genericQuery ? "v2 通用查询成功，找到官方降级包" : "v3 设备查询成功，找到官方降级包");
         LiquidGlassPanel head = glass();
         head.setOrientation(LinearLayout.VERTICAL);
         head.setPadding(dp(16), dp(14), dp(16), dp(14));
         head.addView(label("降级包结果", 17, 0xff20375b));
+        addPair(head, "查询方式", genericQuery ? "v2 通用查询（未绑定设备身份）" : "v3 指定设备查询");
         addPair(head, "查询版本", result.optString("queryVersion", "N/A"));
         results.addView(head, margins(-1, -2, 10));
         JSONArray packages = result.optJSONArray("packages");
@@ -880,13 +1085,35 @@ public final class OPlusOtaActivity extends BaseActivity {
     private void startDownload(String address, String name, String version, boolean downgrade) {
         address = address.split("\\n", 2)[0].trim();
         if (!address.startsWith("http")) return;
+        if (isDownloadCheckLink(address)) {
+            final String dynamicAddress = address;
+            status.setText("正在解析 ColorOS 16 动态下载直链...");
+            executor.execute(() -> {
+                try {
+                    String resolved = cleanLink(OPlusProtocol.resolveRedirect(dynamicAddress));
+                    if (!resolved.startsWith("http") || isDownloadCheckLink(resolved)) {
+                        throw new IllegalStateException("服务端未返回最终下载地址");
+                    }
+                    runOnUiThread(() -> startResolvedDownload(resolved, name, version, downgrade));
+                } catch (Exception error) {
+                    runOnUiThread(() -> status.setText("动态链接解析失败，未创建下载任务：" + readable(error)));
+                }
+            });
+            return;
+        }
+        startResolvedDownload(address, name, version, downgrade);
+    }
+
+    private void startResolvedDownload(String address, String name, String version, boolean downgrade) {
+        address = rewriteDownloadDomain(cleanLink(address));
         String extension = extensionFromUrl(address);
         String baseName = safeFilename(version, "");
-        if (baseName.isEmpty()) baseName = safeFilename(name, "oplus-update");
+        if (baseName.isEmpty()) baseName = safeFilename(name, "");
+        if (baseName.isEmpty()) baseName = safeFilename(filenameFromUrl(address), "oplus-update");
         String filename = baseName.toLowerCase(Locale.ROOT).endsWith(extension) ? baseName : baseName + extension;
         java.io.File dir = new java.io.File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DsuManager");
         if (!dir.exists()) dir.mkdirs();
-        java.io.File file = new java.io.File(dir, filename.replaceAll("[^a-zA-Z0-9._() -]", "_"));
+        java.io.File file = new java.io.File(dir, filename);
         // v3.8.8：多任务下载框（OPPO 固定 16 线程 + 8MB 分片；并行满 3 个自动排队）
         if (taskCards == null) return;
         taskCards.start(address, file, "OPlus OTA", 16, 8L);
@@ -895,8 +1122,21 @@ public final class OPlusOtaActivity extends BaseActivity {
     }
 
     private String safeFilename(String value, String fallback) {
-        String cleaned = value == null ? "" : value.trim().replaceAll("[^a-zA-Z0-9._() -]", "_");
+        String cleaned = value == null ? "" : value.trim()
+                .replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_')
+                .replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_')
+                .replaceAll("[\\p{Cntrl}]", "_").trim();
+        while (cleaned.endsWith(".") || cleaned.endsWith(" ")) cleaned = cleaned.substring(0, cleaned.length() - 1);
         return cleaned.isEmpty() ? fallback : cleaned;
+    }
+
+    private String filenameFromUrl(String address) {
+        try {
+            String segment = Uri.parse(address).getLastPathSegment();
+            return segment == null ? "" : safeFilename(segment, "");
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private String normalizeDowngradeOta(String value) {
@@ -1006,7 +1246,24 @@ public final class OPlusOtaActivity extends BaseActivity {
     }
 
     private void copyText(String label, String value) {
-        String text = "下载链接".equals(label) ? cleanLink(value) : value == null ? "" : value.trim();
+        String raw = value == null ? "" : value.trim();
+        if ("下载链接".equals(label) && isDownloadCheckLink(raw)) {
+            status.setText("正在解析 ColorOS 16 动态下载直链...");
+            executor.execute(() -> {
+                try {
+                    String resolved = cleanLink(OPlusProtocol.resolveRedirect(raw));
+                    if (!resolved.startsWith("http") || isDownloadCheckLink(resolved)) {
+                        throw new IllegalStateException("服务端未返回最终下载地址");
+                    }
+                    runOnUiThread(() -> copyText(label, resolved));
+                } catch (Exception error) {
+                    runOnUiThread(() -> status.setText("动态链接解析失败，未复制动态地址：" + readable(error)));
+                }
+            });
+            return;
+        }
+        String text = "下载链接".equals(label)
+                ? rewriteDownloadDomain(cleanLink(value)) : value == null ? "" : value.trim();
         if (text.isEmpty() || "N/A".equalsIgnoreCase(text)) return;
         ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         if (clipboard == null) return;
@@ -1025,6 +1282,28 @@ public final class OPlusOtaActivity extends BaseActivity {
         if (link == null) return "";
         int lineBreak = link.indexOf('\n');
         return (lineBreak >= 0 ? link.substring(0, lineBreak) : link).trim();
+    }
+
+    /** OPlus 下载代理域名切换：只替换 host，原样保留路径、签名 query 与 fragment。 */
+    private static String rewriteDownloadDomain(String address) {
+        if (address == null || address.trim().isEmpty()) return "";
+        try {
+            java.net.URI uri = new java.net.URI(address.trim());
+            String path = uri.getRawPath();
+            StringBuilder out = new StringBuilder("https://gauss-compota-c-cn.allawnfs.com")
+                    .append(path == null ? "" : path);
+            if (uri.getRawQuery() != null && !uri.getRawQuery().isEmpty())
+                out.append('?').append(uri.getRawQuery());
+            if (uri.getRawFragment() != null && !uri.getRawFragment().isEmpty())
+                out.append('#').append(uri.getRawFragment());
+            return out.toString();
+        } catch (Exception ignored) {
+            return address;
+        }
+    }
+
+    private static boolean isDownloadCheckLink(String link) {
+        return link != null && link.toLowerCase(Locale.ROOT).contains("downloadcheck?");
     }
 
     private CheckBox checkBox(String text) {
@@ -1557,10 +1836,8 @@ public final class OPlusOtaActivity extends BaseActivity {
                     for (int packetIndex = 0; packetIndex < packetList.length(); packetIndex++) {
                         JSONObject p = packetList.optJSONObject(packetIndex);
                         if (p == null) continue;
+                        // downloadCheck 直链时效较短，保留原始动态地址，待用户点击下载/复制时再即时解析。
                         String manual = replaceGaussUrl(p.optString("manualUrl", p.optString("url", "N/A")));
-                        if (manual.contains("downloadCheck")) {
-                            try { manual = resolveRedirect(manual); } catch (Exception ignored) { }
-                        }
                         components.put(new JSONObject()
                                 .put("name", c.optString("componentName", "Unknown") + (packetList.length() > 1 ? " #" + (packetIndex + 1) : ""))
                                 .put("version", c.optString("componentVersion", "Unknown"))
@@ -1600,11 +1877,13 @@ public final class OPlusOtaActivity extends BaseActivity {
             int code = connection.getResponseCode();
             String location = connection.getHeaderField("Location");
             if (code / 100 != 3 || location == null || location.isEmpty()) throw new IllegalStateException("动态链接解析失败 HTTP " + code);
-            Uri uri = Uri.parse(location);
+            URL redirected = new URL(new URL(address), location);
+            String resolvedLocation = rewriteDownloadDomain(redirected.toExternalForm());
+            Uri uri = Uri.parse(redirected.toExternalForm());
             String expires = uri.getQueryParameter("Expires");
             if (expires == null) expires = uri.getQueryParameter("x-oss-expires");
             String expiry = expires == null ? "" : "\n有效期至: " + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new java.util.Date(Long.parseLong(expires) * 1000L));
-            return location + expiry;
+            return resolvedLocation + expiry;
         }
     }
 
@@ -1815,21 +2094,27 @@ public final class OPlusOtaActivity extends BaseActivity {
     }
 
     private static final class DowngradeProtocol {
-        private static final String ENDPOINT = "https://downgrade.coloros.com/downgrade/query-v3";
+        private static final String ENDPOINT_V3 = "https://downgrade.coloros.com/downgrade/query-v3";
+        private static final String ENDPOINT_V2 = "https://downgrade.coloros.com/downgrade/query-v2";
         private static final long NEGOTIATION = 1636449646204L;
+        private static final String ANONYMOUS_DUID = "0000000000000000000000000000000000000000000000000000000000000000";
         private static final String KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmeQzr0TIbtwZFnDXgatg6xP9SlNBFho1NTdFQ27SKDF+dBEEfnG9BqRw0na0DUqtpWe2CUtldbU33nnJ0KB6z7y5f+89o9n8mJxIbh952gpskBxyrhCfpYHV5mt/n9Tkm8OcQWLRFou7/XITuZeZejfUTesQjpfOeCaeKyVSoKQc6WuH7NSYq6B37RMyEn/1+vo8XuHEKD84p29KGpyGI7ZeL85iOcwBmOD6+e4yideH2RatA1SzEv/9V8BflaFLAWDuPWUjA2WgfOvy5spYmp/MoMOX4P0d+AkJ9Ms6PUXEUBsbOACmaMFyLCLHmd18+UeGdJR/3I15sXKbJhKerwIDAQAB";
 
-        private static JSONObject query(String ota, String prj, String duid, boolean cmcc) throws Exception {
+        private static JSONObject query(String ota, String prj, String sn, String duid, boolean cmcc) throws Exception {
             String version = ota.trim().toUpperCase(Locale.ROOT);
+            boolean deviceQuery = !duid.isEmpty();
+            String requestDuid = deviceQuery ? duid : ANONYMOUS_DUID;
             byte[] key = random(32), iv = random(12);
             String protectedKey = Base64.getEncoder().encodeToString(rsaOaep(Base64.getEncoder().encodeToString(key).getBytes(StandardCharsets.US_ASCII), KEY));
-            JSONObject device = new JSONObject().put("cipher", Base64.getEncoder().encodeToString(aesGcm(duid.getBytes(StandardCharsets.US_ASCII), key, iv))).put("iv", Base64.getEncoder().encodeToString(iv));
-            JSONObject payload = new JSONObject().put("model", version.split("_")[0]).put("nvCarrier", cmcc ? "10011000" : "10010111").put("prjNum", prj).put("serialNo", "").put("otaVersion", version).put("deviceId", device);
+            JSONObject device = new JSONObject().put("cipher", Base64.getEncoder().encodeToString(aesGcm(requestDuid.getBytes(StandardCharsets.US_ASCII), key, iv))).put("iv", Base64.getEncoder().encodeToString(iv));
+            JSONObject payload = new JSONObject().put("model", version.split("_")[0]).put("nvCarrier", cmcc ? "10011000" : "10010111").put("prjNum", prj);
+            if (deviceQuery) payload.put("serialNo", sn);
+            payload.put("otaVersion", version).put("deviceId", device);
             JSONObject cipherInfo = new JSONObject().put("downgrade-server", new JSONObject().put("negotiationVersion", NEGOTIATION).put("protectedKey", protectedKey).put("version", String.valueOf(System.currentTimeMillis() / 1000)));
-            JSONObject headers = new JSONObject().put("Content-Type", "application/json; charset=UTF-8").put("cipherInfo", cipherInfo.toString()).put("deviceId", duid).put("Connection", "close");
-            String raw = postJson(ENDPOINT, headers, payload.toString());
+            JSONObject headers = new JSONObject().put("Content-Type", "application/json; charset=UTF-8").put("cipherInfo", cipherInfo.toString()).put("deviceId", requestDuid).put("Connection", "close");
+            String raw = postJson(deviceQuery ? ENDPOINT_V3 : ENDPOINT_V2, headers, payload.toString());
             JSONObject response = new JSONObject(raw);
-            if (response.optInt("code") == 1004) throw new IllegalStateException("服务端返回 DUID 为空，该 DUID 无降级通道");
+            if (response.optInt("code") == 1004) throw new IllegalStateException(deviceQuery ? "服务端拒绝该 DUID 查询" : "v2 通用查询被服务端拒绝，请填写目标设备 SN 与 DUID 后重试");
             JSONObject data;
             if (response.has("cipher")) {
                 data = new JSONObject(new String(aesGcmDecrypt(Base64.getDecoder().decode(response.getString("cipher")), key, Base64.getDecoder().decode(response.getString("iv"))), StandardCharsets.UTF_8));
@@ -1838,8 +2123,8 @@ public final class OPlusOtaActivity extends BaseActivity {
             }
             JSONObject dataBlock = data.optJSONObject("data");
             JSONArray packages = dataBlock == null ? null : dataBlock.optJSONArray("downgradeVoList");
-            if (packages == null || packages.length() == 0) throw new IllegalStateException("未找到可用的降级包");
-            return new JSONObject().put("queryVersion", version).put("packages", packages);
+            if (packages == null || packages.length() == 0) throw new IllegalStateException(deviceQuery ? "v3 未找到可用降级包；可清空 SN/DUID 后尝试 v2 通用查询" : "v2 通用查询未返回降级包；若有目标设备身份，可填写 SN 与 DUID 改用 v3");
+            return new JSONObject().put("queryVersion", version).put("queryMode", deviceQuery ? "v3" : "v2").put("packages", packages);
         }
     }
 

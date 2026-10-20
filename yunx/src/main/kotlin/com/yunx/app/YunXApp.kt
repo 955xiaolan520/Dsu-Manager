@@ -107,8 +107,8 @@ class YunXApp : Application() {
         com.yunx.app.util.DiagnosticLog.install(this)
         // 下载调试：读开关（默认关）。必须在任何下载开始之前装配，否则开关打开后先建的任务收不到事件
         com.yunx.app.data.download.DownloadDebugLog.install(this)
-        // 选了 Gopeed 引擎且已导入内核：启动就把它加载起来（失败只记日志，绝不影响应用启动）
-        autoStartGopeedIfSelected(this)
+        // Gopeed 内核已安装时启动就加载：BT 始终依赖它，不受普通下载器选择影响。
+        autoStartGopeedIfInstalled(this)
     }
 
     /**
@@ -133,28 +133,23 @@ private fun purgeDownloadLeftovers(ctx: Context) {
 }
 
 /**
- * 选了 Gopeed 引擎时，应用启动就把引擎加载起来（只有导入过内核才做，见 Agent.md §3.32）。
- *
- * 引擎是进程内单例，首次加载要 System.load 56 MB 的 .so 并初始化 Go runtime，提前加载能让第一个
- * 下载任务不必等它；**任何失败都只记日志** —— 引擎起不来不能影响应用启动，下载侧会按失败任务处理。
- *
- * 另外无论选的是哪个下载器，都在这里把引擎的内存状态与真实文件对齐一次（`syncInstalledState`）：
- * 选内置下载器时下面会直接 return、整条启动流程都不会碰引擎，不对齐的话引擎页会以为「未导入内核」。
+ * Gopeed 内核只要已安装，应用启动就加载它，因为 BT/磁力任务始终走 Gopeed。
+ * 启动失败只记日志，不影响应用进入；解析和任务提交前还会再次做健康检查。
  */
-private fun autoStartGopeedIfSelected(ctx: Context) {
+private fun autoStartGopeedIfInstalled(ctx: Context) {
     val engine = com.yunx.app.data.gopeed.GopeedEngine
     val settingsRepo = com.yunx.app.data.prefs.SettingsRepository(ctx)
     engine.syncInstalledState(ctx)
-    if (settingsRepo.downloadEngine != com.yunx.app.data.prefs.SettingsRepository.ENGINE_GOPEED) return
     if (!engine.isInstalled(ctx)) {
-        // 内核被删了（或从没导入过）但设置还停在 Gopeed：自愈回内置下载器，避免"设置说在用引擎、
-        // 实际跑的是内置下载器"的错位（与下载引擎页删内核时的处理一致）。
-        settingsRepo.downloadEngine = com.yunx.app.data.prefs.SettingsRepository.ENGINE_BUILTIN
+        // 只有普通下载器选择 Gopeed 却缺内核时回退；BT 解析入口会另外提示缺少内核。
+        if (settingsRepo.downloadEngine == com.yunx.app.data.prefs.SettingsRepository.ENGINE_GOPEED) {
+            settingsRepo.downloadEngine = com.yunx.app.data.prefs.SettingsRepository.ENGINE_BUILTIN
+        }
         return
     }
     Thread {
         runCatching {
-            engine.start(ctx, engine.resolveDownloadDir(ctx))
+            engine.ensureRunning(ctx, engine.resolveDownloadDir(ctx))
         }.onFailure {
             android.util.Log.e("YunX", "启动时自动加载 Gopeed 引擎失败：${it.message}", it)
         }

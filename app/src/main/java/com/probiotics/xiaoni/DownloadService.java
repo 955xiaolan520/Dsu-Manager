@@ -596,14 +596,13 @@ public final class DownloadService extends Service {
     /** BT/magnet tasks use the already integrated Gopeed engine; no extra runtime is added to the APK. */
     private void runGopeedBtTask(Task task) {
         try {
-            if (task.btDirectory == null || task.btSelectedFiles.length == 0) {
-                endTask(task, "BT 文件选择为空", false);
+            if (task.btDirectory == null) {
+                endTask(task, "BT 下载目录无效", false);
                 return;
             }
             broadcastTask(task, "正在连接 Gopeed BT 引擎…", -1, -1);
-            GopeedEngine.INSTANCE.syncInstalledState(this);
             if (!GopeedEngine.INSTANCE.isInstalled(this)) throw new IllegalStateException("未导入 Gopeed 下载引擎");
-            GopeedEngine.INSTANCE.start(this, task.btDirectory);
+            GopeedEngine.INSTANCE.ensureRunning(this, task.btDirectory);
             java.util.List<Integer> selected = new java.util.ArrayList<>();
             for (int index : task.btSelectedFiles) selected.add(index);
             if (task.gopeedTaskId == null || task.gopeedTaskId.isEmpty()) {
@@ -622,7 +621,9 @@ public final class DownloadService extends Service {
                     persistTasks();
                 }
             }
-            broadcastTask(task, "正在下载 BT：" + task.btName, 0, -1);
+            broadcastTask(task, task.btSelectedFiles.length == 0
+                    ? "正在解析磁力元数据，获取后将下载全部文件…"
+                    : "正在下载 BT：" + task.btName, 0, -1);
             boolean enginePaused = false;
             long lastProgressAt = System.currentTimeMillis();
             long lastProgressBytes = task.done;

@@ -67,7 +67,7 @@ class PayloadExtractor {
         input: String,
         outputDir: String,
         partitionName: String,
-        threads: Int = 4,
+        threads: Int = 8,
         verify: Boolean = false,
         token: Long
     ) {

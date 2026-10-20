@@ -189,7 +189,6 @@ fun ShareDetailScreen(
     val context = LocalContext.current
     val baiduSettings = remember { SettingsRepository(context) }
     var baiduLimitDismissed by remember { mutableStateOf(baiduSettings.baiduLimitHintDismissed) }
-    var baiduPublicParserPassword by remember { mutableStateOf(baiduSettings.baiduPublicParsePassword) }
     var showBaiduLimitDialog by remember { mutableStateOf(false) }
     var pendingBaiduAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     // 「添加至收藏」弹窗
@@ -571,11 +570,6 @@ fun ShareDetailScreen(
                     viewModel.fetchBaiduPublicDownloadLink(file)
                 }
             } else null,
-            manualPublicPassword = baiduPublicParserPassword,
-            onManualPublicPasswordChange = { value ->
-                baiduPublicParserPassword = value
-                baiduSettings.baiduPublicParsePassword = value
-            },
             onDownloadFolder = {
                 actionFile = null
                 viewModel.downloadFolder(file)
